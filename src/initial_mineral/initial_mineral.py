@@ -51,7 +51,7 @@ def generate_calcite_map(Z, m, s, output_dir, i):
     #Z = Z.T
     
     Z = np.clip(Z, a_max=2.00, a_min=0.0)
-    Z = Z / 3.0 # Divided by 3 mm thickness to calculate the volume fraction
+    Z = Z / 5.0 # Divided by 3 mm thickness to calculate the volume fraction
 
     with h5py.File(output_dir, 'w') as hdf5_file:
         calcite_group = hdf5_file.create_group('calcite_mapX')
@@ -75,7 +75,7 @@ def generate_pyrite_map(Z, m, s, output_dir, n):
     #Z = Z.T
 
     Z = np.clip(Z, a_max=0.15, a_min=0.0)
-    Z = Z / 3.0 # 5 mm thickness
+    Z = Z / 5.0 # 5 mm thickness
 
     with h5py.File(output_dir, 'w') as hdf5_file:
         pyrite_group = hdf5_file.create_group('pyrite_mapX')
@@ -92,7 +92,7 @@ def generate_pyrite_map(Z, m, s, output_dir, n):
 
 if __name__ == "__main__":
     
-    n = 10
+    n = 1000
     X = 128
     Y = 64
     nX = 128

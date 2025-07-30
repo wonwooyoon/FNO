@@ -5,7 +5,7 @@ from scipy.stats import qmc
 # 샘플링 파라미터 설정
 pressure_min = 0.001
 pressure_max = 0.01
-num_samples = 10  # 샘플 개수
+num_samples = 1000  # 샘플 개수
 
 # uniform sampling
 sampler = qmc.LatinHypercube(d=2)

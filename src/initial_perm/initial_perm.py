@@ -86,7 +86,7 @@ def generate_scp_field(N, b, size, level_max, density_map_size, iteration):
 
 if __name__ == '__main__':
     
-    map_num = 10
+    map_num = 1000
     N = 9
     b = 2.64
     size = 256

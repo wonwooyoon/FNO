@@ -3,3 +3,5 @@
 .venv_FNO/*
 neuraloperator/*
 *.out
+mixing_*.in
+mixing_*.h5
