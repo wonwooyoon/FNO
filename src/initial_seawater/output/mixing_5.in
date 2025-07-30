@@ -1,0 +1,303 @@
+SIMULATION
+  SIMULATION_TYPE SUBSURFACE
+  PROCESS_MODELS
+    SUBSURFACE_TRANSPORT transport
+      MODE GIRT
+    /
+  /
+END
+
+SUBSURFACE
+REFERENCE_TEMPERATURE 35
+NUMERICAL_METHODS transport
+  NEWTON_SOLVER
+    STOL 1e-50
+    ATOL 1e-50
+    RTOL 5e-7
+    ITOL_UPDATE 1e-14
+    MAXIMUM_NUMBER_OF_ITERATIONS 50
+  /
+/
+
+CHEMISTRY
+
+  ACTIVITY_COEFFICIENTS LAG TIMESTEP
+
+  PRIMARY_SPECIES
+    H+
+    Ca++
+    Na+
+    K+
+    Mg++
+    CO3--
+    Cl-
+    UO2++
+    O2(aq)
+    H4(SiO4)
+    Fe++
+    Al+++
+    SO4--
+  /
+  SECONDARY_SPECIES
+    OH-
+    CH4
+    Al(OH)4-
+    Al(OH)3
+    NaAl(OH)4
+    Al(OH)2+
+    HCO3-
+    CO2 
+    Na(HCO3)
+    Mg(HCO3)+
+    CaCO3
+    Na(CO3)-
+    FeCO3
+    Fe(OH)CO3
+    Ca(SO4)
+    Ca(HCO3)+
+    MgCl+
+    Fe+++
+    FeCl+
+    Fe(SO4)
+    Fe(OH)+
+    Fe(OH)2+
+    Fe(OH)3
+    Fe(CO3)2--
+    H2(aq)
+    Mg(SO4)
+    Mg(CO3)
+    U++++
+    Ca2UO2(CO3)3
+    CaUO2(CO3)3--
+    UO2(CO3)3----
+    MgUO2(CO3)3--
+    Mg2UO2(CO3)3
+    UO2(CO3)2--
+    UO2(CO3)
+    UO2(OH)+
+    UO2(OH)2
+    U(OH)4
+    UO2+
+    HS-
+    H2S
+    Fe(HS)+
+    SO3--
+    S2O3--
+    Na(S2O3)-
+    Mg(S2O3)
+    Ca(S2O3)
+    H(SO3)-
+    H(SO4)-
+  /
+  
+  PASSIVE_GAS_SPECIES
+    O2(g)
+  /
+  
+  MINERALS
+    Smectite_MX80
+    InertMineral
+    Quartz
+    Gypsum
+    Pyrite
+    Calcite
+    Dolomite
+    Siderite
+    UO2:2H2O(am)
+  /
+
+  ! Kinetics data from Palandri and Kharaka (2004) and Marty et al. (2015)
+    
+  MINERAL_KINETICS
+    
+    Smectite_MX80
+      RATE_CONSTANT		0.0 mol/m^2-sec
+    /
+    InertMineral
+      RATE_CONSTANT   0.0 mol/m^2-sec
+    /
+    Quartz
+      RATE_CONSTANT		1.d-6 mol/m^2-sec
+    /
+    Gypsum
+      RATE_CONSTANT		1.d-6 mol/m^2-sec
+    /   
+    Calcite
+      RATE_CONSTANT		1.d-6 mol/m^2-sec
+    /
+    Pyrite
+      RATE_CONSTANT		1.d-6 mol/m^2-sec
+    / 
+    Dolomite
+      RATE_CONSTANT		1.d-6 mol/m^2-sec
+    /   
+    Siderite
+      RATE_CONSTANT		1.d-6 mol/m^2-sec
+    /
+    UO2:2H2O(am)
+      RATE_CONSTANT		1.d-6 mol/m^2-sec
+    /
+  /
+  
+  DATABASE ../PFLOTRAN_O2_ThermoChimie_v12a_T_modified.dat
+  
+  LOG_FORMULATION
+  
+  OUTPUT
+    PH
+    PE
+    TOTAL
+    PRIMARY_SPECIES
+  /
+  
+END
+
+GRID
+  TYPE STRUCTURED
+  NXYZ 2 1 1
+  BOUNDS
+    0.d0  0.d0  0.d0
+    2.d0  1.d0  1.d0
+  /
+END
+
+FLUID_PROPERTY
+  DIFFUSION_COEFFICIENT 1.d-9 
+END
+
+MATERIAL_PROPERTY granite_fracture
+  ID 1
+POROSITY 0.33901427123993033
+END
+
+MATERIAL_PROPERTY seawater
+  ID 2
+POROSITY 0.6609857287600697
+END
+
+OUTPUT
+  TIMES yr 500
+  FORMAT HDF5
+END
+
+TIME
+  FINAL_TIME 500 yr
+  INITIAL_TIMESTEP_SIZE 1.d-5 yr
+  MAXIMUM_TIMESTEP_SIZE 1.d-2 yr
+END
+
+REGION cell1
+  COORDINATES
+    0.d0  0.d0  0.d0
+    1.d0  1.d0  1.d0
+  /
+END
+
+REGION cell2
+  COORDINATES
+    1.d0  0.d0  0.d0
+    2.d0  1.d0  1.d0
+  /
+END
+
+REGION OBSV
+  COORDINATE 1.5d0 0.5d0 0.5d0
+END
+
+OBSERVATION
+  REGION OBSV
+END
+
+TRANSPORT_CONDITION GRANITE_FRACTURE_TC
+  TYPE DIRICHLET
+  CONSTRAINT_LIST
+    0.d0 granite_fracture_conc
+  /
+END
+
+TRANSPORT_CONDITION SEAWATER_TC
+  TYPE DIRICHLET
+  CONSTRAINT_LIST
+    0.d0 seawater_conc
+  /
+END
+
+INITIAL_CONDITION GRANITE_FRACTURE
+  TRANSPORT_CONDITION GRANITE_FRACTURE_TC
+  REGION cell1
+END
+
+INITIAL_CONDITION SEAWATER
+  TRANSPORT_CONDITION SEAWATER_TC
+  REGION cell2
+END
+
+! Constraints are pre-calculated by PHREEQC to achieve semi-equilibrium state
+  
+CONSTRAINT granite_fracture_conc
+  CONCENTRATIONS
+    H+		6.835755  		    pH
+    CO3--	0.002026701 	      T
+    Ca++ 	0.02312673	      T
+    Cl-		0.1392766		      Z
+    Fe++	0.00003310075	    T  
+    K+		0.000875 	        T
+    Mg++	0.009300036 	    T
+    Na+		0.0888		        T
+    SO4--	0.00680009 	    T
+    H4(SiO4)	0.0002337517	T
+    Al+++	1.000003E-16		        T
+    UO2++	1.000104E-16			        T
+    O2(aq)	-2.629046		    PE
+  /
+  MINERALS
+    Smectite_MX80 	0.0                     1e3 	m^2/m^3
+    InertMineral		0.0                	    1e3 	m^2/m^3
+    Quartz		      0.2                 	  1e3 	m^2/m^3
+    Gypsum		      0.0                 	  1e3 	m^2/m^3
+    Pyrite		      0.0                   	1e3 	m^2/m^3
+    Calcite		      0.2                     1e3 	m^2/m^3
+    Dolomite	     	0.0	                    1e3 	m^2/m^3
+    Siderite	    	0.0	                    1e3 	m^2/m^3
+    UO2:2H2O(am)		    0.0	                    1e3 	m^2/m^3
+  /
+/	
+
+CONSTRAINT seawater_conc
+  CONCENTRATIONS
+    H+		8.22        	  	PH
+    CO3--	2.191d-3        	T
+    Ca++ 	1.066d-2      		T
+    Cl-		5.657d-1      		T
+    Fe++	3.711d-8          T
+    K+		1.058d-2        	T
+    Mg++	5.507d-2        	T
+    Na+		4.847d-1      		Z
+    SO4--	2.926d-2        	T
+    H4(SiO4)	7.382d-5 	    T
+    Al+++	1e-16			        T
+    UO2++	1e-16			        T
+    O2(aq)	0.2			        G O2(g) 
+  /
+  MINERALS
+    Smectite_MX80 	0.0                     1e3 	m^2/m^3
+    InertMineral		0.0                	    1e3 	m^2/m^3
+    Quartz		      0.2                  	  1e3 	m^2/m^3
+    Gypsum		      0.0                 	  1e3 	m^2/m^3
+    Pyrite		      0.0                    	1e3 	m^2/m^3
+    Calcite		      0.2                     1e3 	m^2/m^3
+    Dolomite	     	0.0	                    1e3 	m^2/m^3
+    Siderite	    	0.0	                    1e3 	m^2/m^3
+    UO2:2H2O(am)		    0.0	                    1e3 	m^2/m^3
+  /
+/	
+  
+STRATA
+  REGION cell1
+  MATERIAL granite_fracture
+END
+
+STRATA
+  REGION cell2
+  MATERIAL seawater
+END

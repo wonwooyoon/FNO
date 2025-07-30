@@ -1,0 +1,5 @@
+# This is a .gitignore file for the FNO project
+
+.venv_FNO/*
+neuraloperator/*
+*.out

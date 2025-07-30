@@ -1,0 +1,301 @@
+SIMULATION
+  SIMULATION_TYPE SUBSURFACE
+  PROCESS_MODELS
+    SUBSURFACE_TRANSPORT transport
+      MODE GIRT
+    /
+  /
+END
+
+SUBSURFACE
+
+REFERENCE_TEMPERATURE 35
+NUMERICAL_METHODS transport
+  NEWTON_SOLVER
+    STOL 1e-50
+    ATOL 1e-50
+    RTOL 5e-7
+    ITOL_UPDATE 1e-14
+    MAXIMUM_NUMBER_OF_ITERATIONS 50
+  /
+/
+
+CHEMISTRY
+
+  ACTIVITY_COEFFICIENTS LAG TIMESTEP
+
+  PRIMARY_SPECIES
+    H+
+    Ca++
+    Na+
+    K+
+    Mg++
+    CO3--
+    Cl-
+    UO2++
+    O2(aq)
+    H4(SiO4)
+    Fe++
+    Al+++
+    SO4--
+  /
+  SECONDARY_SPECIES
+    OH-
+    CH4
+    Al(OH)4-
+    Al(OH)3
+    NaAl(OH)4
+    Al(OH)2+
+    HCO3-
+    CO2 
+    Na(HCO3)
+    Mg(HCO3)+
+    CaCO3
+    Na(CO3)-
+    FeCO3
+    Fe(OH)CO3
+    Ca(SO4)
+    Ca(HCO3)+
+    MgCl+
+    Fe+++
+    FeCl+
+    Fe(SO4)
+    Fe(OH)+
+    Fe(OH)2+
+    Fe(OH)3
+    Fe(CO3)2--
+    H2(aq)
+    Mg(SO4)
+    Mg(CO3)
+    U++++
+    Ca2UO2(CO3)3
+    CaUO2(CO3)3--
+    UO2(CO3)3----
+    MgUO2(CO3)3--
+    Mg2UO2(CO3)3
+    UO2(CO3)2--
+    UO2(CO3)
+    UO2(OH)+
+    UO2(OH)2
+    U(OH)4
+    UO2+
+    HS-
+    H2S
+    Fe(HS)+
+    SO3--
+    S2O3--
+    Na(S2O3)-
+    Mg(S2O3)
+    Ca(S2O3)
+    H(SO3)-
+    H(SO4)-
+  /
+  
+  PASSIVE_GAS_SPECIES
+    O2(g)
+  /
+  
+  MINERALS
+    Smectite_MX80
+    InertMineral
+    Quartz
+    Gypsum
+    Pyrite
+    Calcite
+    Dolomite
+    Siderite
+    Uraninite
+  /
+
+  ! Kinetics data from Palandri and Kharaka (2004) and Marty et al. (2015)
+    
+  MINERAL_KINETICS
+    
+    Smectite_MX80
+      RATE_CONSTANT		0.0 mol/m^2-sec
+    /
+    InertMineral
+      RATE_CONSTANT   0.0 mol/m^2-sec
+    /
+    Quartz
+      RATE_CONSTANT		1.d-6 mol/m^2-sec
+    /
+    Gypsum
+      RATE_CONSTANT		1.d-6 mol/m^2-sec
+    /   
+    Calcite
+      RATE_CONSTANT		1.d-6 mol/m^2-sec
+    /
+    Pyrite
+      RATE_CONSTANT		1.d-6 mol/m^2-sec
+    / 
+    Dolomite
+      RATE_CONSTANT		1.d-6 mol/m^2-sec
+    /   
+    Siderite
+      RATE_CONSTANT		1.d-6 mol/m^2-sec
+    /
+    Uraninite
+      RATE_CONSTANT		1.d-6 mol/m^2-sec
+    /
+  /
+    
+  
+  SORPTION
+    ION_EXCHANGE_RXN
+      MINERAL Smectite_MX80
+      CEC 2.3925d3 ! unit: eq/m^3 of specified mineral 
+      CATIONS
+        Na+ 1. REFERENCE
+        K+ 3.9810717
+	      Ca++ 2.5703957
+          Mg++ 2.18776
+	      UO2++ 2.8183829
+      /
+    /
+  
+    SURFACE_COMPLEXATION_RXN
+      EQUILIBRIUM
+      MINERAL Smectite_MX80
+      SITE >SOH 5.50 ! unit: mol/m^3 of specified mineral
+      COMPLEXES
+        >SOH2+
+        >SO-
+        >SOUO2+
+        >SOUO2OH
+        >SOUO2(OH)2-
+        >SOUO2(OH)3--
+        >SOUO2CO3-
+        >SOUO2(CO3)2---
+      /
+    /
+
+    SURFACE_COMPLEXATION_RXN
+      EQUILIBRIUM
+      MINERAL Smectite_MX80
+      SITE >WOH 1.11d2 ! unit: mol/m^3 of specified mineral
+      COMPLEXES
+        >WOH2+
+        >WO-
+        >WOUO2+
+        >WOUO2OH
+        >WOUO2CO3-
+      /
+    /
+  
+    SURFACE_COMPLEXATION_RXN
+      EQUILIBRIUM
+      MINERAL Smectite_MX80 
+      SITE >MOH 1.11d2 ! unit: mol/m^3 of specified mineral
+      COMPLEXES
+        >MOH2+
+        >MO-
+      /
+    /
+  /
+  
+  DATABASE PFLOTRAN_O2_ThermoChimie_v12a_T_modified.dat
+  
+  LOG_FORMULATION
+  
+  OUTPUT
+    PH
+    PE
+    TOTAL
+    PRIMARY_SPECIES
+  /
+  
+END
+
+GRID
+  TYPE STRUCTURED
+  NXYZ 1 1 1
+  BOUNDS
+    0.d0  0.d0  0.d0
+    1.d0  1.d0  1.d0
+  /
+END
+
+FLUID_PROPERTY
+  DIFFUSION_COEFFICIENT 1.d-9 
+END
+
+MATERIAL_PROPERTY granite_fracture
+  ID 1
+  POROSITY 0.2
+END
+
+OUTPUT
+  PERIODIC_OBSERVATION TIMESTEP 10
+  TIMES yr 100
+  FORMAT HDF5
+END
+
+TIME
+  FINAL_TIME 500 yr
+  INITIAL_TIMESTEP_SIZE 1.d-5 yr
+  MAXIMUM_TIMESTEP_SIZE 1.d-2 yr
+END
+
+REGION all
+  COORDINATES
+    0.d0  0.d0  0.d0
+    1.d0  1.d0  1.d0
+  /
+END
+
+REGION OBSV
+  COORDINATE 0.5d0 0.5d0 0.5d0
+END
+
+OBSERVATION
+  REGION OBSV
+END
+
+TRANSPORT_CONDITION GRANITE_FRACTURE_TC
+  TYPE DIRICHLET
+  CONSTRAINT_LIST
+    0.d0 granite_fracture_conc
+  /
+END
+
+INITIAL_CONDITION GRANITE_FRACTURE
+  TRANSPORT_CONDITION GRANITE_FRACTURE_TC
+  REGION all
+END
+
+! Constraints are pre-calculated by PHREEQC to achieve semi-equilibrium state
+  
+CONSTRAINT granite_fracture_conc
+  CONCENTRATIONS
+    H+		7.2 		  pH
+    CO3--	2.20d-3 	T
+    Ca++ 	2.33d-2	  T
+    Cl-		1.53d-1		Z
+    Fe++	3.31d-5	  T  
+    K+		8.75d-4 	T
+    Mg++	9.30d-3 	T
+    Na+		8.88d-2		T
+    SO4--	6.80d-3 	T
+    H4(SiO4)	1.85d-4	T
+    Al+++	1e-16			T
+    UO2++	1e-16			T
+    O2(aq)	-2.42		PE
+  /
+  MINERALS
+    Smectite_MX80 	0.0                     1e3 	m^2/m^3
+    InertMineral		0.2           	    1e3 	m^2/m^3
+    Quartz		      0.1             	  1e3 	m^2/m^3
+    Gypsum		      0.0                 	  1e3 	m^2/m^3
+    Pyrite		      0.01                   	1e3 	m^2/m^3
+    Calcite		      0.1                  1e3 	m^2/m^3
+    Dolomite	     	0.0	                    1e3 	m^2/m^3
+    Siderite	    	0.0	                    1e3 	m^2/m^3
+    Uraninite		    0.0	                    1e3 	m^2/m^3
+  /
+/	
+  
+STRATA
+  REGION all
+  MATERIAL granite_fracture
+END
