@@ -318,25 +318,25 @@ FLUID_PROPERTY
 END
 
 DATASET calcite_cell
-  FILENAME ../../initial_mineral/output/calcite_cell_0.h5
+  FILENAME ../../initial_mineral/output/calcite_cell_222.h5
 
   HDF5_DATASET_NAME calcite_cell
 END
 
 DATASET pyrite_cell
-  FILENAME ../../initial_mineral/output/pyrite_cell_0.h5
+  FILENAME ../../initial_mineral/output/pyrite_cell_222.h5
 
   HDF5_DATASET_NAME pyrite_cell
 END
 
 DATASET perms
-  FILENAME ../../initial_perm/output/perm_map_0.h5
+  FILENAME ../../initial_perm/output/perm_map_222.h5
 
   HDF5_DATASET_NAME permsX
 END
 
 DATASET poros
-  FILENAME ../../initial_perm/output/poro_map_0.h5
+  FILENAME ../../initial_perm/output/poro_map_222.h5
 
   HDF5_DATASET_NAME porosX
 END
@@ -446,7 +446,7 @@ FLOW_CONDITION inlet_pressure
   TYPE
     LIQUID_PRESSURE DIRICHLET
   /
-    LIQUID_PRESSURE 501336.5861987202 ! unit: Pa
+    LIQUID_PRESSURE 501485.2593 ! unit: Pa
 
 END
 
@@ -511,6 +511,7 @@ END
 
 ! Constraints are pre-calculated by PHREEQC to achieve semi-equilibrium state
 CONSTRAINT granite_conc
+  ACKNOWLEDGE_ZERO_SURFACE_AREA
   CONCENTRATIONS
     H+		6.835755	    pH
     CO3--	0.002026701	  T
@@ -540,6 +541,7 @@ CONSTRAINT granite_conc
 /
   
 CONSTRAINT bentonite_conc
+  ACKNOWLEDGE_ZERO_SURFACE_AREA
   CONCENTRATIONS
     H+		6.834261		pH
     CO3--	0.001881305 	T
@@ -569,6 +571,7 @@ CONSTRAINT bentonite_conc
 /	
 
 CONSTRAINT source_conc
+  ACKNOWLEDGE_ZERO_SURFACE_AREA
   CONCENTRATIONS
     H+		6.834261		pH
     CO3--	0.001881305 	T
