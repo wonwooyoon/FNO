@@ -12,7 +12,7 @@ sampler = qmc.LatinHypercube(d=2)
 sample = sampler.random(n=num_samples)
 
 # pressure: scale to [pressure_min, pressure_max], then to actual pressure
-pressures = 501325 + 9759.14 * (pressure_min + (pressure_max - pressure_min) * sample[:, 0])
+pressures = 501325 + 9759.14 * (pressure_min + (pressure_max - pressure_min) * sample[:, 0]) * 16
 # ratio: scale to [0, 1]
 ratios = sample[:, 1]
 

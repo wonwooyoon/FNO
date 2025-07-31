@@ -506,6 +506,7 @@ END
 
 ! Constraints are pre-calculated by PHREEQC to achieve semi-equilibrium state
 CONSTRAINT granite_conc
+  ACKNOWLEDGE_ZERO_SURFACE_AREA
   CONCENTRATIONS
     H+		6.835755	    pH
     CO3--	0.002026701	  T
@@ -535,6 +536,7 @@ CONSTRAINT granite_conc
 /
   
 CONSTRAINT bentonite_conc
+  ACKNOWLEDGE_ZERO_SURFACE_AREA
   CONCENTRATIONS
     H+		6.834261		pH
     CO3--	0.001881305 	T
@@ -564,6 +566,7 @@ CONSTRAINT bentonite_conc
 /	
 
 CONSTRAINT source_conc
+  ACKNOWLEDGE_ZERO_SURFACE_AREA
   CONCENTRATIONS
     H+		6.834261		pH
     CO3--	0.001881305 	T

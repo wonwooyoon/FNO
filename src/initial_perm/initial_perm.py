@@ -53,7 +53,7 @@ def generate_scp_field(N, b, size, level_max, density_map_size, iteration):
         aperature_map = np.minimum(0.005, aperature_ratio * density_map)
 
         perm_map = aperature_map ** 3 / 12.0 / 100.0 / 0.005
-        poro_map = aperature_map / 0.005
+        poro_map = aperature_map / 0.005 + 0.01 * (1 - aperature_map / 0.005)
         
         data_shape = perm_map.shape
         data_dtype = perm_map.dtype
