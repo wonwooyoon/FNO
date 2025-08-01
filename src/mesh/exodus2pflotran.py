@@ -252,7 +252,7 @@ def exodus_to_pflotran_mesh(infilename, outfilename):
 
 if __name__ == "__main__":
     
-    exodus_path = './src/mesh/mesh.e'
+    exodus_path = './src/mesh/mesh_full.e'
     hdf_path = './src/mesh/output/mesh.h5'
     sideset_dataset_path = ['/Regions/Sideset1', '/Regions/Sideset2']
     ascii_file_path = ['./src/mesh/output/sideset1.ss', './src/mesh/output/sideset2.ss']

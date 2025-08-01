@@ -5,22 +5,26 @@ from scipy.stats import qmc
 # 샘플링 파라미터 설정
 pressure_min = 0.001
 pressure_max = 0.01
-num_samples = 1000  # 샘플 개수
+num_samples = 10  # 샘플 개수
 
 # uniform sampling
-sampler = qmc.LatinHypercube(d=2)
+sampler = qmc.LatinHypercube(d=4)
 sample = sampler.random(n=num_samples)
 
 # pressure: scale to [pressure_min, pressure_max], then to actual pressure
 pressures = 501325 + 9759.14 * (pressure_min + (pressure_max - pressure_min) * sample[:, 0]) * 16
 # ratio: scale to [0, 1]
 ratios = sample[:, 1]
+degra_mont = sample[:, 2] * 0.369 + 0.1
+intruding_period = sample[:, 3] * 2000 + 1000
 
 # DataFrame 생성
 df = pd.DataFrame({
     'pressure': pressures,
+    'degra_mont': degra_mont,
+    'intruding_period': intruding_period,
     'ratio': ratios
 })
 
 # CSV로 저장
-df.to_csv('./src/initial_others/output/pressure_ratio_samples.csv', index=False)
+df.to_csv('./src/initial_others/output/others.csv', index=False)

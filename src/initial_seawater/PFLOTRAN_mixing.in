@@ -13,8 +13,8 @@ NUMERICAL_METHODS transport
   NEWTON_SOLVER
     STOL 1e-50
     ATOL 1e-50
-    RTOL 5e-7
-    ITOL_UPDATE 1e-14
+    RTOL 1e-7
+    ITOL_UPDATE 1e-15
     MAXIMUM_NUMBER_OF_ITERATIONS 50
   /
 /
@@ -103,6 +103,7 @@ CHEMISTRY
     Calcite
     Dolomite
     Siderite
+    Clinochlore
     UO2:2H2O(am)
   /
 
@@ -132,6 +133,9 @@ CHEMISTRY
       RATE_CONSTANT		1.d-6 mol/m^2-sec
     /   
     Siderite
+      RATE_CONSTANT		1.d-6 mol/m^2-sec
+    /
+    Clinochlore
       RATE_CONSTANT		1.d-6 mol/m^2-sec
     /
     UO2:2H2O(am)
@@ -236,19 +240,19 @@ END
   
 CONSTRAINT granite_fracture_conc
   CONCENTRATIONS
-    H+		6.835755  		    pH
-    CO3--	0.002026701 	      T
-    Ca++ 	0.02312673	      T
+    H+		6.835764  		    pH
+    CO3--	0.002026657 	      T
+    Ca++ 	0.02312668	      T
     Cl-		0.1392766		      Z
     Fe++	0.00003310075	    T  
     K+		0.000875 	        T
-    Mg++	0.009300036 	    T
+    Mg++	0.00930007 	    T
     Na+		0.0888		        T
     SO4--	0.00680009 	    T
     H4(SiO4)	0.0002337517	T
-    Al+++	1.000003E-16		        T
+    Al+++	0.00000001350717		        T
     UO2++	1.000104E-16			        T
-    O2(aq)	-2.629046		    PE
+    O2(aq)	-2.629056		    PE
   /
   MINERALS
     Smectite_MX80 	0.0                     1e3 	m^2/m^3
@@ -288,6 +292,7 @@ CONSTRAINT seawater_conc
     Calcite		      0.2                     1e3 	m^2/m^3
     Dolomite	     	0.0	                    1e3 	m^2/m^3
     Siderite	    	0.0	                    1e3 	m^2/m^3
+    Clinochlore	    	0.2	                    1e3 	m^2/m^3
     UO2:2H2O(am)		    0.0	                    1e3 	m^2/m^3
   /
 /	

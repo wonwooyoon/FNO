@@ -1,5 +1,4 @@
 import numpy as np
-from scipy.spatial.distance import cdist
 import h5py
 
 def generate_gaussian_field_direct_cov(X, Y, nX, nY, x_corr, y_corr, mean, std):
@@ -18,7 +17,7 @@ def generate_gaussian_field_direct_cov(X, Y, nX, nY, x_corr, y_corr, mean, std):
     Z_map = Z.reshape(nY, nX)
     return xx, yy, Z_map
 
-def generate_gaussian_field_fft_anisotopic(X, Y, nX, nY, x_corr, y_corr, mean, std):
+def generate_gaussian_field_fft_anisotropic(X, Y, nX, nY, x_corr, y_corr, mean, std):
     dx = X / (nX-1)
     dy = Y / (nY-1)
     x = np.linspace(0, X, nX)
@@ -51,7 +50,8 @@ def generate_calcite_map(Z, m, s, output_dir, i):
     #Z = Z.T
     
     Z = np.clip(Z, a_max=2.00, a_min=0.0)
-    Z = Z / 5.0 # Divided by 3 mm thickness to calculate the volume fraction
+    Z[Z < 1e-6] = 0 # Under detection limit is treated as 0
+    Z = Z / 5.0 # Divided by 5 mm thickness to calculate the volume fraction
 
     with h5py.File(output_dir, 'w') as hdf5_file:
         calcite_group = hdf5_file.create_group('calcite_mapX')
@@ -65,6 +65,29 @@ def generate_calcite_map(Z, m, s, output_dir, i):
         calcite_group.attrs['Origin'] = [-8.0, -4.0]
         calcite_group.attrs['Cell Centered'] = [True]
 
+def generate_clinochlore_map(Z, m, s, output_dir, n):
+    
+    sigma2 = np.log(1 + (s / m)**2)
+    sigma = np.sqrt(sigma2)
+    mu = np.log(m) - sigma2 / 2
+    Z = np.exp(mu + sigma * Z)
+    #Z = Z.T
+
+    Z = np.clip(Z, a_max=2.00, a_min=0.0)
+    Z[Z < 1e-6] = 0 # Under detection limit is treated as 0
+    Z = Z / 5.0 # 5 mm thickness
+
+    with h5py.File(output_dir, 'w') as hdf5_file:
+        clinochlore_group = hdf5_file.create_group('clinochlore_mapX')
+        data_shape = Z.shape
+        data_dtype = Z.dtype
+        data_dataset = clinochlore_group.create_dataset('Data', shape=data_shape, dtype=data_dtype)
+        data_dataset[:, :] = Z
+        clinochlore_group.attrs.create('Dimension', ['XY'], dtype=h5py.string_dtype(encoding='ascii', length=10))
+        clinochlore_group.attrs.create('Space Interpolation Method', ['STEP'], dtype=h5py.string_dtype(encoding='ascii', length=10))
+        clinochlore_group.attrs['Discretization'] = [0.125, 0.125]
+        clinochlore_group.attrs['Origin'] = [-8.0, -4.0]
+        clinochlore_group.attrs['Cell Centered'] = [True]
 
 def generate_pyrite_map(Z, m, s, output_dir, n):
     
@@ -74,7 +97,8 @@ def generate_pyrite_map(Z, m, s, output_dir, n):
     Z = np.exp(mu + sigma * Z)
     #Z = Z.T
 
-    Z = np.clip(Z, a_max=0.15, a_min=0.0)
+    Z = np.clip(Z, a_max=2.00, a_min=0.0)
+    Z[Z < 1e-9] = 0 # Under detection limit is treated as 0
     Z = Z / 5.0 # 5 mm thickness
 
     with h5py.File(output_dir, 'w') as hdf5_file:
@@ -89,10 +113,9 @@ def generate_pyrite_map(Z, m, s, output_dir, n):
         pyrite_group.attrs['Origin'] = [-8.0, -4.0]
         pyrite_group.attrs['Cell Centered'] = [True]
 
-
 if __name__ == "__main__":
     
-    n = 1000
+    n = 10
     X = 128
     Y = 64
     nX = 128
@@ -106,27 +129,36 @@ if __name__ == "__main__":
         y_corr1 = np.random.uniform(2.0, 10.0)
         x_corr2 = np.random.uniform(2.0, 10.0)
         y_corr2 = np.random.uniform(2.0, 10.0)
+        x_corr3 = np.random.uniform(2.0, 10.0)
+        y_corr3 = np.random.uniform(2.0, 10.0)
 
-        print(f"Iteration {i}: x_corr1={x_corr1}, y_corr1={y_corr1}, x_corr2={x_corr2}, y_corr2={y_corr2}")
+        print(f"Iteration {i}: x_corr1={x_corr1}, y_corr1={y_corr1}, x_corr2={x_corr2}, y_corr2={y_corr2}, x_corr3={x_corr3}, y_corr3={y_corr3}")
 
-        xx, yy, Z1 = generate_gaussian_field_fft_anisotopic(
+        xx, yy, Z1 = generate_gaussian_field_fft_anisotropic(
             X, Y, nX, nY, x_corr1, y_corr1, mean, std
         )
-        xx, yy, Z2 = generate_gaussian_field_fft_anisotopic(
+        xx, yy, Z2 = generate_gaussian_field_fft_anisotropic(
             X, Y, nX, nY, x_corr2, y_corr2, mean, std
         )
 
-        output_dir1 = f"/home/geofluids/research/FNO/src/initial_mineral/output/calcite_{i}.h5"
-        output_dir2 = f"/home/geofluids/research/FNO/src/initial_mineral/output/pyrite_{i}.h5"
+        xx, yy, Z3 = generate_gaussian_field_fft_anisotropic(
+            X, Y, nX, nY, x_corr3, y_corr3, mean, std
+        )
 
-        mu1 = np.random.uniform(0.08, 0.12)
-        mu2 = np.random.uniform(0.0018, 0.0022)
-        s1 = np.random.uniform(0.0, 0.2)
-        s2 = np.random.uniform(0.0, 0.01)
-        print(f"Iteration {i}: mu1={mu1}, s1={s1}, mu2={mu2}, s2={s2}")
+        output_dir1 = f"/home/geofluids/research/FNO/src/initial_mineral/output/calcite_{i}.h5"
+        output_dir2 = f"/home/geofluids/research/FNO/src/initial_mineral/output/clinochlore_{i}.h5"
+        output_dir3 = f"/home/geofluids/research/FNO/src/initial_mineral/output/pyrite_{i}.h5"
+
+        mu1 = 0.03388
+        mu2 = 0.1175
+        mu3 = 9.77e-5
+        s1 = 0.7
+        s2 = 0.46
+        s3 = 1.26
 
         generate_calcite_map(Z1, mu1, s1, output_dir1, i)
-        generate_pyrite_map(Z2, mu2, s2, output_dir2, i)
+        generate_clinochlore_map(Z2, mu2, s2, output_dir2, i)
+        generate_pyrite_map(Z3, mu3, s3, output_dir3, i)
 
 
     

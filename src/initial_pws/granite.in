@@ -13,8 +13,8 @@ REFERENCE_TEMPERATURE 35
 NUMERICAL_METHODS transport
   NEWTON_SOLVER
     STOL 1e-50
-    ATOL 1e-50
-    RTOL 5e-7
+    ATOL 1e-13
+    RTOL 1e-7
     ITOL_UPDATE 1e-14
     MAXIMUM_NUMBER_OF_ITERATIONS 50
   /
@@ -104,7 +104,8 @@ CHEMISTRY
     Calcite
     Dolomite
     Siderite
-    Uraninite
+    Clinochlore
+    UO2:2H2O(am)
   /
 
   ! Kinetics data from Palandri and Kharaka (2004) and Marty et al. (2015)
@@ -135,7 +136,10 @@ CHEMISTRY
     Siderite
       RATE_CONSTANT		1.d-6 mol/m^2-sec
     /
-    Uraninite
+    Clinochlore
+      RATE_CONSTANT   1.d-6 mol/m^2-sec
+    /
+    UO2:2H2O(am)
       RATE_CONSTANT		1.d-6 mol/m^2-sec
     /
   /
@@ -284,14 +288,15 @@ CONSTRAINT granite_fracture_conc
   /
   MINERALS
     Smectite_MX80 	0.0                     1e3 	m^2/m^3
-    InertMineral		0.2           	    1e3 	m^2/m^3
+    InertMineral		0.0           	    1e3 	m^2/m^3
     Quartz		      0.1             	  1e3 	m^2/m^3
     Gypsum		      0.0                 	  1e3 	m^2/m^3
     Pyrite		      0.01                   	1e3 	m^2/m^3
     Calcite		      0.1                  1e3 	m^2/m^3
     Dolomite	     	0.0	                    1e3 	m^2/m^3
     Siderite	    	0.0	                    1e3 	m^2/m^3
-    Uraninite		    0.0	                    1e3 	m^2/m^3
+    Clinochlore     0.2                     1e3   m^2/m^3
+    UO2:2H2O(am)		    0.0	                    1e3 	m^2/m^3
   /
 /	
   

@@ -42,11 +42,11 @@ with h5py.File(file_path, 'r') as hdf:
             mean_x = (np.mean(averages_array[:, 0]) + 8.0) / 0.125
             mean_y = (np.mean(averages_array[:, 1]) + 4.0) / 0.125
 
-            calciate_file_path = f'/home/geofluids/research/FNO/src/initial_mineral/output/calcite_{n}.h5'
+            calcite_file_path = f'/home/geofluids/research/FNO/src/initial_mineral/output/calcite_{n}.h5'
             pyrite_file_path = f'/home/geofluids/research/FNO/src/initial_mineral/output/pyrite_{n}.h5'
 
             # Open the calcite HDF5 file and read data
-            with h5py.File(calciate_file_path, 'r') as calcite_hdf:
+            with h5py.File(calcite_file_path, 'r') as calcite_hdf:
                 calcite_data = calcite_hdf['/calcite_mapX/Data'][:]
 
                 # Get the value at the calculated mean_x and mean_y indices
