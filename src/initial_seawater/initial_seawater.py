@@ -61,7 +61,7 @@ class RatioEquilibrium:
 #!/bin/bash
 base_dir="$(pwd)"
 
-for i in {1..1000}; do
+for i in {1..10}; do
   infile="${base_dir}/src/initial_seawater/output/mixing_${i}.in"
   echo "Running pflotran on $infile..."
   mpirun -n 1 /home/geofluids/pflotran/src/pflotran/pflotran -input_prefix "${infile%.*}"
@@ -105,7 +105,7 @@ echo "All simulations completed and results moved to ./src/initial_seawater/outp
             
 if __name__ == '__main__':
 
-    ratio_dir = './src/initial_others/output/pressure_ratio_samples.csv'
+    ratio_dir = './src/initial_others/output/others.csv'
     default_script_dir = './src/initial_seawater/PFLOTRAN_mixing.in'
     ratio_results_dir = './src/initial_seawater/output'
     components = ['pH', 'pe', 'Al+++', 'CO3--', 'Ca++', 'Cl-', 'Fe++', 'H4(SiO4)', 'K+', 'Mg++', 'Na+', 'SO4--', 'UO2++']

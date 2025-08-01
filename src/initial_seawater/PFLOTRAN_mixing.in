@@ -12,9 +12,9 @@ REFERENCE_TEMPERATURE 35
 NUMERICAL_METHODS transport
   NEWTON_SOLVER
     STOL 1e-50
-    ATOL 1e-50
+    ATOL 1e-15
     RTOL 1e-7
-    ITOL_UPDATE 1e-15
+    ITOL_UPDATE 1e-14
     MAXIMUM_NUMBER_OF_ITERATIONS 50
   /
 /
@@ -263,6 +263,7 @@ CONSTRAINT granite_fracture_conc
     Calcite		      0.2                     1e3 	m^2/m^3
     Dolomite	     	0.0	                    1e3 	m^2/m^3
     Siderite	    	0.0	                    1e3 	m^2/m^3
+    Clinochlore	    	0.2	                    1e3 	m^2/m^3
     UO2:2H2O(am)		    0.0	                    1e3 	m^2/m^3
   /
 /	

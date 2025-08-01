@@ -27,8 +27,7 @@ NUMERICAL_METHODS flow
   /
   TIMESTEPPER
     INITIAL_TIMESTEP_SIZE 1.d-5 yr
-    MAXIMUM_TIMESTEP_SIZE 1.d-3 yr    
-    MAXIMUM_TIMESTEP_SIZE 1.d0 yr at 1 yr
+    MAXIMUM_TIMESTEP_SIZE 1.d0 yr
     MAXIMUM_NUMBER_OF_TIMESTEPS 100000000
   /
 /
@@ -44,8 +43,7 @@ NUMERICAL_METHODS transport
   /
   TIMESTEPPER
     INITIAL_TIMESTEP_SIZE 1.d-5 yr
-    MAXIMUM_TIMESTEP_SIZE 1.d-3 yr
-    MAXIMUM_TIMESTEP_SIZE 1.d-2 yr at 1 yr
+    MAXIMUM_TIMESTEP_SIZE 1.d-2 yr
     MAXIMUM_NUMBER_OF_TIMESTEPS 100000000
   /
 /
@@ -134,6 +132,7 @@ CHEMISTRY
     Calcite
     Dolomite
     Siderite
+    Clinochlore
     UO2:2H2O(am)
   /
 
@@ -233,6 +232,22 @@ CHEMISTRY
 	      ACTIVATION_ENERGY	56.0d3
       /
     /
+
+    Clinochlore
+      SURFACE_AREA_FUNCTION VOLUME_FRACTION_RATIO
+      SURFACE_AREA_VOL_FRAC_POWER 0.66667
+      PREFACTOR
+        RATE_CONSTANT    -11.11
+        ACTIVATION_ENERGY    88.0d3
+        PREFACTOR_SPECIES H+
+          ALPHA     0.5
+        /
+      /
+      PREFACTOR
+        RATE_CONSTANT     -12.52
+        ACTIVATION_ENERGY    88.0d3
+      /
+    /         
        
     UO2:2H2O(am)
       RATE_CONSTANT 1e-9
@@ -315,6 +330,11 @@ END
 
 FLUID_PROPERTY
   DIFFUSION_COEFFICIENT 1.d-9 
+END
+
+DATASET clinochlore_cell
+  FILENAME ../../initial_mineral/output/clinochlore_cell.h5
+  HDF5_DATASET_NAME clinochlore_cell
 END
 
 DATASET calcite_cell
@@ -401,7 +421,7 @@ OUTPUT
 END
 
 TIME
-  FINAL_TIME 1000 yr
+  FINAL_TIME 3000 yr
 END
 
 REGION all
@@ -508,19 +528,19 @@ END
 CONSTRAINT granite_conc
   ACKNOWLEDGE_ZERO_SURFACE_AREA
   CONCENTRATIONS
-    H+		6.835755	    pH
-    CO3--	0.002026701	  T
-    Ca++ 	0.02312673	  T
+    H+		6.835764	    pH
+    CO3--	0.002026657	  T
+    Ca++ 	0.02312668	  T
     Cl-		0.1392766	    Z
     Fe++	0.00003310075	T
     K+		0.000875	    T
-    Mg++	0.009300036	  T
+    Mg++	0.00930007	  T
     Na+		0.0888	      T
     SO4--	0.00680009 	T
     H4(SiO4)	0.0002337517	T
-    Al+++	1.00E-16			T
-    UO2++	1.00E-16			T
-    O2(aq)	-2.629046	PE
+    Al+++	0.00000001350717			T
+    UO2++	1.000104E-16			T
+    O2(aq)	-2.629056	PE
   /
   MINERALS
     Smectite_MX80 	0.0	1e2 	m^2/m^3
@@ -531,6 +551,7 @@ CONSTRAINT granite_conc
     Calcite		DATASET calcite_cell	0.7 	m^2/g
     Dolomite		0.0	1e2 	m^2/m^3
     Siderite		0.0	1e2 	m^2/m^3
+    Clinochlore   DATASET clinochlore_cell 0.0027 m^2/g
     UO2:2H2O(am)		0.0	1e2 	m^2/m^3
   /
 /
@@ -538,19 +559,19 @@ CONSTRAINT granite_conc
 CONSTRAINT bentonite_conc
   ACKNOWLEDGE_ZERO_SURFACE_AREA
   CONCENTRATIONS
-    H+		6.834261		pH
-    CO3--	0.001881305 	T
-    Ca++ 	0.02943975	T
+    H+		6.83427		pH
+    CO3--	0.001881264 	T
+    Ca++ 	0.0294397	T
     Cl-		0.1392766		Z
     Fe++	0.00003310096	T 
-    K+		0.0009260781	T
-    Mg++	0.01145154	T
-    Na+		0.09379944		T
-    SO4--	0.01793529	T
+    K+		0.0009260782	T
+    Mg++	0.01145159	T
+    Na+		0.09379946		T
+    SO4--	0.01793532	T
     H4(SiO4)	0.0002337517	T
-    Al+++	1e-16			T
-    UO2++	1e-16			T
-    O2(aq)	-2.574835		PE
+    Al+++	0.00000001109302			T
+    UO2++	9.931716E-17			T
+    O2(aq)	-2.574846		PE
   /
   MINERALS
     Smectite_MX80 	0.46894545454545455	8.5 	m^2/g
@@ -561,6 +582,7 @@ CONSTRAINT bentonite_conc
     Calcite		0.0	1e2 	m^2/m^3
     Dolomite		0.0	1e2 	m^2/m^3
     Siderite		0.0	1e2 	m^2/m^3
+    Clinochlore  0.0 1e2 m^2/m^3
     UO2:2H2O(am)		0.0	1e2 	m^2/m^3
   /
 /	
@@ -568,19 +590,19 @@ CONSTRAINT bentonite_conc
 CONSTRAINT source_conc
   ACKNOWLEDGE_ZERO_SURFACE_AREA
   CONCENTRATIONS
-    H+		6.834261		pH
-    CO3--	0.001881305 	T
-    Ca++ 	0.02943975	T
+    H+		6.83427		pH
+    CO3--	0.001881264 	T
+    Ca++ 	0.0294397	T
     Cl-		0.1392766		Z
     Fe++	0.00003310096	T 
-    K+		0.0009260781	T
-    Mg++	0.01145154	T
-    Na+		0.09379944		T
-    SO4--	0.01793529	T
+    K+		0.0009260782	T
+    Mg++	0.01145159	T
+    Na+		0.09379946		T
+    SO4--	0.01793532	T
     H4(SiO4)	0.0002337517	T
-    Al+++	1e-16			T
-    UO2++	1e-16			M UO2:2H2O(am)
-    O2(aq)	-2.574835		PE
+    Al+++	0.00000001109302			T
+    UO2++	9.931716E-17			M UO2:2H2O(am)
+    O2(aq)	-2.574846		PE
   /
   MINERALS
     Smectite_MX80 	0.0	0.0 	m^2/m^3
@@ -591,6 +613,7 @@ CONSTRAINT source_conc
     Calcite		0.0	0.0 	m^2/m^3
     Dolomite		0.0	0.0 	m^2/m^3
     Siderite		0.0	0.0 	m^2/m^3
+    Clinochlore  0.0	0.0 	m^2/m^3
     UO2:2H2O(am)		0.05 0.05 m^2/g
   /
 /

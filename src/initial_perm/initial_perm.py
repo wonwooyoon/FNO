@@ -86,13 +86,13 @@ def generate_scp_field(N, b, size, level_max, density_map_size, iteration):
 
 if __name__ == '__main__':
     
-    map_num = 1000
+    map_num = 3000
     N = 9
     b = 2.64
     size = 256
     level_max = 5
     density_map_size = 128
 
-    with Pool(10) as p:
+    with Pool(30) as p:
         p.starmap(generate_scp_field, [(N, b, size, level_max, density_map_size, i) for i in range(map_num)])
         

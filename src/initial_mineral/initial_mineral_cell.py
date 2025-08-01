@@ -17,12 +17,14 @@ with h5py.File(file_path, 'r') as hdf:
 
     # Initialize a list to store the averages
 
+    values_clinochlore = np.zeros((len(materials_cell_ids), 2))
+    values_clinochlore[:, 0] = materials_cell_ids
     values_calcite = np.zeros((len(materials_cell_ids), 2))
     values_calcite[:, 0] = materials_cell_ids
     values_pyrite = np.zeros((len(materials_cell_ids), 2))
     values_pyrite[:, 0] = materials_cell_ids
 
-    for n in range(1000):
+    for n in range(10):
         for idx in indices:
             # Get the corresponding row in domain_cells
             cell_row = domain_cells[materials_cell_ids[idx]-1]
@@ -42,8 +44,19 @@ with h5py.File(file_path, 'r') as hdf:
             mean_x = (np.mean(averages_array[:, 0]) + 8.0) / 0.125
             mean_y = (np.mean(averages_array[:, 1]) + 4.0) / 0.125
 
+            clinochlore_file_path = f'/home/geofluids/research/FNO/src/initial_mineral/output/clinochlore_{n}.h5'
             calcite_file_path = f'/home/geofluids/research/FNO/src/initial_mineral/output/calcite_{n}.h5'
             pyrite_file_path = f'/home/geofluids/research/FNO/src/initial_mineral/output/pyrite_{n}.h5'
+
+            # Open the clinochlore HDF5 file and read data
+            with h5py.File(clinochlore_file_path, 'r') as clinochlore_hdf:
+                clinochlore_data = clinochlore_hdf['/clinochlore_mapX/Data'][:]
+
+                # Get the value at the calculated mean_x and mean_y indices
+                x_index = int(mean_x)
+                y_index = int(mean_y)
+                clinochlore_data[x_index, y_index]
+                values_clinochlore[idx, 1] = clinochlore_data[x_index, y_index]
 
             # Open the calcite HDF5 file and read data
             with h5py.File(calcite_file_path, 'r') as calcite_hdf:
@@ -65,6 +78,10 @@ with h5py.File(file_path, 'r') as hdf:
                 pyrite_data[x_index, y_index]
                 values_pyrite[idx, 1] = pyrite_data[x_index, y_index]
             
+
+        with h5py.File(f'/home/geofluids/research/FNO/src/initial_mineral/output/clinochlore_cell_{n}.h5', 'w') as output_hdf:
+            output_hdf.create_dataset('Cell Ids', data=values_clinochlore[:, 0].astype('int32'))
+            output_hdf.create_dataset('clinochlore_cell', data=values_clinochlore[:, 1])
 
         with h5py.File(f'/home/geofluids/research/FNO/src/initial_mineral/output/calcite_cell_{n}.h5', 'w') as output_hdf:
             output_hdf.create_dataset('Cell Ids', data=values_calcite[:, 0].astype('int32'))

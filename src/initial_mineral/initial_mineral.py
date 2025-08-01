@@ -97,7 +97,7 @@ def generate_pyrite_map(Z, m, s, output_dir, n):
     Z = np.exp(mu + sigma * Z)
     #Z = Z.T
 
-    Z = np.clip(Z, a_max=2.00, a_min=0.0)
+    Z = np.clip(Z, a_max=0.05, a_min=0.0)
     Z[Z < 1e-9] = 0 # Under detection limit is treated as 0
     Z = Z / 5.0 # 5 mm thickness
 
@@ -115,7 +115,7 @@ def generate_pyrite_map(Z, m, s, output_dir, n):
 
 if __name__ == "__main__":
     
-    n = 10
+    n = 3000
     X = 128
     Y = 64
     nX = 128
@@ -149,12 +149,12 @@ if __name__ == "__main__":
         output_dir2 = f"/home/geofluids/research/FNO/src/initial_mineral/output/clinochlore_{i}.h5"
         output_dir3 = f"/home/geofluids/research/FNO/src/initial_mineral/output/pyrite_{i}.h5"
 
-        mu1 = 0.03388
-        mu2 = 0.1175
-        mu3 = 9.77e-5
-        s1 = 0.7
-        s2 = 0.46
-        s3 = 1.26
+        mu1 = np.random.uniform(0.02, 0.04)
+        mu2 = np.random.uniform(0.5, 0.15)
+        mu3 = np.random.uniform(5e-5, 1.5e-4)
+        s1 = np.random.uniform(0.5, 0.9)
+        s2 = np.random.uniform(0.2, 0.6)
+        s3 = np.random.uniform(1.0, 1.5)
 
         generate_calcite_map(Z1, mu1, s1, output_dir1, i)
         generate_clinochlore_map(Z2, mu2, s2, output_dir2, i)
