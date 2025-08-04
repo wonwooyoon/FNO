@@ -3,5 +3,8 @@
 .venv_FNO/*
 neuraloperator/*
 *.out
-mixing_*.in
-mixing_*.h5
+mixing_*
+calcite_*.5
+pyrite_*.5
+clinochlore_*.5
+!*cell*

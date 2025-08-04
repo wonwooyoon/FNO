@@ -24,7 +24,7 @@ with h5py.File(file_path, 'r') as hdf:
     values_pyrite = np.zeros((len(materials_cell_ids), 2))
     values_pyrite[:, 0] = materials_cell_ids
 
-    for n in range(10):
+    for n in range(3000):
         for idx in indices:
             # Get the corresponding row in domain_cells
             cell_row = domain_cells[materials_cell_ids[idx]-1]

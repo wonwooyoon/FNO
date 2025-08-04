@@ -28,7 +28,7 @@ sampled_degra = sample[:, 1]
 sampled_seawater = pd.read_csv("/home/geofluids/research/FNO/src/initial_seawater/output/mixed_components.csv", header=None).values
 
 # Generate modified files
-max_files = 10
+max_files = 3000
 
 for file_index in range(max_files):
 
