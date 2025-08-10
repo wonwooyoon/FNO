@@ -2,6 +2,10 @@
 
 .venv_FNO/*
 neuraloperator/*
+./src/pflotran_run/output/*
+./src/pflotran_code/output/*.h5
+./src/pflotran_code/output/*.xmf
+./src/pflotran_code/output/*mas.dat
 *.out
 mixing_*
 calcite_*.5
