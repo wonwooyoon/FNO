@@ -7,6 +7,7 @@ neuraloperator/*
 /src/pflotran_code/output/*.xmf
 /src/pflotran_code/output/*mas.dat
 *.out
+*.pt
 mixing_*
 calcite_*.5
 pyrite_*.5

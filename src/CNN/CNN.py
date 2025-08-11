@@ -107,7 +107,7 @@ def load_merged(merged_pt_path: str):
 # =========================
 def main():
     merged_pt_path = "./src/preprocessing/merged.pt"
-    out_dir = Path("./runs/cnn3d_optuna"); out_dir.mkdir(parents=True, exist_ok=True)
+    out_dir = Path("./src/CNN/output"); out_dir.mkdir(parents=True, exist_ok=True)
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     # 1) 데이터 로드
@@ -182,7 +182,7 @@ def main():
     # TPE Sampler
     sampler = optuna.samplers.TPESampler(seed=42, n_startup_trials=10)
     study = optuna.create_study(direction="minimize", sampler=sampler)
-    study.optimize(objective, n_trials=40, show_progress_bar=True)
+    study.optimize(objective, n_trials=10, show_progress_bar=True)
 
     print("\n=== Optuna Best (3D CNN) ===")
     print("Value:", study.best_value)
