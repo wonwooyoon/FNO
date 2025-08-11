@@ -31,14 +31,14 @@ class CustomDataset(Dataset):
     def __getitem__(self, idx):
         return {'x': self.input_tensor[idx], 'y': self.output_tensor[idx]}
 
-def read_pflotran_data(max_count: int):
+def read_pflotran_data(min_count: int, max_count: int):
     base_dir = Path("./src/pflotran_run/output")
     others = pd.read_csv("./src/initial_others/output/others.csv")  # 한 번만 읽기
 
     sims_inputs = []
     sims_outputs = []
 
-    for i in range(max_count):
+    for i in range(min_count, max_count+1):
         file_path = base_dir / f"pflotran_{i}" / f"pflotran_{i}.h5"
         with h5py.File(file_path, "r") as f:
             keys_list = list(f.keys())
@@ -75,6 +75,10 @@ def read_pflotran_data(max_count: int):
             smectite  = np.array(grp0["Smectite_MX80 VF [m^3 mnrl_m^3 bulk]"][:])[zc_mask]
             material  = np.array(grp0["Material ID"][:])[zc_mask]
 
+            grp1 = f["   1 Time  5.00000E+01 y"]
+            x_velo    = np.array(grp1["Liquid X-Velocity [m_per_yr]"][:])[zc_mask]
+            y_velo    = np.array(grp1["Liquid Y-Velocity [m_per_yr]"][:])[zc_mask]
+
             # others.csv에서 i번째 행만 사용 (원 코드와 동일한 열 인덱스)
             others_pressure = float(others.iat[i, 0])
             others_ratio    = float(others.iat[i, 2])
@@ -86,7 +90,8 @@ def read_pflotran_data(max_count: int):
             pyrite_grid    = to_grid(pyrite)
             smectite_grid  = to_grid(smectite)
             material_grid  = to_grid(material)
-            pressure_grid  = np.full((nx, ny), others_pressure, dtype=np.float32)
+            x_velo_grid    = to_grid(x_velo)
+            y_velo_grid    = to_grid(y_velo)
             ratio_grid     = np.full((nx, ny), others_ratio, dtype=np.float32)
 
             # (채널, nx, ny, 1) 형태의 기본 입력
@@ -98,11 +103,12 @@ def read_pflotran_data(max_count: int):
                     pyrite_grid,
                     smectite_grid,
                     material_grid,
-                    pressure_grid,
+                    x_velo_grid,
+                    y_velo_grid,
                     ratio_grid,
                 ],
                 axis=0,
-            )[:, :, :, np.newaxis]  # (8, nx, ny, 1)
+            )[:, :, :, np.newaxis]  # (9, nx, ny, 1)
 
             # --- 시간 키 수집 (원 기준 유지: "N Time" 형태가 포함된 그룹) ---
             # 100~2000까지 100 step: key_name = f"{int(X/50)} Time"
@@ -124,21 +130,12 @@ def read_pflotran_data(max_count: int):
 
             for t_num in times_sorted:
                 matched_key = available[t_num]
-                total_uo2 = np.array(f[matched_key]["Total UO2++ [M]"][:])[zc_mask]
+                total_uo2 = np.log10(np.array(f[matched_key]["Total UO2++ [M]"][:])[zc_mask])
                 output_grid = to_grid(total_uo2)  # (nx, ny)
 
                 # (nx, ny, 1)을 마지막 축으로 유지
                 output_time_slices.append(output_grid[np.newaxis, :, :, np.newaxis])
-                
-                # 시간 레이어 (초 단위는 원 코드와 동일한 50배수)
-                t_val = float(t_num) * 50.0
-                time_grid = np.full((nx, ny, 1), t_val, dtype=np.float32)
-
-                # (9, nx, ny, 1): input_base + time
-                input_with_time = np.concatenate(
-                    [input_base, time_grid[np.newaxis, :, :, :]], axis=0
-                )
-                input_time_slices.append(input_with_time)
+                input_time_slices.append(input_base)
 
             # 시간축 결합: 마지막 축으로 이어붙임 (원 코드 axis=3)
             # input: (9, nx, ny, nt), output: (nx, ny, nt)
@@ -159,13 +156,6 @@ def read_pflotran_data(max_count: int):
     # torch 텐서로 저장 (float32)
     torch.save(torch.from_numpy(input_tensor_full), "./src/preprocessing/input_tensor_com1.pt")
     torch.save(torch.from_numpy(output_tensor_full), "./src/preprocessing/output_tensor_com1.pt")
-
-    # 예시 작성을 위한 com2, com3 저장
-    torch.save(torch.from_numpy(input_tensor_full), "./src/preprocessing/input_tensor_com2.pt")
-    torch.save(torch.from_numpy(output_tensor_full), "./src/preprocessing/output_tensor_com2.pt")
-
-    torch.save(torch.from_numpy(input_tensor_full), "./src/preprocessing/input_tensor_com3.pt")
-    torch.save(torch.from_numpy(output_tensor_full), "./src/preprocessing/output_tensor_com3.pt")
 
 
 def load_and_concat_inoutput_tensors():
@@ -190,7 +180,6 @@ def load_and_concat_inoutput_tensors():
     print("Output Summation shape:", out_summation.shape)
 
     return in_summation, out_summation
-
 
 def FNO_settings(in_summation, out_summation):
 
@@ -274,6 +263,10 @@ def FNO_settings(in_summation, out_summation):
                       save_best=f'test_dataloader_l2'
                       )
 
+        # To load the model later:
+        model.load_state_dict(torch.load(f"TFNO_best_model_{idx}.pt"))
+        model.to(device)
+
         model.eval()
 
         test_loss = trainer.evaluate(eval_loss, test_loader['test_dataloader'], 'test_dataloader')
@@ -310,7 +303,8 @@ def FNO_settings(in_summation, out_summation):
         plt.close()
 
 if __name__ == "__main__":
-    # i = 42
-    # read_pflotran_data(i)
-    in_summation, out_summation = load_and_concat_inoutput_tensors()
-    FNO_settings(in_summation, out_summation)
+    i = 0
+    j = 46
+    read_pflotran_data(i, j)
+    # in_summation, out_summation = load_and_concat_inoutput_tensors()
+    # FNO_settings(in_summation, out_summation)
