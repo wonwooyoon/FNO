@@ -146,7 +146,7 @@ def main():
         domain_padding = trial.suggest_categorical("domain_padding", [[0.1,0.1,0.1], [0.125,0.25,0.4]])
         train_batch_size = trial.suggest_categorical("train_batch_size", [16, 32, 64, 128])
         l2_weight = trial.suggest_float("l2_weight", 1e-8, 1e-3, log=True)
-        initial_lr = trial.suggest_float("initial_lr", 1e-5, 1e-2, log=True)
+        initial_lr = trial.suggest_float("initial_lr", 1e-4, 1e-3, log=True)
 
         # ---- DataLoader (train만 hp 반영, test는 전체 한 배치) ----
         train_loader = DataLoader(train_dataset, batch_size=train_batch_size, shuffle=True)
