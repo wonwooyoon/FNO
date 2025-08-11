@@ -1,29 +1,27 @@
 # train_tfno.py
 """
-- merged 결과물(예: ./src/preprocessing/combined.pt)을 로드해 TFNO 학습/평가/비교그림 생성
-- 기능은 원본과 동일하게 유지:
-  * UnitGaussianNormalizer(mean=tensor, std=tensor, ...) 방식 + fit 호출
-  * Trainer 설정/하이퍼파라미터/스케줄러/평가/플로팅 로직 동일
-  * save_best='test_dataloader_l2' 후 'TFNO_best_model_{idx}.pt' 로드 시도
-- 변경점: merge 함수 호출 대신, 병합 산출물(.pt dict: x,y,xc,yc,time_keys)을 직접 로드
+- merged 결과물(.pt dict: x,y,xc,yc,time_keys)을 직접 로드
+- 기존 기능/로직 유지하되, 하이퍼파라미터 탐색을 Grid → Optuna TPE로 변경
+- 각 Trial에서: 모델/옵티마이저/스케줄러/Trainer 생성 → 학습 → val 손실 반환
+- 최종적으로 best params로 1회 재학습하여 비교 그림 저장
 """
 
 import sys
 sys.path.append('./')
 
+import math
 import torch
+import optuna
+import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader, Dataset
 from sklearn.model_selection import train_test_split
-from itertools import product
-import matplotlib.pyplot as plt
 
 from neuraloperator.neuralop.data.transforms.normalizers import UnitGaussianNormalizer
 from neuraloperator.neuralop.data.transforms.data_processors import DefaultDataProcessor
-from neuraloperator.neuralop import LpLoss, H1Loss
+from neuraloperator.neuralop import LpLoss
 from neuraloperator.neuralop.models import TFNO
 from neuraloperator.neuralop import Trainer
 from neuraloperator.neuralop.training import AdamW
-
 
 # =========================
 # Dataset
@@ -37,21 +35,38 @@ class CustomDataset(Dataset):
     def __getitem__(self, idx):
         return {'x': self.input_tensor[idx], 'y': self.output_tensor[idx]}
 
+# =========================
+# Learning Rate Scheduler (원본 유지)
+# =========================
+class CappedCosineAnnealingWarmRestarts(torch.optim.lr_scheduler._LRScheduler):
+    def __init__(self, optimizer, T_0, T_max, T_mult=1, eta_min=0, last_epoch=-1):
+        self.T_0 = T_0
+        self.T_max = T_max
+        self.T_mult = T_mult
+        self.eta_min = eta_min
+        self.T_i = T_0
+        self.last_restart = 0
+        super().__init__(optimizer, last_epoch)
+    def get_lr(self):
+        t = self.last_epoch - self.last_restart
+        if t >= self.T_i:
+            self.last_restart = self.last_epoch
+            self.T_i = min(self.T_i * self.T_mult, self.T_max)
+            t = 0
+        return [
+            self.eta_min + (base_lr - self.eta_min) * (1 + math.cos(math.pi * t / self.T_i)) / 2
+            for base_lr in self.base_lrs
+        ]
 
 # =========================
 # Utilities
 # =========================
 def load_merged_tensors(merged_pt_path: str):
-    """
-    병합 산출물(.pt)에 저장된 dict에서 x, y를 로드해 반환.
-    merged payload keys: {"x", "y", "xc", "yc", "time_keys"}
-    """
     bundle = torch.load(merged_pt_path, map_location="cpu")
     in_summation = bundle["x"].float()   # (N, 9, nx, ny, nt)
     out_summation = bundle["y"].float()  # (N, 1, nx, ny, nt)
     print("Loaded merged tensors:", tuple(in_summation.shape), tuple(out_summation.shape))
     return in_summation, out_summation
-
 
 def build_model(n_modes, hidden_channels, n_layers, domain_padding, domain_padding_mode, device):
     model = TFNO(
@@ -68,126 +83,147 @@ def build_model(n_modes, hidden_channels, n_layers, domain_padding, domain_paddi
     ).to(device)
     return model
 
-
 def plot_sample_comparison(processor, model, test_dataset, device, save_path="./src/FNO/output_vs_prediction_sample.png"):
     model.eval()
     sample_idx = 0
     item = test_dataset[sample_idx]
     input_sample, output_gt = item['x'], item['y']
-    input_sample = input_sample.unsqueeze(0).to(device)  # add batch dim
-
+    input_sample = input_sample.unsqueeze(0).to(device)
     with torch.no_grad():
         pred = model(input_sample)
-        # 원본 코드 사용법 유지
         pred = processor.out_normalizer.inverse_transform(pred)
         output_gt = output_gt.unsqueeze(0).to(device)
-
     pred_img = pred[0, 0, :, :, 0].cpu().numpy()
     gt_img = output_gt[0, 0, :, :, 0].cpu().numpy()
 
     plt.figure(figsize=(10, 4))
-    plt.subplot(1, 2, 1)
-    plt.title("Ground Truth")
-    plt.imshow(gt_img, cmap='viridis')
-    plt.colorbar()
-    plt.subplot(1, 2, 2)
-    plt.title("Prediction")
-    plt.imshow(pred_img, cmap='viridis')
-    plt.colorbar()
-    plt.tight_layout()
-    plt.savefig(save_path)
-    plt.close()
+    plt.subplot(1, 2, 1); plt.title("Ground Truth"); plt.imshow(gt_img, cmap='viridis'); plt.colorbar()
+    plt.subplot(1, 2, 2); plt.title("Prediction");   plt.imshow(pred_img, cmap='viridis'); plt.colorbar()
+    plt.tight_layout(); plt.savefig(save_path); plt.close()
     print(f"Saved comparison figure → {save_path}")
 
-
 # =========================
-# Main training (refactor only)
+# Main (Optuna TPE)
 # =========================
 def main():
-    # --- 경로만 하드코딩 (merge 산출물) ---
     merged_pt_path = "./src/preprocessing/merged.pt"
 
-    # 1) 데이터 로드 (merge 결과물에서 직접)
+    # 1) 데이터 로드
     in_summation, out_summation = load_merged_tensors(merged_pt_path)
 
-    # 2) 디바이스 및 텐서 이동
+    # 2) 디바이스
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     in_summation = in_summation.to(device)
     out_summation = out_summation.to(device)
 
-    # 3) 정규화 (원본 방식 유지)
-    in_normalizer = UnitGaussianNormalizer(mean=in_summation, std=in_summation, dim=[0, 2, 3, 4], eps=1e-8)
-    out_normalizer = UnitGaussianNormalizer(mean=out_summation, std=out_summation, dim=[0, 2, 3, 4], eps=1e-8)
+    # 3) 정규화 (원본 방식 유지: 전체 데이터로 fit)
+    in_normalizer  = UnitGaussianNormalizer(mean=in_summation,  std=in_summation,  dim=[0,2,3,4], eps=1e-6)
+    out_normalizer = UnitGaussianNormalizer(mean=out_summation, std=out_summation, dim=[0,2,3,4], eps=1e-6)
     in_normalizer.fit(in_summation)
     out_normalizer.fit(out_summation)
     processor = DefaultDataProcessor(in_normalizer, out_normalizer).to(device)
 
-    # 4) 학습/검증 분할 (원본 sklearn 사용)
+    # 4) train/test split
     train_in, test_in, train_out, test_out = train_test_split(
         in_summation, out_summation, test_size=0.2, random_state=42
     )
-
-    # 5) DataLoader 구성
     train_dataset = CustomDataset(train_in, train_out)
-    test_dataset = CustomDataset(test_in, test_out)
-    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
-    test_loader = {'test_dataloader': DataLoader(test_dataset, batch_size=32, shuffle=False)}
+    test_dataset  = CustomDataset(test_in,  test_out)
 
-    # 6) 손실 정의 (원본 동일)
-    l2loss = LpLoss(d=3, p=2)
-    train_loss = l2loss
-    eval_loss = {'l2': l2loss}
+    # 고정 요소들
+    domain_padding_mode_fixed = 'symmetric'
+    N_EPOCHS = 10000
+    EVAL_INTERVAL = 1
 
-    # 7) 하이퍼파라미터 조합 (원본 동일; 1개 조합)
-    n_modes_list = [(32, 16, 5)]
-    hidden_channels_list = [16]
-    n_layers_list = [3]
-    domain_padding_list = [[0.1, 0.1, 0.1]]
-    domain_padding_mode_list = ['symmetric']
-    hyperparameter_combination = list(product(
-        n_modes_list, hidden_channels_list, n_layers_list, domain_padding_list, domain_padding_mode_list
-    ))
+    # 5) Optuna 객체
+    def objective(trial: "optuna.trial.Trial"):
+        # ---- 하이퍼파라미터 공간 (원본 리스트를 카테고리컬로 유지) ----
+        n_modes = trial.suggest_categorical("n_modes",
+            [(32,16,10), (16,16,10), (16,8,10), (32,16,5), (16,16,5), (16,8,5)]
+        )
+        hidden_channels = trial.suggest_categorical("hidden_channels", [16, 32, 64, 128])
+        n_layers = trial.suggest_int("n_layers", 3, 5)
+        domain_padding = trial.suggest_categorical("domain_padding", [[0.1,0.1,0.1], [0.125,0.25,0.4]])
+        train_batch_size = trial.suggest_categorical("train_batch_size", [16, 32, 64, 128])
+        l2_weight = trial.suggest_float("l2_weight", 1e-8, 1e-3, log=True)
+        initial_lr = trial.suggest_float("initial_lr", 1e-5, 1e-2, log=True)
 
-    # 8) 학습 루프 (원본 동작 유지)
-    for idx, (n_modes, hidden_channels, n_layers, domain_padding, domain_padding_mode) in enumerate(hyperparameter_combination):
-        print(f"Training with hyperparameters {idx + 1}/{len(hyperparameter_combination)}")
-        print(f"n_modes: {n_modes}, hidden_channels: {hidden_channels}, n_layers: {n_layers}, "
-              f"domain_padding: {domain_padding}, domain_padding_mode: {domain_padding_mode}")
+        # ---- DataLoader (train만 hp 반영, test는 전체 한 배치) ----
+        train_loader = DataLoader(train_dataset, batch_size=train_batch_size, shuffle=True)
+        test_loader  = {'test_dataloader': DataLoader(test_dataset, batch_size=len(test_dataset), shuffle=False)}
 
-        model = build_model(n_modes, hidden_channels, n_layers, domain_padding, domain_padding_mode, device)
-        optimizer = AdamW(model.parameters(), lr=1e-3, weight_decay=0)
-        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.8)
+        # ---- 모델/최적화/스케줄러/트레이너 ----
+        model = build_model(n_modes, hidden_channels, n_layers, domain_padding, domain_padding_mode_fixed, device)
+        optimizer = AdamW(model.parameters(), lr=initial_lr, weight_decay=l2_weight)
+        scheduler = CappedCosineAnnealingWarmRestarts(optimizer, T_0=10, T_max=160, T_mult=2, eta_min=1e-6)
 
+        l2loss = LpLoss(d=3, p=2)
         trainer = Trainer(
-            model=model, n_epochs=100, device=device,
+            model=model, n_epochs=N_EPOCHS, device=device,
             data_processor=processor, wandb_log=False,
-            eval_interval=3, use_distributed=False, verbose=True
+            eval_interval=EVAL_INTERVAL, use_distributed=False, verbose=True
         )
 
-        ########## 학습 or 불러오기
-        # trainer.train(
-        #     train_loader=train_loader,
-        #     test_loaders=test_loader,
-        #     optimizer=optimizer,
-        #     scheduler=scheduler,
-        #     regularizer=False,
-        #     training_loss=train_loss,
-        #     eval_losses=eval_loss,
-        #     save_best='test_dataloader_l2'
-        # )
+        # ---- 학습 ----
+        trainer.train(
+            train_loader=train_loader,
+            test_loaders=test_loader,
+            optimizer=optimizer,
+            scheduler=scheduler,
+            regularizer=False,
+            early_stopping=True,
+            training_loss=l2loss,
+            eval_losses={'l2': l2loss},
+            save_best='test_dataloader_l2'
+        )
 
-        model.load_state_dict(torch.load(f"./ckpt/best_model_state_dict.pt", weights_only=False))
-        ##########
+        # ---- 평가 (Optuna가 최소화할 값 반환) ----
+        score = trainer.evaluate({'l2': l2loss}, test_loader['test_dataloader'], 'test_dataloader')
+        val_l2 = float(score.get('l2', score)) if isinstance(score, dict) else float(score)
+        return val_l2
 
-        model.to(device)
-        model.eval()
+    # TPE Sampler (Bayesian)
+    sampler = optuna.samplers.TPESampler(seed=42, n_startup_trials=10)
+    study = optuna.create_study(direction="minimize", sampler=sampler)
+    study.optimize(objective, n_trials=40, show_progress_bar=True)
 
-        test_loss = trainer.evaluate(eval_loss, test_loader['test_dataloader'], 'test_dataloader')
-        print(f'Test Loss: {test_loss}')
+    print("\n=== Optuna Best ===")
+    print("Value:", study.best_value)
+    print("Params:", study.best_params)
 
-        # 비교 그림 (원본 스타일)
-        plot_sample_comparison(processor, model, test_dataset, device,
-                               save_path="output_vs_prediction_sample.png")
+    # 6) Best로 재학습 후 비교 그림 저장
+    bp = study.best_params
+    best_model = build_model(
+        bp["n_modes"], bp["hidden_channels"], bp["n_layers"],
+        bp["domain_padding"], domain_padding_mode_fixed, device
+    )
+    optimizer = AdamW(best_model.parameters(), lr=bp["initial_lr"], weight_decay=bp["l2_weight"])
+    scheduler = CappedCosineAnnealingWarmRestarts(optimizer, T_0=10, T_max=160, T_mult=2, eta_min=1e-6)
+
+    l2loss = LpLoss(d=3, p=2)
+    trainer = Trainer(
+        model=best_model, n_epochs=10000, device=device,
+        data_processor=processor, wandb_log=False,
+        eval_interval=1, use_distributed=False, verbose=True
+    )
+    train_loader = DataLoader(train_dataset, batch_size=bp["train_batch_size"], shuffle=True)
+    test_loader  = {'test_dataloader': DataLoader(test_dataset, batch_size=len(test_dataset), shuffle=False)}
+
+    trainer.train(
+        train_loader=train_loader,
+        test_loaders=test_loader,
+        optimizer=optimizer,
+        scheduler=scheduler,
+        regularizer=False,
+        early_stopping=True,
+        training_loss=l2loss,
+        eval_losses={'l2': l2loss},
+        save_best='test_dataloader_l2'
+    )
+
+    # 최종 그림
+    plot_sample_comparison(processor, best_model, test_dataset, device,
+                           save_path="output_vs_prediction_sample.png")
 
 if __name__ == "__main__":
     main()
