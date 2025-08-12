@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import torch
 
-def read_one_h5(h5_path: Path, others_row: pd.Series):
+def read_one_h5(h5_path: Path):
     with h5py.File(h5_path, "r") as f:
         keys_list = list(f.keys())
 
@@ -44,8 +44,6 @@ def read_one_h5(h5_path: Path, others_row: pd.Series):
         x_velo    = np.array(grp1["Liquid X-Velocity [m_per_yr]"][:])[zc_mask]
         y_velo    = np.array(grp1["Liquid Y-Velocity [m_per_yr]"][:])[zc_mask]
 
-        ratio = float(others_row.iloc[2])  # others.csv 3번째 열
-
         perm_grid      = to_grid(perm)
         calcite_grid   = to_grid(calcite)
         clino_grid     = to_grid(clino)
@@ -54,11 +52,10 @@ def read_one_h5(h5_path: Path, others_row: pd.Series):
         material_grid  = to_grid(material)
         x_velo_grid    = to_grid(x_velo)
         y_velo_grid    = to_grid(y_velo)
-        ratio_grid     = np.full((nx, ny), ratio, dtype=np.float32)
 
         input_base = np.stack(
             [perm_grid, calcite_grid, clino_grid, pyrite_grid, smectite_grid,
-             material_grid, x_velo_grid, y_velo_grid, ratio_grid], axis=0
+             material_grid, x_velo_grid, y_velo_grid], axis=0
         )[:, :, :, np.newaxis]  # (9, nx, ny, 1)
 
         # 시간 키 수집(100~2000y, 100 간격)
@@ -102,6 +99,9 @@ if __name__ == "__main__":
     out_pt = f"./src/preprocessing/input_output_com{out_pt}.pt"
 
     others = pd.read_csv(others_csv)
+    meta = others.to_numpy(dtype=np.float32)[min_id:max_id+1, [0, 2]]
+    print(meta)
+
     xs, ys = [], []
     coords_saved, times_saved = None, None
 
@@ -110,7 +110,7 @@ if __name__ == "__main__":
         if not h5_path.exists():
             print(f"[WARN] Skip missing file: {h5_path}")
             continue
-        x, y, coords, tlabels = read_one_h5(h5_path, others.iloc[i])
+        x, y, coords, tlabels = read_one_h5(h5_path)
         xs.append(x[np.newaxis, ...])
         ys.append(y[np.newaxis, ...])
         if coords_saved is None:
@@ -123,12 +123,13 @@ if __name__ == "__main__":
 
     X = torch.from_numpy(np.concatenate(xs, axis=0))
     Y = torch.from_numpy(np.concatenate(ys, axis=0))
+    meta = torch.from_numpy(meta)
     payload = {
-        "x": X, "y": Y,
+        "x": X, "y": Y, "meta": meta,
         "xc": torch.from_numpy(coords_saved[0]),
         "yc": torch.from_numpy(coords_saved[1]),
         "time_keys": times_saved,
     }
     Path(out_pt).parent.mkdir(parents=True, exist_ok=True)
     torch.save(payload, out_pt)
-    print(f"[OK] Saved shard: {out_pt} | x{tuple(X.shape)} y{tuple(Y.shape)}")
+    print(f"[OK] Saved shard: {out_pt} | x{tuple(X.shape)} y{tuple(Y.shape)} meta{tuple(meta.shape)}")

@@ -29,13 +29,14 @@ from neuraloperator.neuralop.training import AdamW
 # Dataset
 # =========================
 class CustomDataset(Dataset):
-    def __init__(self, input_tensor, output_tensor):
+    def __init__(self, input_tensor, output_tensor, meta_tensor):
         self.input_tensor = input_tensor
         self.output_tensor = output_tensor
+        self.meta_tensor = meta_tensor
     def __len__(self):
         return self.input_tensor.shape[0]
     def __getitem__(self, idx):
-        return {'x': self.input_tensor[idx], 'y': self.output_tensor[idx]}
+        return {'x': self.input_tensor[idx], 'y': self.output_tensor[idx], 'meta': self.meta_tensor[idx]}
 
 # =========================
 # Learning Rate Scheduler (원본 유지)
@@ -67,13 +68,15 @@ def load_merged_tensors(merged_pt_path: str):
     bundle = torch.load(merged_pt_path, map_location="cpu")
     in_summation = bundle["x"].float()   # (N, 9, nx, ny, nt)
     out_summation = bundle["y"].float()  # (N, 1, nx, ny, nt)
-    print("Loaded merged tensors:", tuple(in_summation.shape), tuple(out_summation.shape))
-    return in_summation, out_summation
+    meta_summation = bundle["meta"].float()  # (N, 2)
+    print("Loaded merged tensors:", tuple(in_summation.shape), tuple(out_summation.shape), tuple(meta_summation.shape))
+    return in_summation, out_summation, meta_summation
+# merged tensor까지 수정함. 내일은 preprocessing_merge 부분에, meta data를 추가하는 부분부터 시작할것!
 
 def build_model(n_modes, hidden_channels, n_layers, domain_padding, domain_padding_mode, device):
     model = TFNO(
         n_modes=n_modes,
-        in_channels=9,
+        in_channels=8,
         out_channels=1,
         hidden_channels=hidden_channels,
         n_layers=n_layers,
@@ -81,7 +84,9 @@ def build_model(n_modes, hidden_channels, n_layers, domain_padding, domain_paddi
         projection_channel_ratio=2,
         positional_embedding='grid',
         domain_padding=domain_padding,
-        domain_padding_mode=domain_padding_mode
+        domain_padding_mode=domain_padding_mode,
+        film_layer=True,
+        meta_dim=2
     ).to(device)
     return model
 
@@ -280,7 +285,7 @@ def main():
 
     l2loss = LpLoss(d=3, p=2)
     trainer = Trainer(
-        model=best_model, n_epochs=10000, device=device,
+        model=best_model, n_epochs=30, device=device,
         data_processor=processor, wandb_log=False,
         eval_interval=1, use_distributed=False, verbose=True
     )

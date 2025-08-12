@@ -20,7 +20,7 @@ import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
 import optuna
 
-from neuraloperator.neuralop.data.transforms.normalizers import UnitGaussianNormalizer
+from neuraloperator.neuralop.data.transforms.normalizers import UnitGaussianNormalizer, MinMaxNormalizer
 from neuraloperator.neuralop import LpLoss
 
 # =========================
@@ -170,10 +170,14 @@ def main():
 
     # Log10 기반으로 가져온 농도값 수정
     Y = 10 ** Y
+    Y[:, :, 14:18, 14:18, :] = 0
 
     # 2) 정규화 (FNO 흐름과 맞춤: 전체 데이터로 fit)
-    in_norm  = UnitGaussianNormalizer(mean=X, std=X, dim=[0,2,3,4], eps=1e-6);  in_norm.fit(X)
-    out_norm = UnitGaussianNormalizer(mean=Y, std=Y, dim=[0,2,3,4], eps=1e-6); out_norm.fit(Y)
+    # in_norm  = UnitGaussianNormalizer(mean=X, std=X, dim=[0,2,3,4], eps=1e-6);  in_norm.fit(X)
+    # out_norm = UnitGaussianNormalizer(mean=Y, std=Y, dim=[0,2,3,4], eps=1e-6); out_norm.fit(Y)
+    in_norm  = MinMaxNormalizer(data_min=X, data_max=X, dim=[0,2,3,4], eps=1e-6);  in_norm.fit(X)
+    out_norm = MinMaxNormalizer(data_min=Y, data_max=Y, dim=[0,2,3,4], eps=1e-6); out_norm.fit(Y)
+
     X = in_norm.transform(X); Y = out_norm.transform(Y)  # 정규화된 데이터
 
     # 3) split & dataset
@@ -212,7 +216,8 @@ def main():
         # ---- 모델/최적화/스케줄러 ----
         model = SimpleCNN3D(in_ch=X.shape[1], out_ch=Y.shape[1], base=base, depth=depth, kt=kt, ks=ks).to(device)
         optim = torch.optim.AdamW(model.parameters(), lr=init_lr, weight_decay=weight_decay)
-        sched = CappedCosineAnnealingWarmRestarts(optim, T_0=10, T_max=160, T_mult=2, eta_min=1e-6)
+        # sched = CappedCosineAnnealingWarmRestarts(optim, T_0=10, T_max=160, T_mult=2, eta_min=1e-6)
+        sched = torch.optim.lr_scheduler.StepLR(optim, step_size=30, gamma=0.1)
 
         # ---- 학습 루프 (val L2 최소화) ----
         best = float("inf"); patience=320; bad=0
@@ -234,7 +239,7 @@ def main():
                     x = to_3d_order(tb["x"]).to(device)
                     y = to_3d_order(tb["y"]).to(device)
                     pred = model(x)
-                    val = l2(pred, y).item()
+                    val = l2(pred, y).item() / y.size(0)
                 print(f"Epoch {ep:04d} | Val L2: {val:.6f}")
 
                 if val < best:
@@ -274,35 +279,35 @@ def main():
 
     best_model_path = out_dir / "cnn3d_best.pt"
     best = float("inf"); patience=80; bad=0
-    # for ep in range(1, 10000+1):
-    #     model.train()
-    #     for batch in train_loader:
-    #         x = to_3d_order(batch["x"]).to(device)
-    #         y = to_3d_order(batch["y"]).to(device)
-    #         pred = model(x)
-    #         loss = l2(pred, y)
-    #         optim.zero_grad(); loss.backward(); optim.step()
-    #     sched.step()
+    for ep in range(1, 10000+1):
+        model.train()
+        for batch in train_loader:
+            x = to_3d_order(batch["x"]).to(device)
+            y = to_3d_order(batch["y"]).to(device)
+            pred = model(x)
+            loss = l2(pred, y)
+            optim.zero_grad(); loss.backward(); optim.step()
+        sched.step()
 
-    #     # val
-    #     model.eval()
-    #     with torch.no_grad():
-    #         tb = next(iter(test_loader))
-    #         x = to_3d_order(tb["x"]).to(device)
-    #         y = to_3d_order(tb["y"]).to(device)
-    #         pred = model(x)
-    #         val = l2(pred, y).item()
-    #         print(f"Epoch {ep:04d} | Val L2: {val:.6f}")
+        # val
+        model.eval()
+        with torch.no_grad():
+            tb = next(iter(test_loader))
+            x = to_3d_order(tb["x"]).to(device)
+            y = to_3d_order(tb["y"]).to(device)
+            pred = model(x)
+            val = l2(pred, y).item() / y.size(0)
+            print(f"Epoch {ep:04d} | Val L2: {val:.6f}")
 
-    #     if val < best:
-    #         best = val; bad = 0
-    #         torch.save(model.state_dict(), best_model_path)
-    #     else:
-    #         bad += 1
-    #         if bad >= patience:
-    #             break
+        if val < best:
+            best = val; bad = 0
+            torch.save(model.state_dict(), best_model_path)
+        else:
+            bad += 1
+            if bad >= patience:
+                break
 
-    # print(f"[DONE] Best val L2: {best:.6f} | saved: {best_model_path}")
+    print(f"[DONE] Best val L2: {best:.6f} | saved: {best_model_path}")
 
     # 그림 저장 (역정규화)
     model.load_state_dict(torch.load(best_model_path, map_location=device))
@@ -316,9 +321,6 @@ def main():
         # 역정규화
         p_phys = out_norm.inverse_transform(p).detach().cpu()
         g_phys = out_norm.inverse_transform(y).detach().cpu()
-
-        p_phys[:, :, 14:18, 14:18, :] = 0
-        g_phys[:, :, 14:18, 14:18, :] = 0
 
     plot_compare(p_phys, g_phys, save_path=str(out_dir / "cnn3d_optuna_compare.png"), sample_num=8, t_indices=(0, 4, 8, 12, 16))
 
