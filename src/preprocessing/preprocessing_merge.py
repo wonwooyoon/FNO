@@ -53,9 +53,10 @@ if __name__ == "__main__":
     # 병합
     X = torch.cat([sh["x"] for sh in shards], dim=0).contiguous()
     Y = torch.cat([sh["y"] for sh in shards], dim=0).contiguous()
+    META = torch.cat([sh["meta"] for sh in shards], dim=0).contiguous()
 
     payload = {
-        "x": X, "y": Y,
+        "x": X, "y": Y, "meta": META,
         "xc": ref["xc"], "yc": ref["yc"],
         "time_keys": ref["time_keys"],
     }
