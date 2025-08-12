@@ -10,9 +10,11 @@ import sys
 sys.path.append('./')
 
 import math
+import numpy as np
 import torch
 import optuna
 import matplotlib.pyplot as plt
+from matplotlib.gridspec import GridSpec
 from torch.utils.data import DataLoader, Dataset
 from sklearn.model_selection import train_test_split
 
@@ -83,24 +85,71 @@ def build_model(n_modes, hidden_channels, n_layers, domain_padding, domain_paddi
     ).to(device)
     return model
 
-def plot_sample_comparison(processor, model, test_dataset, device, save_path="./src/FNO/output_vs_prediction_sample.png"):
-    model.eval()
-    sample_idx = 0
-    item = test_dataset[sample_idx]
-    input_sample, output_gt = item['x'], item['y']
-    input_sample = input_sample.unsqueeze(0).to(device)
-    with torch.no_grad():
-        pred = model(input_sample)
-        pred = processor.out_normalizer.inverse_transform(pred)
-        output_gt = output_gt.unsqueeze(0).to(device)
-    pred_img = pred[0, 0, :, :, 0].cpu().numpy()
-    gt_img = output_gt[0, 0, :, :, 0].cpu().numpy()
+@torch.no_grad()
+def plot_compare(pred_phys, gt_phys, save_path, sample_num=0, t_indices=(0,1,2,3,4)):
 
-    plt.figure(figsize=(10, 4))
-    plt.subplot(1, 2, 1); plt.title("Ground Truth"); plt.imshow(gt_img, cmap='viridis'); plt.colorbar()
-    plt.subplot(1, 2, 2); plt.title("Prediction");   plt.imshow(pred_img, cmap='viridis'); plt.colorbar()
-    plt.tight_layout(); plt.savefig(save_path); plt.close()
-    print(f"Saved comparison figure → {save_path}")
+    # 데이터 수집
+    pis, gis, ers = [], [], []
+    for t in t_indices:
+        pi = pred_phys[sample_num,0,:,:,t].cpu().numpy()
+        gi = gt_phys[sample_num,0,:,:,t].cpu().numpy()
+        pis.append(pi); gis.append(gi); ers.append(np.abs(pi-gi))
+
+    # GT/Pred 공용 범위
+    vmin = min(np.min(pis), np.min(gis))
+    vmax = max(np.max(pis), np.max(gis))
+
+    ncols = len(t_indices)
+    # 가로 폭은 시점 개수에 비례해서 늘림
+    fig_h = 3.6 * 3
+    fig_w = 1.8 * ncols + 1.6  # 오른쪽 컬러바 폭 고려
+    fig = plt.figure(figsize=(fig_w, fig_h), constrained_layout=True)
+
+    # GridSpec: 3행(GT/Pred/Error) x ncols(시간), 오른쪽에 컬러바 2칸
+    gs = GridSpec(nrows=3, ncols=ncols+2, figure=fig,
+                  width_ratios=[*([1]*ncols), 0.05, 0.05],
+                  height_ratios=[1,1,1], wspace=0.08, hspace=0.12)
+
+    axes_gt, axes_pred, axes_err = [], [], []
+    for r in range(3):
+        row_axes = []
+        for c in range(ncols):
+            ax = fig.add_subplot(gs[r, c])
+            row_axes.append(ax)
+        if r == 0: axes_gt = row_axes
+        elif r == 1: axes_pred = row_axes
+        else: axes_err = row_axes
+
+    # 플롯
+    ims_gt, ims_pred, ims_err = [], [], []
+    for c, (pi, gi, er, t) in enumerate(zip(pis, gis, ers, t_indices)):
+        im1 = axes_gt[c].imshow(gi, vmin=vmin, vmax=vmax)
+        im2 = axes_pred[c].imshow(pi, vmin=vmin, vmax=vmax)
+        im3 = axes_err[c].imshow(er)
+        ims_gt.append(im1); ims_pred.append(im2); ims_err.append(im3)
+
+        axes_gt[c].set_title(f"GT (t={t})")
+        if c == 0:
+            axes_pred[c].set_ylabel("Prediction", rotation=90, labelpad=20)
+            axes_err[c].set_ylabel("Abs Error", rotation=90, labelpad=20)
+
+    # 축 꾸미기
+    for row in (axes_gt, axes_pred, axes_err):
+        for ax in row:
+            ax.set_xticks([]); ax.set_yticks([])
+
+    # 컬러바(오른쪽 2칸 사용)
+    cax_main = fig.add_subplot(gs[:, ncols])     # GT/Pred 공용
+    cax_err  = fig.add_subplot(gs[:, ncols+1])   # Error 전용
+    # 공용 컬러바는 GT/Pred 중 아무거나 핸들로 사용
+    cb_main = fig.colorbar(ims_gt[0], cax=cax_main)
+    cb_main.set_label("Value")
+    cb_err  = fig.colorbar(ims_err[0], cax=cax_err)
+    cb_err.set_label("Abs Error")
+
+    fig.savefig(save_path, dpi=200)
+    plt.close(fig)
+    print(f"[OK] Saved multi-time figure: {save_path}")
 
 # =========================
 # Main (Optuna TPE)
@@ -115,6 +164,9 @@ def main():
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     in_summation = in_summation.to(device)
     out_summation = out_summation.to(device)
+
+    out_summation = 10 ** out_summation
+    out_summation[:, :, 14:18, 14:18, :] = 0
 
     # 3) 정규화 (원본 방식 유지: 전체 데이터로 fit)
     in_normalizer  = UnitGaussianNormalizer(mean=in_summation,  std=in_summation,  dim=[0,2,3,4], eps=1e-6)
@@ -138,13 +190,23 @@ def main():
     # 5) Optuna 객체
     def objective(trial: "optuna.trial.Trial"):
         # ---- 하이퍼파라미터 공간 (원본 리스트를 카테고리컬로 유지) ----
+        # n_modes = trial.suggest_categorical("n_modes",
+        #     [(32,16,10), (16,16,10), (16,8,10), (32,16,5), (16,16,5), (16,8,5)]
+        # )
+        # hidden_channels = trial.suggest_categorical("hidden_channels", [16, 32, 64, 128])
+        # n_layers = trial.suggest_int("n_layers", 3, 5)
+        # domain_padding = trial.suggest_categorical("domain_padding", [[0.1,0.1,0.1], [0.125,0.25,0.4]])
+        # train_batch_size = trial.suggest_categorical("train_batch_size", [16, 32, 64, 128])
+        # l2_weight = trial.suggest_float("l2_weight", 1e-8, 1e-3, log=True)
+        # initial_lr = trial.suggest_float("initial_lr", 1e-4, 1e-3, log=True)
+
         n_modes = trial.suggest_categorical("n_modes",
-            [(32,16,10), (16,16,10), (16,8,10), (32,16,5), (16,16,5), (16,8,5)]
+            [(16,16,5), (16,8,5)]
         )
-        hidden_channels = trial.suggest_categorical("hidden_channels", [16, 32, 64, 128])
-        n_layers = trial.suggest_int("n_layers", 3, 5)
-        domain_padding = trial.suggest_categorical("domain_padding", [[0.1,0.1,0.1], [0.125,0.25,0.4]])
-        train_batch_size = trial.suggest_categorical("train_batch_size", [16, 32, 64, 128])
+        hidden_channels = trial.suggest_categorical("hidden_channels", [8])
+        n_layers = trial.suggest_categorical("n_layers", [2])
+        domain_padding = trial.suggest_categorical("domain_padding", [[0.125,0.25,0.4]])
+        train_batch_size = trial.suggest_categorical("train_batch_size", [64])
         l2_weight = trial.suggest_float("l2_weight", 1e-8, 1e-3, log=True)
         initial_lr = trial.suggest_float("initial_lr", 1e-4, 1e-3, log=True)
 
@@ -155,7 +217,7 @@ def main():
         # ---- 모델/최적화/스케줄러/트레이너 ----
         model = build_model(n_modes, hidden_channels, n_layers, domain_padding, domain_padding_mode_fixed, device)
         optimizer = AdamW(model.parameters(), lr=initial_lr, weight_decay=l2_weight)
-        scheduler = CappedCosineAnnealingWarmRestarts(optimizer, T_0=10, T_max=160, T_mult=2, eta_min=1e-6)
+        scheduler = CappedCosineAnnealingWarmRestarts(optimizer, T_0=10, T_max=80, T_mult=2, eta_min=1e-6)
 
         l2loss = LpLoss(d=3, p=2)
         trainer = Trainer(
@@ -165,6 +227,9 @@ def main():
         )
 
         # ---- 학습 ----
+
+        best_model_path = './src/FNO/output/optuna'
+
         trainer.train(
             train_loader=train_loader,
             test_loaders=test_loader,
@@ -174,31 +239,44 @@ def main():
             early_stopping=True,
             training_loss=l2loss,
             eval_losses={'l2': l2loss},
-            save_best='test_dataloader_l2'
+            save_best='test_dataloader_l2',
+            save_dir=best_model_path
         )
 
-        # ---- 평가 (Optuna가 최소화할 값 반환) ----
-        score = trainer.evaluate({'l2': l2loss}, test_loader['test_dataloader'], 'test_dataloader')
-        val_l2 = float(score.get('l2', score)) if isinstance(score, dict) else float(score)
+        model.load_state_dict(torch.load(f'{best_model_path}/best_model_state_dict.pt', map_location=device,weights_only=False))
+        model.eval()
+
+        with torch.no_grad():
+            xy = next(iter(test_loader))
+            x = xy["x"].to(device)
+            y = xy["y"].to(device)
+            pred = model(x)
+            val_l2 = l2loss(pred, y).item()
+        
         return val_l2
 
-    # TPE Sampler (Bayesian)
-    sampler = optuna.samplers.TPESampler(seed=42, n_startup_trials=10)
-    study = optuna.create_study(direction="minimize", sampler=sampler)
-    study.optimize(objective, n_trials=40, show_progress_bar=True)
+    # # TPE Sampler (Bayesian)
+    # sampler = optuna.samplers.TPESampler(seed=42, n_startup_trials=2)
+    # study = optuna.create_study(direction="minimize", sampler=sampler)
+    # study.optimize(objective, n_trials=2, show_progress_bar=True)
 
-    print("\n=== Optuna Best ===")
-    print("Value:", study.best_value)
-    print("Params:", study.best_params)
+    # print("\n=== Optuna Best ===")
+    # print("Value:", study.best_value)
+    # print("Params:", study.best_params)
 
     # 6) Best로 재학습 후 비교 그림 저장
-    bp = study.best_params
+    #bp = study.best_params
+
+    bp = {"n_modes": (32, 16, 10), "hidden_channels": 16, "n_layers": 2, "domain_padding": [0.1, 0.1, 0.1], "train_batch_size": 64, "l2_weight": 1e-8, "initial_lr": 1e-4}
     best_model = build_model(
         bp["n_modes"], bp["hidden_channels"], bp["n_layers"],
         bp["domain_padding"], domain_padding_mode_fixed, device
     )
+
+    print(f'number of parameters: {sum(p.numel() for p in best_model.parameters())}')
+
     optimizer = AdamW(best_model.parameters(), lr=bp["initial_lr"], weight_decay=bp["l2_weight"])
-    scheduler = CappedCosineAnnealingWarmRestarts(optimizer, T_0=10, T_max=160, T_mult=2, eta_min=1e-6)
+    scheduler = CappedCosineAnnealingWarmRestarts(optimizer, T_0=10, T_max=80, T_mult=2, eta_min=1e-6)
 
     l2loss = LpLoss(d=3, p=2)
     trainer = Trainer(
@@ -209,6 +287,8 @@ def main():
     train_loader = DataLoader(train_dataset, batch_size=bp["train_batch_size"], shuffle=True)
     test_loader  = {'test_dataloader': DataLoader(test_dataset, batch_size=len(test_dataset), shuffle=False)}
 
+    best_model_path = './src/FNO/output/final'
+
     trainer.train(
         train_loader=train_loader,
         test_loaders=test_loader,
@@ -218,12 +298,26 @@ def main():
         early_stopping=True,
         training_loss=l2loss,
         eval_losses={'l2': l2loss},
-        save_best='test_dataloader_l2'
+        save_best='test_dataloader_l2',
+        save_dir=best_model_path
     )
+    
+    # 그림 저장 (역정규화)
+    best_model.load_state_dict(torch.load(f'{best_model_path}/best_model_state_dict.pt', map_location=device,weights_only=False))
+    best_model.eval()
+
+    with torch.no_grad():
+        xb = next(iter(test_loader["test_dataloader"]))
+        x = xb["x"].to(device) 
+        y = xb["y"].to(device)
+        p = best_model(in_normalizer.transform(x)) 
+
+        # 역정규화
+        p_phys = out_normalizer.inverse_transform(p).detach().cpu()
+        g_phys = y.detach().cpu()
 
     # 최종 그림
-    plot_sample_comparison(processor, best_model, test_dataset, device,
-                           save_path="output_vs_prediction_sample.png")
+    plot_compare(p_phys, g_phys, save_path=str('./src/FNO/output/FNO_compare.png'), sample_num=18, t_indices=(0, 4, 8, 12, 16))
 
 if __name__ == "__main__":
     main()

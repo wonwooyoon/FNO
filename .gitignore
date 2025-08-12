@@ -2,10 +2,13 @@
 
 .venv_FNO/*
 neuraloperator/*
+/src/FNO/output/**
+/src/CNN/output/**
 /src/pflotran_run/output/**
 /src/pflotran_code/output/*.h5
 /src/pflotran_code/output/*.xmf
 /src/pflotran_code/output/*mas.dat
+*.png
 *.out
 *.pt
 mixing_*

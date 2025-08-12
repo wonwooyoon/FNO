@@ -10,12 +10,14 @@ import sys
 sys.path.append("./")
 
 import math
+import numpy as np 
 from pathlib import Path
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 from sklearn.model_selection import train_test_split
 import matplotlib.pyplot as plt
+from matplotlib.gridspec import GridSpec
 import optuna
 
 from neuraloperator.neuralop.data.transforms.normalizers import UnitGaussianNormalizer
@@ -39,33 +41,85 @@ def from_3d_order(x):
     return x.permute(0,1,3,4,2).contiguous()
 
 @torch.no_grad()
-def plot_compare(pred_phys, gt_phys, save_path, t_index=0):
-    pi = pred_phys[0,0,:,:,t_index].cpu().numpy()
-    gi = gt_phys[0,0,:,:,t_index].cpu().numpy()
-    err = abs(pi - gi)
-    fig = plt.figure(figsize=(12,3.8), constrained_layout=True)
-    ax1 = fig.add_subplot(1,3,1); im1=ax1.imshow(gi); ax1.set_title("Ground Truth"); fig.colorbar(im1, ax=ax1)
-    ax2 = fig.add_subplot(1,3,2); im2=ax2.imshow(pi); ax2.set_title("Prediction");  fig.colorbar(im2, ax=ax2)
-    ax3 = fig.add_subplot(1,3,3); im3=ax3.imshow(err);ax3.set_title("Abs Error");   fig.colorbar(im3, ax=ax3)
-    for ax in (ax1,ax2,ax3): ax.set_xticks([]); ax.set_yticks([])
-    Path(save_path).parent.mkdir(parents=True, exist_ok=True)
-    plt.savefig(save_path, dpi=200); plt.close(fig)
-    print(f"[OK] Saved figure: {save_path}")
+def plot_compare(pred_phys, gt_phys, save_path, sample_num=0, t_indices=(0,1,2,3,4)):
+
+    # 데이터 수집
+    pis, gis, ers = [], [], []
+    for t in t_indices:
+        pi = pred_phys[sample_num,0,:,:,t].cpu().numpy()
+        gi = gt_phys[sample_num,0,:,:,t].cpu().numpy()
+        pis.append(pi); gis.append(gi); ers.append(np.abs(pi-gi))
+
+    # GT/Pred 공용 범위
+    vmin = min(np.min(pis), np.min(gis))
+    vmax = max(np.max(pis), np.max(gis))
+
+    ncols = len(t_indices)
+    # 가로 폭은 시점 개수에 비례해서 늘림
+    fig_h = 3.6 * 3
+    fig_w = 1.8 * ncols + 1.6  # 오른쪽 컬러바 폭 고려
+    fig = plt.figure(figsize=(fig_w, fig_h), constrained_layout=True)
+
+    # GridSpec: 3행(GT/Pred/Error) x ncols(시간), 오른쪽에 컬러바 2칸
+    gs = GridSpec(nrows=3, ncols=ncols+2, figure=fig,
+                  width_ratios=[*([1]*ncols), 0.05, 0.05],
+                  height_ratios=[1,1,1], wspace=0.08, hspace=0.12)
+
+    axes_gt, axes_pred, axes_err = [], [], []
+    for r in range(3):
+        row_axes = []
+        for c in range(ncols):
+            ax = fig.add_subplot(gs[r, c])
+            row_axes.append(ax)
+        if r == 0: axes_gt = row_axes
+        elif r == 1: axes_pred = row_axes
+        else: axes_err = row_axes
+
+    # 플롯
+    ims_gt, ims_pred, ims_err = [], [], []
+    for c, (pi, gi, er, t) in enumerate(zip(pis, gis, ers, t_indices)):
+        im1 = axes_gt[c].imshow(gi, vmin=vmin, vmax=vmax)
+        im2 = axes_pred[c].imshow(pi, vmin=vmin, vmax=vmax)
+        im3 = axes_err[c].imshow(er)
+        ims_gt.append(im1); ims_pred.append(im2); ims_err.append(im3)
+
+        axes_gt[c].set_title(f"GT (t={t})")
+        if c == 0:
+            axes_pred[c].set_ylabel("Prediction", rotation=90, labelpad=20)
+            axes_err[c].set_ylabel("Abs Error", rotation=90, labelpad=20)
+
+    # 축 꾸미기
+    for row in (axes_gt, axes_pred, axes_err):
+        for ax in row:
+            ax.set_xticks([]); ax.set_yticks([])
+
+    # 컬러바(오른쪽 2칸 사용)
+    cax_main = fig.add_subplot(gs[:, ncols])     # GT/Pred 공용
+    cax_err  = fig.add_subplot(gs[:, ncols+1])   # Error 전용
+    # 공용 컬러바는 GT/Pred 중 아무거나 핸들로 사용
+    cb_main = fig.colorbar(ims_gt[0], cax=cax_main)
+    cb_main.set_label("Value")
+    cb_err  = fig.colorbar(ims_err[0], cax=cax_err)
+    cb_err.set_label("Abs Error")
+
+    fig.savefig(save_path, dpi=200)
+    plt.close(fig)
+    print(f"[OK] Saved multi-time figure: {save_path}")
 
 # =========================
 # 3D CNN
 # =========================
 class SimpleCNN3D(nn.Module):
-    def __init__(self, in_ch=9, out_ch=1, base=64, num_blocks=3, kt=3, ks=3, convs_per_block=2):
+    def __init__(self, in_ch=9, out_ch=1, base=64, depth=3, kt=3, ks=3, convs_per_block=1):
         super().__init__()
         k = (kt, ks, ks)
         p = (kt//2, ks//2, ks//2)
         ch_in = in_ch
         layers = []
-        for _ in range(num_blocks):
+        for _ in range(depth):
             for _ in range(convs_per_block):
                 layers.append(nn.Conv3d(ch_in, base, kernel_size=k, padding=p))
-                layers.append(nn.ReLU(inplace=True))
+                layers.append(nn.GELU())
                 ch_in = base  # 첫 conv 이후에는 in/out 채널 동일
         self.body = nn.Sequential(*layers)
         self.head = nn.Conv3d(base, out_ch, kernel_size=1)
@@ -114,9 +168,13 @@ def main():
     X, Y = load_merged(merged_pt_path)
     X = X.to(device); Y = Y.to(device)
 
+    # Log10 기반으로 가져온 농도값 수정
+    Y = 10 ** Y
+
     # 2) 정규화 (FNO 흐름과 맞춤: 전체 데이터로 fit)
     in_norm  = UnitGaussianNormalizer(mean=X, std=X, dim=[0,2,3,4], eps=1e-6);  in_norm.fit(X)
     out_norm = UnitGaussianNormalizer(mean=Y, std=Y, dim=[0,2,3,4], eps=1e-6); out_norm.fit(Y)
+    X = in_norm.transform(X); Y = out_norm.transform(Y)  # 정규화된 데이터
 
     # 3) split & dataset
     train_x, test_x, train_y, test_y = train_test_split(X, Y, test_size=0.2, random_state=42)
@@ -131,11 +189,19 @@ def main():
 
     def objective(trial: "optuna.trial.Trial"):
         # ---- 하이퍼파라미터 공간 (요청된 대상) ----
-        depth = trial.suggest_int("depth", 2, 5)
-        base  = trial.suggest_categorical("base_channels", [32, 48, 64, 96, 128])
+        # depth = trial.suggest_int("depth", 2, 5)
+        # base  = trial.suggest_categorical("base_channels", [32, 48, 64, 96, 128])
+        # kt    = trial.suggest_categorical("kernel_t", [1,3,5])
+        # ks    = trial.suggest_categorical("kernel_s", [3,5])
+        # train_batch = trial.suggest_categorical("train_batch_size", [16, 32, 64, 128])
+        # weight_decay = trial.suggest_float("l2_weight", 1e-8, 1e-3, log=True)
+        # init_lr = trial.suggest_float("initial_lr", 1e-4, 1e-3, log=True)
+
+        depth = trial.suggest_int("depth", 2, 4)
+        base  = trial.suggest_categorical("base_channels", [32, 64])
         kt    = trial.suggest_categorical("kernel_t", [1,3,5])
         ks    = trial.suggest_categorical("kernel_s", [3,5])
-        train_batch = trial.suggest_categorical("train_batch_size", [16, 32, 64, 128])
+        train_batch = trial.suggest_categorical("train_batch_size", [32, 64])
         weight_decay = trial.suggest_float("l2_weight", 1e-8, 1e-3, log=True)
         init_lr = trial.suggest_float("initial_lr", 1e-4, 1e-3, log=True)
 
@@ -169,6 +235,7 @@ def main():
                     y = to_3d_order(tb["y"]).to(device)
                     pred = model(x)
                     val = l2(pred, y).item()
+                print(f"Epoch {ep:04d} | Val L2: {val:.6f}")
 
                 if val < best:
                     best = val; bad = 0
@@ -179,17 +246,20 @@ def main():
 
         return best
 
-    # TPE Sampler
-    sampler = optuna.samplers.TPESampler(seed=42, n_startup_trials=10)
-    study = optuna.create_study(direction="minimize", sampler=sampler)
-    study.optimize(objective, n_trials=10, show_progress_bar=True)
+    # # TPE Sampler
+    # sampler = optuna.samplers.TPESampler(seed=42, n_startup_trials=10)
+    # study = optuna.create_study(direction="minimize", sampler=sampler)
+    # study.optimize(objective, n_trials=10, show_progress_bar=True)
 
-    print("\n=== Optuna Best (3D CNN) ===")
-    print("Value:", study.best_value)
-    print("Params:", study.best_params)
+    # print("\n=== Optuna Best (3D CNN) ===")
+    # print("Value:", study.best_value)
+    # print("Params:", study.best_params)
 
-    # 4) Best로 재학습 후 그림 저장(역정규화)
-    bp = study.best_params
+    # # 4) Best로 재학습 후 그림 저장(역정규화)
+    # bp = study.best_params
+    
+    bp = {'depth': 3, 'base_channels': 64, 'kernel_t': 5, 'kernel_s': 5, 'train_batch_size': 64, 'l2_weight': 7.26480307482672e-05, 'initial_lr': 0.00015802131864103882}
+    
     depth = bp["depth"]; base = bp["base_channels"]; kt = bp["kernel_t"]; ks = bp["kernel_s"]
     train_batch = bp["train_batch_size"]; weight_decay = bp["l2_weight"]; init_lr = bp["initial_lr"]
 
@@ -198,51 +268,59 @@ def main():
 
     model = SimpleCNN3D(in_ch=X.shape[1], out_ch=Y.shape[1], base=base, depth=depth, kt=kt, ks=ks).to(device)
     optim = torch.optim.AdamW(model.parameters(), lr=init_lr, weight_decay=weight_decay)
-    sched = CappedCosineAnnealingWarmRestarts(optim, T_0=10, T_max=160, T_mult=2, eta_min=1e-6)
+    sched = CappedCosineAnnealingWarmRestarts(optim, T_0=10, T_max=80, T_mult=2, eta_min=1e-6)
+
+    print(f'number of parameters: {sum(p.numel() for p in model.parameters())}')
 
     best_model_path = out_dir / "cnn3d_best.pt"
-    best = float("inf"); patience=320; bad=0
-    for ep in range(1, 10000+1):
-        model.train()
-        for batch in train_loader:
-            x = to_3d_order(batch["x"]).to(device)
-            y = to_3d_order(batch["y"]).to(device)
-            pred = model(x)
-            loss = l2(pred, y)
-            optim.zero_grad(); loss.backward(); optim.step()
-        sched.step()
+    best = float("inf"); patience=80; bad=0
+    # for ep in range(1, 10000+1):
+    #     model.train()
+    #     for batch in train_loader:
+    #         x = to_3d_order(batch["x"]).to(device)
+    #         y = to_3d_order(batch["y"]).to(device)
+    #         pred = model(x)
+    #         loss = l2(pred, y)
+    #         optim.zero_grad(); loss.backward(); optim.step()
+    #     sched.step()
 
-        # val
-        model.eval()
-        with torch.no_grad():
-            tb = next(iter(test_loader))
-            x = to_3d_order(tb["x"]).to(device)
-            y = to_3d_order(tb["y"]).to(device)
-            pred = model(x)
-            val = l2(pred, y).item()
+    #     # val
+    #     model.eval()
+    #     with torch.no_grad():
+    #         tb = next(iter(test_loader))
+    #         x = to_3d_order(tb["x"]).to(device)
+    #         y = to_3d_order(tb["y"]).to(device)
+    #         pred = model(x)
+    #         val = l2(pred, y).item()
+    #         print(f"Epoch {ep:04d} | Val L2: {val:.6f}")
 
-        if val < best:
-            best = val; bad = 0
-            torch.save(model.state_dict(), best_model_path)
-        else:
-            bad += 1
-            if bad >= patience:
-                break
+    #     if val < best:
+    #         best = val; bad = 0
+    #         torch.save(model.state_dict(), best_model_path)
+    #     else:
+    #         bad += 1
+    #         if bad >= patience:
+    #             break
 
-    print(f"[DONE] Best val L2: {best:.6f} | saved: {best_model_path}")
+    # print(f"[DONE] Best val L2: {best:.6f} | saved: {best_model_path}")
 
     # 그림 저장 (역정규화)
     model.load_state_dict(torch.load(best_model_path, map_location=device))
     model.eval()
     with torch.no_grad():
         xb = next(iter(test_loader))
-        x = xb["x"][0:1].to(device)  # (1,C,nx,ny,nt) normalized? (우리는 전체정규화로 학습함)
-        y = xb["y"][0:1].to(device)
+        x = xb["x"].to(device) 
+        y = xb["y"].to(device)
         p = from_3d_order(model(to_3d_order(x)))  # (1,1,nx,ny,nt) normalized
+
         # 역정규화
-        p_phys = out_norm.inverse_transform(p.detach().cpu())
-        g_phys = out_norm.inverse_transform(y.detach().cpu())
-    plot_compare(p_phys, g_phys, save_path=str(out_dir / "cnn3d_optuna_compare.png"), t_index=0)
+        p_phys = out_norm.inverse_transform(p).detach().cpu()
+        g_phys = out_norm.inverse_transform(y).detach().cpu()
+
+        p_phys[:, :, 14:18, 14:18, :] = 0
+        g_phys[:, :, 14:18, 14:18, :] = 0
+
+    plot_compare(p_phys, g_phys, save_path=str(out_dir / "cnn3d_optuna_compare.png"), sample_num=8, t_indices=(0, 4, 8, 12, 16))
 
 if __name__ == "__main__":
     main()
