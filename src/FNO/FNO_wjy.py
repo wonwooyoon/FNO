@@ -73,13 +73,16 @@ def load_merged_tensors(merged_pt_path: str):
     return in_summation, out_summation, meta_summation
 
 def load_wjy_tensors(wjy_path: str):
-    in_summation = np.load(wjy_path + "log_normalized_permeability_maps.npy").astype(np.float32)  # (N, 1, nx, ny)
-    out_summation = np.load(wjy_path + "co2_saturation_maps.npy").astype(np.float32)  # (N, 1, nx, ny)
+    in_summation = np.load(wjy_path + "log_normalized_permeability_maps.npy").astype(np.float32)  # (N, nx, ny)
+    out_summation = np.load(wjy_path + "co2_saturation_maps.npy").astype(np.float32)  # (N, nx, ny)
     meta_summation = np.load(wjy_path + "input.npy").astype(np.float32)  # (N, 10)
 
     in_summation = torch.from_numpy(in_summation)
     out_summation = torch.from_numpy(out_summation)
     meta_summation = torch.from_numpy(meta_summation)
+
+    in_summation = in_summation.unsqueeze(1)  # (N, 1, nx, ny)
+    out_summation = out_summation.unsqueeze(1)  # (N, 1, nx, ny)
     
     print("Loaded WJY tensors:", tuple(in_summation.shape), tuple(out_summation.shape), tuple(meta_summation.shape))
 
@@ -104,70 +107,75 @@ def build_model(n_modes, hidden_channels, n_layers, domain_padding, domain_paddi
     return model
 
 @torch.no_grad()
-def plot_compare(pred_phys, gt_phys, save_path, sample_num=0, t_indices=(0,1,2,3,4)):
+def plot_compare(pred_phys, gt_phys, save_path, sample_nums=(0,)):
+    # sample_nums: tuple of sample indices to plot
+    # pred_phys, gt_phys: (N, 1, nx, ny)
+
+    n_samples = len(sample_nums)
 
     # 데이터 수집
     pis, gis, ers = [], [], []
-    for t in t_indices:
-        pi = pred_phys[sample_num,0,:,:,t].cpu().numpy()
-        gi = gt_phys[sample_num,0,:,:,t].cpu().numpy()
-        pis.append(pi); gis.append(gi); ers.append(np.abs(pi-gi))
+    for s in sample_nums:
+        pi = pred_phys[s, 0].cpu().numpy()  # (nx, ny)
+        gi = gt_phys[s, 0].cpu().numpy()    # (nx, ny)
+        pis.append(pi)
+        gis.append(gi)
+        ers.append(np.abs(pi - gi))
 
     # GT/Pred 공용 범위
     vmin = min(np.min(pis), np.min(gis))
     vmax = max(np.max(pis), np.max(gis))
 
-    ncols = len(t_indices)
-    # 가로 폭은 시점 개수에 비례해서 늘림
-    fig_h = 3.6 * 3
-    fig_w = 1.8 * ncols + 1.6  # 오른쪽 컬러바 폭 고려
+    ncols = 1
+    nrows = 3 * n_samples  # 3 rows per sample (GT/Pred/Error)
+    fig_h = 3.6 * n_samples * 3
+    fig_w = 4.5  # 오른쪽 컬러바 폭 고려
     fig = plt.figure(figsize=(fig_w, fig_h), constrained_layout=True)
 
-    # GridSpec: 3행(GT/Pred/Error) x ncols(시간), 오른쪽에 컬러바 2칸
-    gs = GridSpec(nrows=3, ncols=ncols+2, figure=fig,
-                  width_ratios=[*([1]*ncols), 0.05, 0.05],
-                  height_ratios=[1,1,1], wspace=0.08, hspace=0.12)
+    # GridSpec: (3 * n_samples)행 x 1열, 오른쪽에 컬러바 2칸
+    gs = GridSpec(nrows=nrows, ncols=ncols + 2, figure=fig,
+                  width_ratios=[1, 0.05, 0.05],
+                  height_ratios=[1] * nrows, wspace=0.08, hspace=0.12)
 
     axes_gt, axes_pred, axes_err = [], [], []
-    for r in range(3):
-        row_axes = []
-        for c in range(ncols):
-            ax = fig.add_subplot(gs[r, c])
-            row_axes.append(ax)
-        if r == 0: axes_gt = row_axes
-        elif r == 1: axes_pred = row_axes
-        else: axes_err = row_axes
+    for s in range(n_samples):
+        ax_gt = fig.add_subplot(gs[3 * s + 0, 0])
+        ax_pred = fig.add_subplot(gs[3 * s + 1, 0])
+        ax_err = fig.add_subplot(gs[3 * s + 2, 0])
+        axes_gt.append(ax_gt)
+        axes_pred.append(ax_pred)
+        axes_err.append(ax_err)
 
     # 플롯
     ims_gt, ims_pred, ims_err = [], [], []
-    for c, (pi, gi, er, t) in enumerate(zip(pis, gis, ers, t_indices)):
-        im1 = axes_gt[c].imshow(gi, vmin=vmin, vmax=vmax)
-        im2 = axes_pred[c].imshow(pi, vmin=vmin, vmax=vmax)
-        im3 = axes_err[c].imshow(er)
-        ims_gt.append(im1); ims_pred.append(im2); ims_err.append(im3)
+    for s in range(n_samples):
+        im1 = axes_gt[s].imshow(gis[s], vmin=vmin, vmax=vmax)
+        im2 = axes_pred[s].imshow(pis[s], vmin=vmin, vmax=vmax)
+        im3 = axes_err[s].imshow(ers[s])
+        ims_gt.append(im1)
+        ims_pred.append(im2)
+        ims_err.append(im3)
 
-        axes_gt[c].set_title(f"GT (t={t})")
-        if c == 0:
-            axes_pred[c].set_ylabel("Prediction", rotation=90, labelpad=20)
-            axes_err[c].set_ylabel("Abs Error", rotation=90, labelpad=20)
+        axes_gt[s].set_title(f"GT (sample={sample_nums[s]})")
+        axes_pred[s].set_ylabel("Prediction", rotation=90, labelpad=20)
+        axes_err[s].set_ylabel("Abs Error", rotation=90, labelpad=20)
 
     # 축 꾸미기
-    for row in (axes_gt, axes_pred, axes_err):
-        for ax in row:
-            ax.set_xticks([]); ax.set_yticks([])
+    for ax in axes_gt + axes_pred + axes_err:
+        ax.set_xticks([])
+        ax.set_yticks([])
 
     # 컬러바(오른쪽 2칸 사용)
-    cax_main = fig.add_subplot(gs[:, ncols])     # GT/Pred 공용
-    cax_err  = fig.add_subplot(gs[:, ncols+1])   # Error 전용
-    # 공용 컬러바는 GT/Pred 중 아무거나 핸들로 사용
+    cax_main = fig.add_subplot(gs[:, 1])     # GT/Pred 공용
+    cax_err = fig.add_subplot(gs[:, 2])      # Error 전용
     cb_main = fig.colorbar(ims_gt[0], cax=cax_main)
     cb_main.set_label("Value")
-    cb_err  = fig.colorbar(ims_err[0], cax=cax_err)
+    cb_err = fig.colorbar(ims_err[0], cax=cax_err)
     cb_err.set_label("Abs Error")
 
     fig.savefig(save_path, dpi=200)
     plt.close(fig)
-    print(f"[OK] Saved multi-time figure: {save_path}")
+    print(f"[OK] Saved figure: {save_path}")
 
 # =========================
 # Main (Optuna TPE)
@@ -340,15 +348,12 @@ def main():
         meta = xb["meta"].to(device)
         p = best_model(in_normalizer.transform(x), meta_normalizer.transform(meta)) 
 
-        p[:, :, 14:18, 14:18, :] = 0
-        y[:, :, 14:18, 14:18, :] = 0
-
         # 역정규화
         p_phys = out_normalizer.inverse_transform(p).detach().cpu()
         g_phys = y.detach().cpu()
 
     # 최종 그림
-    plot_compare(p_phys, g_phys, save_path=str('./src/FNO/output/FNO_compare.png'), sample_num=8, t_indices=(0, 4, 8, 12, 16))
+    plot_compare(p_phys, g_phys, save_path=str('./src/FNO/output/FNO_compare.png'), sample_num=8)
 
 if __name__ == "__main__":
     main()
