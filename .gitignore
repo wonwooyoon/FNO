@@ -13,6 +13,7 @@
 *.png
 *.out
 *.pt
+*.npy
 mixing_*
 calcite_*.5
 pyrite_*.5
