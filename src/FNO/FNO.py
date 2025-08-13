@@ -163,29 +163,31 @@ def main():
     merged_pt_path = "./src/preprocessing/merged.pt"
 
     # 1) 데이터 로드
-    in_summation, out_summation = load_merged_tensors(merged_pt_path)
+    in_summation, out_summation, meta_summation = load_merged_tensors(merged_pt_path)
 
     # 2) 디바이스
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     in_summation = in_summation.to(device)
     out_summation = out_summation.to(device)
+    meta_summation = meta_summation.to(device)
 
     out_summation = 10 ** out_summation
-    out_summation[:, :, 14:18, 14:18, :] = 0
 
     # 3) 정규화 (원본 방식 유지: 전체 데이터로 fit)
     in_normalizer  = UnitGaussianNormalizer(mean=in_summation,  std=in_summation,  dim=[0,2,3,4], eps=1e-6)
     out_normalizer = UnitGaussianNormalizer(mean=out_summation, std=out_summation, dim=[0,2,3,4], eps=1e-6)
+    meta_normalizer = UnitGaussianNormalizer(mean=meta_summation, std=meta_summation, dim=[0], eps=1e-6)
     in_normalizer.fit(in_summation)
     out_normalizer.fit(out_summation)
-    processor = DefaultDataProcessor(in_normalizer, out_normalizer).to(device)
+    meta_normalizer.fit(meta_summation)
+    processor = DefaultDataProcessor(in_normalizer, out_normalizer, meta_normalizer).to(device)
 
     # 4) train/test split
-    train_in, test_in, train_out, test_out = train_test_split(
-        in_summation, out_summation, test_size=0.2, random_state=42
+    train_in, test_in, train_out, test_out, train_meta, test_meta = train_test_split(
+        in_summation, out_summation, meta_summation, test_size=0.1, random_state=42
     )
-    train_dataset = CustomDataset(train_in, train_out)
-    test_dataset  = CustomDataset(test_in,  test_out)
+    train_dataset = CustomDataset(train_in, train_out, train_meta)
+    test_dataset  = CustomDataset(test_in,  test_out, test_meta)
 
     # 고정 요소들
     domain_padding_mode_fixed = 'symmetric'
@@ -272,7 +274,7 @@ def main():
     # 6) Best로 재학습 후 비교 그림 저장
     #bp = study.best_params
 
-    bp = {"n_modes": (32, 16, 10), "hidden_channels": 16, "n_layers": 2, "domain_padding": [0.1, 0.1, 0.1], "train_batch_size": 64, "l2_weight": 1e-8, "initial_lr": 1e-4}
+    bp = {"n_modes": (16, 8, 5), "hidden_channels": 24, "n_layers": 3, "domain_padding": [0.1, 0.1, 0.1], "train_batch_size": 16, "l2_weight": 0, "initial_lr": 1e-4}
     best_model = build_model(
         bp["n_modes"], bp["hidden_channels"], bp["n_layers"],
         bp["domain_padding"], domain_padding_mode_fixed, device
@@ -283,12 +285,19 @@ def main():
     optimizer = AdamW(best_model.parameters(), lr=bp["initial_lr"], weight_decay=bp["l2_weight"])
     scheduler = CappedCosineAnnealingWarmRestarts(optimizer, T_0=10, T_max=80, T_mult=2, eta_min=1e-6)
 
+    for param in best_model.parameters():
+        if param.dim() > 1:
+            torch.nn.init.xavier_uniform_(param)
+        else:
+            torch.nn.init.zeros_(param)
+
     l2loss = LpLoss(d=3, p=2)
     trainer = Trainer(
-        model=best_model, n_epochs=30, device=device,
+        model=best_model, n_epochs=10000, device=device,
         data_processor=processor, wandb_log=False,
         eval_interval=1, use_distributed=False, verbose=True
     )
+    
     train_loader = DataLoader(train_dataset, batch_size=bp["train_batch_size"], shuffle=True)
     test_loader  = {'test_dataloader': DataLoader(test_dataset, batch_size=len(test_dataset), shuffle=False)}
 
@@ -315,14 +324,18 @@ def main():
         xb = next(iter(test_loader["test_dataloader"]))
         x = xb["x"].to(device) 
         y = xb["y"].to(device)
-        p = best_model(in_normalizer.transform(x)) 
+        meta = xb["meta"].to(device)
+        p = best_model(in_normalizer.transform(x), meta_normalizer.transform(meta)) 
+
+        p[:, :, 14:18, 14:18, :] = 0
+        y[:, :, 14:18, 14:18, :] = 0
 
         # 역정규화
         p_phys = out_normalizer.inverse_transform(p).detach().cpu()
         g_phys = y.detach().cpu()
 
     # 최종 그림
-    plot_compare(p_phys, g_phys, save_path=str('./src/FNO/output/FNO_compare.png'), sample_num=18, t_indices=(0, 4, 8, 12, 16))
+    plot_compare(p_phys, g_phys, save_path=str('./src/FNO/output/FNO_compare.png'), sample_num=8, t_indices=(0, 4, 8, 12, 16))
 
 if __name__ == "__main__":
     main()
