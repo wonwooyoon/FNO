@@ -1,7 +1,9 @@
 # This is a .gitignore file for the FNO project
 
 .venv_FNO/*
-neuraloperator/*
+/neuraloperator/*
+!/neuraloperator/neuralop
+!/nerualoperator/neuralop/**
 /src/FNO/output/**
 /src/CNN/output/**
 /src/pflotran_run/output/**
