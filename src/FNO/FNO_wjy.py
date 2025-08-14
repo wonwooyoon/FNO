@@ -126,10 +126,10 @@ def plot_compare(pred_phys, gt_phys, save_path, sample_nums=(0,)):
     vmin = min(np.min(pis), np.min(gis))
     vmax = max(np.max(pis), np.max(gis))
 
-    ncols = 1
-    nrows = 3 * n_samples  # 3 rows per sample (GT/Pred/Error)
-    fig_h = 3.6 * n_samples * 3
-    fig_w = 4.5  # 오른쪽 컬러바 폭 고려
+    ncols = 1 * n_samples
+    nrows = 3  # 3 rows per sample (GT/Pred/Error)
+    fig_h = 3.6 * 3
+    fig_w = 4.5 * n_samples  # 오른쪽 컬러바 폭 고려
     fig = plt.figure(figsize=(fig_w, fig_h), constrained_layout=True)
 
     # GridSpec: (3 * n_samples)행 x 1열, 오른쪽에 컬러바 2칸
@@ -139,9 +139,9 @@ def plot_compare(pred_phys, gt_phys, save_path, sample_nums=(0,)):
 
     axes_gt, axes_pred, axes_err = [], [], []
     for s in range(n_samples):
-        ax_gt = fig.add_subplot(gs[3 * s + 0, 0])
-        ax_pred = fig.add_subplot(gs[3 * s + 1, 0])
-        ax_err = fig.add_subplot(gs[3 * s + 2, 0])
+        ax_gt = fig.add_subplot(gs[3 + 0, s])
+        ax_pred = fig.add_subplot(gs[3 + 1, s])
+        ax_err = fig.add_subplot(gs[3 + 2, s])
         axes_gt.append(ax_gt)
         axes_pred.append(ax_pred)
         axes_err.append(ax_err)
@@ -297,7 +297,7 @@ def main():
     # 6) Best로 재학습 후 비교 그림 저장
     #bp = study.best_params
 
-    bp = {"n_modes": (10, 5), "hidden_channels": 12, "n_layers": 3, "domain_padding": [0.1, 0.1], "train_batch_size": 32, "l2_weight": 0, "initial_lr": 1e-4}
+    bp = {"n_modes": (20, 5), "hidden_channels": 12, "n_layers": 3, "domain_padding": [0.1, 0.1], "train_batch_size": 32, "l2_weight": 0, "initial_lr": 1e-4}
     best_model = build_model(
         bp["n_modes"], bp["hidden_channels"], bp["n_layers"],
         bp["domain_padding"], domain_padding_mode_fixed, device
@@ -327,18 +327,18 @@ def main():
 
     best_model_path = './src/FNO/output/final'
 
-    trainer.train(
-        train_loader=train_loader,
-        test_loaders=test_loader,
-        optimizer=optimizer,
-        scheduler=scheduler,
-        regularizer=False,
-        early_stopping=True,
-        training_loss=l2loss,
-        eval_losses={'l2': l2loss},
-        save_best='test_dataloader_l2',
-        save_dir=best_model_path
-    )
+    # trainer.train(
+    #     train_loader=train_loader,
+    #     test_loaders=test_loader,
+    #     optimizer=optimizer,
+    #     scheduler=scheduler,
+    #     regularizer=False,
+    #     early_stopping=True,
+    #     training_loss=l2loss,
+    #     eval_losses={'l2': l2loss},
+    #     save_best='test_dataloader_l2',
+    #     save_dir=best_model_path
+    # )
     
     # 그림 저장 (역정규화)
     best_model.load_state_dict(torch.load(f'{best_model_path}/best_model_state_dict.pt', map_location=device,weights_only=False))
