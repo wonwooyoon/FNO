@@ -129,8 +129,12 @@ def plot_compare(pred_phys, gt_phys, save_path, sample_nums=(0,)):
     nrows = 3  # prediction, groundtruth, error (세로)
     ncols = n_samples  # sample별로 가로로 나열
 
-    fig_size = 4  # 각 이미지가 정사각형이 되도록
-    fig = plt.figure(figsize=(fig_size * ncols, fig_size * nrows), constrained_layout=True)
+    # 각 이미지의 비율을 데이터에 맞춤 (예: 100x20 → aspect=5)
+    nx, ny = pis[0].shape
+    aspect = nx / ny
+
+    fig_size = 4  # 한 이미지 기준 세로 크기
+    fig = plt.figure(figsize=(fig_size * ncols * (ny / nx), fig_size * nrows), constrained_layout=True)
     gs = GridSpec(nrows=nrows, ncols=ncols + 2, figure=fig, width_ratios=[1]*ncols + [0.05, 0.05])
 
     axes = [[fig.add_subplot(gs[row, col]) for col in range(ncols)] for row in range(nrows)]
@@ -139,14 +143,14 @@ def plot_compare(pred_phys, gt_phys, save_path, sample_nums=(0,)):
 
     for i in range(n_samples):
         # Prediction (row 0)
-        im_pred = axes[0][i].imshow(pis[i], vmin=vmin, vmax=vmax)
+        im_pred = axes[0][i].imshow(pis[i], vmin=vmin, vmax=vmax, aspect='auto')
         ims[0].append(im_pred)
         axes[0][i].set_title(f"Sample {sample_nums[i]}")
         # Groundtruth (row 1)
-        im_gt = axes[1][i].imshow(gis[i], vmin=vmin, vmax=vmax)
+        im_gt = axes[1][i].imshow(gis[i], vmin=vmin, vmax=vmax, aspect='auto')
         ims[1].append(im_gt)
         # Error (row 2)
-        im_err = axes[2][i].imshow(ers[i])
+        im_err = axes[2][i].imshow(ers[i], aspect='auto')
         ims[2].append(im_err)
 
     # Y축 라벨
