@@ -129,12 +129,12 @@ def plot_compare(pred_phys, gt_phys, save_path, sample_nums=(0,)):
     nrows = 3  # prediction, groundtruth, error (세로)
     ncols = n_samples  # sample별로 가로로 나열
 
-    # 각 이미지의 비율을 데이터에 맞춤 (예: 100x20 → aspect=5)
-    nx, ny = pis[0].shape
-    aspect = nx / ny
+    # 각 이미지의 비율을 데이터에 맞춤 (예: 100열 20행 → aspect=ny/nx)
+    nx, ny = pis[0].shape  # nx: 열, ny: 행
+    aspect = ny / nx
 
     fig_size = 4  # 한 이미지 기준 세로 크기
-    fig = plt.figure(figsize=(fig_size * ncols * (ny / nx), fig_size * nrows), constrained_layout=True)
+    fig = plt.figure(figsize=(fig_size * ncols * (nx / ny), fig_size * nrows), constrained_layout=True)
     gs = GridSpec(nrows=nrows, ncols=ncols + 2, figure=fig, width_ratios=[1]*ncols + [0.05, 0.05])
 
     axes = [[fig.add_subplot(gs[row, col]) for col in range(ncols)] for row in range(nrows)]
