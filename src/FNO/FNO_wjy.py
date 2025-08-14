@@ -297,7 +297,7 @@ def main():
     # 6) Best로 재학습 후 비교 그림 저장
     #bp = study.best_params
 
-    bp = {"n_modes": (20, 5), "hidden_channels": 12, "n_layers": 3, "domain_padding": [0.1, 0.1], "train_batch_size": 32, "l2_weight": 0, "initial_lr": 1e-4}
+    bp = {"n_modes": (10, 5), "hidden_channels": 12, "n_layers": 3, "domain_padding": [0.1, 0.1], "train_batch_size": 32, "l2_weight": 0, "initial_lr": 1e-4}
     best_model = build_model(
         bp["n_modes"], bp["hidden_channels"], bp["n_layers"],
         bp["domain_padding"], domain_padding_mode_fixed, device
@@ -306,8 +306,8 @@ def main():
     print(f'number of parameters: {sum(p.numel() for p in best_model.parameters())}')
 
     optimizer = AdamW(best_model.parameters(), lr=bp["initial_lr"], weight_decay=bp["l2_weight"])
-    scheduler = CappedCosineAnnealingWarmRestarts(optimizer, T_0=10, T_max=80, T_mult=2, eta_min=1e-6)
-    # scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.85)
+    # scheduler = CappedCosineAnnealingWarmRestarts(optimizer, T_0=10, T_max=80, T_mult=2, eta_min=1e-6)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=40, gamma=0.85)
 
     for param in best_model.parameters():
         if param.dim() > 1:

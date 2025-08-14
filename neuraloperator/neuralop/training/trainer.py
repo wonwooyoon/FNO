@@ -218,7 +218,7 @@ class Trainer:
             self.save_every = None
 
         if early_stopping is not None:
-            patience = 80
+            patience = 160
             endured = 0
 
         if self.verbose:
