@@ -18,7 +18,7 @@ from matplotlib.gridspec import GridSpec
 from torch.utils.data import DataLoader, Dataset
 from sklearn.model_selection import train_test_split
 
-from neuraloperator.neuralop.data.transforms.normalizers import UnitGaussianNormalizer
+from neuraloperator.neuralop.data.transforms.normalizers import UnitGaussianNormalizer, MinMaxNormalizer
 from neuraloperator.neuralop.data.transforms.data_processors import DefaultDataProcessor
 from neuraloperator.neuralop import LpLoss
 from neuraloperator.neuralop.models import TFNO
@@ -203,12 +203,15 @@ def main():
     out_summation = out_summation.to(device)
     meta_summation = meta_summation.to(device)
 
-    out_summation = 10 ** out_summation
-
     # 3) 정규화 (원본 방식 유지: 전체 데이터로 fit)
     in_normalizer  = UnitGaussianNormalizer(mean=in_summation,  std=in_summation,  dim=[0,2,3], eps=1e-6)
     out_normalizer = UnitGaussianNormalizer(mean=out_summation, std=out_summation, dim=[0,2,3], eps=1e-6)
     meta_normalizer = UnitGaussianNormalizer(mean=meta_summation, std=meta_summation, dim=[0], eps=1e-6)
+
+    # in_normalizer  = MinMaxNormalizer(data_min=in_summation,  data_max=in_summation,  dim=[0,2,3], eps=1e-6)
+    # out_normalizer = MinMaxNormalizer(data_min=out_summation, data_max=out_summation, dim=[0,2,3], eps=1e-6)
+    # meta_normalizer = MinMaxNormalizer(data_min=meta_summation, data_max=meta_summation, dim=[0], eps=1e-6)
+
     in_normalizer.fit(in_summation)
     out_normalizer.fit(out_summation)
     meta_normalizer.fit(meta_summation)
@@ -336,18 +339,18 @@ def main():
 
     best_model_path = './src/FNO/output/final'
 
-    # trainer.train(
-    #     train_loader=train_loader,
-    #     test_loaders=test_loader,
-    #     optimizer=optimizer,
-    #     scheduler=scheduler,
-    #     regularizer=False,
-    #     early_stopping=True,
-    #     training_loss=l2loss,
-    #     eval_losses={'l2': l2loss},
-    #     save_best='test_dataloader_l2',
-    #     save_dir=best_model_path
-    # )
+    trainer.train(
+        train_loader=train_loader,
+        test_loaders=test_loader,
+        optimizer=optimizer,
+        scheduler=scheduler,
+        regularizer=False,
+        early_stopping=True,
+        training_loss=l2loss,
+        eval_losses={'l2': l2loss},
+        save_best='test_dataloader_l2',
+        save_dir=best_model_path
+    )
     
     # 그림 저장 (역정규화)
     best_model.load_state_dict(torch.load(f'{best_model_path}/best_model_state_dict.pt', map_location=device,weights_only=False))
