@@ -143,14 +143,14 @@ def plot_compare(pred_phys, gt_phys, save_path, sample_nums=(0,)):
 
     for i in range(n_samples):
         # Prediction (row 0)
-        im_pred = axes[0][i].imshow(pis[i], vmin=vmin, vmax=vmax, aspect='auto')
+        im_pred = axes[0][i].imshow(pis[i], vmin=vmin, vmax=vmax, aspect=aspect)
         ims[0].append(im_pred)
         axes[0][i].set_title(f"Sample {sample_nums[i]}")
         # Groundtruth (row 1)
-        im_gt = axes[1][i].imshow(gis[i], vmin=vmin, vmax=vmax, aspect='auto')
+        im_gt = axes[1][i].imshow(gis[i], vmin=vmin, vmax=vmax, aspect=aspect)
         ims[1].append(im_gt)
         # Error (row 2)
-        im_err = axes[2][i].imshow(ers[i], aspect='auto')
+        im_err = axes[2][i].imshow(ers[i], aspect=aspect)
         ims[2].append(im_err)
 
     # Y축 라벨
