@@ -14,13 +14,14 @@ import numpy as np
 import torch
 import optuna
 import matplotlib.pyplot as plt
-from matplotlib.gridspec import GridSpec
+from matplotlib.colors import Normalize, TwoSlopeNorm
 from torch.utils.data import DataLoader, Dataset
 from sklearn.model_selection import train_test_split
 
 from neuraloperator.neuralop.data.transforms.normalizers import UnitGaussianNormalizer, MinMaxNormalizer
 from neuraloperator.neuralop.data.transforms.data_processors import DefaultDataProcessor
 from neuraloperator.neuralop import LpLoss
+from neuraloperator.neuralop.losses.data_losses import MSELoss
 from neuraloperator.neuralop.models import TFNO
 from neuraloperator.neuralop import Trainer
 from neuraloperator.neuralop.training import AdamW
@@ -108,83 +109,129 @@ def build_model(n_modes, hidden_channels, n_layers, domain_padding, domain_paddi
 
 @torch.no_grad()
 def plot_compare(pred_phys, gt_phys, save_path, sample_nums=(0,)):
-    # sample_nums: tuple of sample indices to plot
-    # pred_phys, gt_phys: (N, 1, nx, ny)
+    """
+    pred_phys, gt_phys: (N, 1, nx, ny)
+    sample_nums: 플로팅할 샘플 인덱스 튜플
+    save_path: 저장 경로 (예: 'compare.png')
+    """
 
-    n_samples = len(sample_nums)
+    # --- 유틸: numpy로 변환 ---
+    def to_numpy(x):
+        if isinstance(x, np.ndarray):
+            return x
+        try:
+            import torch
+            if isinstance(x, torch.Tensor):
+                return x.detach().cpu().numpy()
+        except Exception:
+            pass
+        return np.array(x)
 
-    # 데이터 수집
-    pis, gis, ers = [], [], []
-    for s in sample_nums:
-        pi = pred_phys[s, 0].cpu().numpy()  # (nx, ny)
-        gi = gt_phys[s, 0].cpu().numpy()    # (nx, ny)
-        pis.append(pi)
-        gis.append(gi)
-        ers.append(np.abs(pi - gi))
+    P = to_numpy(pred_phys)
+    G = to_numpy(gt_phys)
 
-    # GT/Pred 공용 범위
-    vmin = min(np.min(pis), np.min(gis))
-    vmax = max(np.max(pis), np.max(gis))
+    # --- 형태 점검 ---
+    if P.ndim != 4 or G.ndim != 4:
+        raise ValueError("pred_phys, gt_phys는 (N, 1, nx, ny) 형태여야 합니다.")
+    if P.shape != G.shape:
+        raise ValueError("pred_phys와 gt_phys의 shape가 동일해야 합니다.")
+    if P.shape[1] != 1:
+        raise ValueError("두 배열의 두 번째 차원은 채널=1 이어야 합니다. (N, 1, nx, ny)")
 
-    nrows = 3  # prediction, groundtruth, error (세로)
-    ncols = n_samples  # sample별로 가로로 나열
+    N = P.shape[0]
+    # 샘플 인덱스 정규화/검증
+    idxs = []
+    for i in sample_nums:
+        j = i if i >= 0 else N + i
+        if j < 0 or j >= N:
+            raise IndexError(f"sample index {i}가 범위를 벗어납니다 (0~{N-1} 또는 음수 인덱스).")
+        idxs.append(j)
 
-    nx, ny = pis[0].shape  # nx: 열, ny: 행
-    aspect = ny / nx
+    # --- 공통 컬러 범위 계산 (pred & gt 공용) ---
+    # NaN이 있을 수 있으므로 nan-안전 통계 사용
+    pg_min = np.inf
+    pg_max = -np.inf
+    diff_abs_max = 0.0
 
-    # 가로 공간 줄이기: width_ratios를 ncols에 맞게 1보다 작게, figsize도 조정
-    fig_size = 2.2  # 한 이미지 기준 세로 크기 (더 줄임)
-    fig = plt.figure(
-        figsize=(fig_size * ncols * 0.7, fig_size * nrows),  # 가로 크기 0.7배
-        constrained_layout=False
-    )
-    gs = GridSpec(
-        nrows=nrows, ncols=ncols + 2, figure=fig,
-        width_ratios=[0.85]*ncols + [0.04, 0.04],  # 이미지 폭 0.85로 줄임
-        wspace=0.03, hspace=0.05                   # 이미지 간 공간 최소화
-    )
+    for j in idxs:
+        p = P[j, 0, :, :]
+        g = G[j, 0, :, :]
+        pg_min = min(pg_min, np.nanmin([p, g]))
+        pg_max = max(pg_max, np.nanmax([p, g]))
+        d = p - g
+        if np.isfinite(d).any():
+            diff_abs_max = max(diff_abs_max, float(np.nanmax(np.abs(d))))
 
-    axes = [[fig.add_subplot(gs[row, col]) for col in range(ncols)] for row in range(nrows)]
+    if not np.isfinite(pg_min) or not np.isfinite(pg_max):
+        raise ValueError("pred/gt 데이터에서 유효한 수치 범위를 찾지 못했습니다.")
+    if diff_abs_max == 0 or not np.isfinite(diff_abs_max):
+        # 모두 동일한 경우라도 0 중심으로 아주 작은 범위를 둬 컬러바가 보이게 한다
+        diff_abs_max = 1e-12
 
-    ims = [[], [], []]  # pred, gt, err
+    norm_pg = Normalize(vmin=pg_min, vmax=pg_max)
+    norm_diff = TwoSlopeNorm(vmin=-diff_abs_max, vcenter=0.0, vmax=diff_abs_max)
 
-    for i in range(n_samples):
-        # Prediction (row 0)
-        im_pred = axes[0][i].imshow(pis[i], vmin=vmin, vmax=vmax, aspect=aspect)
-        ims[0].append(im_pred)
-        axes[0][i].set_title(f"Sample {sample_nums[i]}")
-        # Groundtruth (row 1)
-        im_gt = axes[1][i].imshow(gis[i], vmin=vmin, vmax=vmax, aspect=aspect)
-        ims[1].append(im_gt)
-        # Error (row 2)
-        im_err = axes[2][i].imshow(ers[i], aspect=aspect)
-        ims[2].append(im_err)
+    # --- Figure/axes 구성 ---
+    nrows = len(idxs)
+    ncols = 3
+    # 각 플롯을 정사각형으로 보이게 하려면, 축 박스 비율을 1로 고정(set_box_aspect(1))
+    # 그리고 imshow(aspect='auto')로 데이터가 정사각형 축을 꽉 채우도록 비율 왜곡(exaggeration) 적용
+    fig, axes = plt.subplots(nrows, ncols, figsize=(3.2*ncols, 3.2*nrows), constrained_layout=True)
+    axes = np.atleast_2d(axes)
 
-    # Y축 라벨
-    axes[0][0].set_ylabel("Prediction", rotation=90, labelpad=10)
-    axes[1][0].set_ylabel("Groundtruth", rotation=90, labelpad=10)
-    axes[2][0].set_ylabel("Abs Error", rotation=90, labelpad=10)
+    # 제목 (컬럼 헤더)
+    col_titles = ["Prediction (pred)", "Ground truth (gt)", "Residual (pred - gt)"]
+    for c in range(ncols):
+        axes[0, c].set_title(col_titles[c], fontsize=11)
 
-    # 축 꾸미기
-    for row in axes:
-        for ax in row:
-            ax.set_xticks([])
-            ax.set_yticks([])
-            ax.set_aspect(aspect)
-            ax.set_frame_on(False)
+    # 본체 그리기
+    im_handles_pg = []   # pred/gt에 해당하는 mappable 수집 (마지막 걸로 컬러바 만들어도 되지만 리스트 확보)
+    im_handles_diff = []
 
-    # 컬러바(오른쪽 2칸 사용)
-    cax_main = fig.add_subplot(gs[:, -2])     # GT/Pred 공용
-    cax_err = fig.add_subplot(gs[:, -1])      # Error 전용
-    cb_main = fig.colorbar(ims[0][0], cax=cax_main)
-    cb_main.set_label("Value")
-    cb_err = fig.colorbar(ims[2][0], cax=cax_err)
-    cb_err.set_label("Abs Error")
+    for r, j in enumerate(idxs):
+        p = P[j, 0, :, :]
+        g = G[j, 0, :, :]
+        d = p - g
 
-    plt.subplots_adjust(left=0.01, right=0.99, top=0.97, bottom=0.03, wspace=0.01, hspace=0.01)
-    fig.savefig(save_path, dpi=200, bbox_inches='tight', pad_inches=0.05)
+        # pred
+        ax = axes[r, 0]
+        im_p = ax.imshow(p, origin="lower", interpolation="nearest", aspect="auto", cmap="viridis", norm=norm_pg)
+        ax.set_box_aspect(1)   # 축 박스를 정사각형으로 고정
+        ax.set_xticks([]); ax.set_yticks([])
+        im_handles_pg.append(im_p)
+
+        # gt
+        ax = axes[r, 1]
+        im_g = ax.imshow(g, origin="lower", interpolation="nearest", aspect="auto", cmap="viridis", norm=norm_pg)
+        ax.set_box_aspect(1)
+        ax.set_xticks([]); ax.set_yticks([])
+        im_handles_pg.append(im_g)
+
+        # residual
+        ax = axes[r, 2]
+        im_d = ax.imshow(d, origin="lower", interpolation="nearest", aspect="auto", cmap="coolwarm", norm=norm_diff)
+        ax.set_box_aspect(1)
+        ax.set_xticks([]); ax.set_yticks([])
+        im_handles_diff.append(im_d)
+
+        # 행 라벨(좌측 첫 칸 y라벨로 샘플번호 표기)
+        axes[r, 0].set_ylabel(f"sample {j}", rotation=90, fontsize=10)
+
+    # --- 컬러바: pred/gt 공용 1개, residual 별도 1개 ---
+    # 여러 축을 span하도록 ax= 리스트를 전달
+    from matplotlib.cm import ScalarMappable
+    sm_pg = ScalarMappable(norm=norm_pg, cmap="viridis")
+    sm_diff = ScalarMappable(norm=norm_diff, cmap="coolwarm")
+
+    # pred/gt 컬러바: 첫 두 컬럼 전체에 대해 하나
+    fig.colorbar(sm_pg, ax=axes[:, :2].ravel().tolist(), location="right", fraction=0.03, pad=0.02, label="pred & gt scale")
+
+    # residual 컬러바: 마지막 컬럼 전체에 대해 하나
+    fig.colorbar(sm_diff, ax=axes[:, 2].ravel().tolist(), location="right", fraction=0.03, pad=0.02, label="residual scale")
+
+    # 저장
+    fig.savefig(save_path, dpi=200)
     plt.close(fig)
-    print(f"[OK] Saved figure: {save_path}")
 
 # =========================
 # Main (Optuna TPE)
@@ -261,7 +308,9 @@ def main():
         optimizer = AdamW(model.parameters(), lr=initial_lr, weight_decay=l2_weight)
         scheduler = CappedCosineAnnealingWarmRestarts(optimizer, T_0=10, T_max=80, T_mult=2, eta_min=1e-6)
 
-        l2loss = LpLoss(d=3, p=2)
+        # l2loss = LpLoss(d=2, p=2)
+        l2loss = MSELoss(d=2, p=2)
+
         trainer = Trainer(
             model=model, n_epochs=N_EPOCHS, device=device,
             data_processor=processor, wandb_log=False,
@@ -272,18 +321,18 @@ def main():
 
         best_model_path = './src/FNO/output/optuna'
 
-        trainer.train(
-            train_loader=train_loader,
-            test_loaders=test_loader,
-            optimizer=optimizer,
-            scheduler=scheduler,
-            regularizer=False,
-            early_stopping=True,
-            training_loss=l2loss,
-            eval_losses={'l2': l2loss},
-            save_best='test_dataloader_l2',
-            save_dir=best_model_path
-        )
+        # trainer.train(
+        #     train_loader=train_loader,
+        #     test_loaders=test_loader,
+        #     optimizer=optimizer,
+        #     scheduler=scheduler,
+        #     regularizer=False,
+        #     early_stopping=True,
+        #     training_loss=l2loss,
+        #     eval_losses={'l2': l2loss},
+        #     save_best='test_dataloader_l2',
+        #     save_dir=best_model_path
+        # )
 
         model.load_state_dict(torch.load(f'{best_model_path}/best_model_state_dict.pt', map_location=device,weights_only=False))
         model.eval()
@@ -309,7 +358,7 @@ def main():
     # 6) Best로 재학습 후 비교 그림 저장
     #bp = study.best_params
 
-    bp = {"n_modes": (20, 5), "hidden_channels": 12, "n_layers": 3, "domain_padding": [0.1, 0.1], "train_batch_size": 32, "l2_weight": 0, "initial_lr": 1e-4}
+    bp = {"n_modes": (10, 5), "hidden_channels": 8, "n_layers": 2, "domain_padding": [0.1, 0.1], "train_batch_size": 128, "l2_weight": 0, "initial_lr": 1e-3}
     best_model = build_model(
         bp["n_modes"], bp["hidden_channels"], bp["n_layers"],
         bp["domain_padding"], domain_padding_mode_fixed, device
@@ -318,8 +367,8 @@ def main():
     print(f'number of parameters: {sum(p.numel() for p in best_model.parameters())}')
 
     optimizer = AdamW(best_model.parameters(), lr=bp["initial_lr"], weight_decay=bp["l2_weight"])
-    # scheduler = CappedCosineAnnealingWarmRestarts(optimizer, T_0=10, T_max=80, T_mult=2, eta_min=1e-6)
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=40, gamma=0.85)
+    scheduler = CappedCosineAnnealingWarmRestarts(optimizer, T_0=10, T_max=80, T_mult=2, eta_min=1e-8)
+    # scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=40, gamma=0.85)
 
     for param in best_model.parameters():
         if param.dim() > 1:
@@ -327,7 +376,9 @@ def main():
         else:
             torch.nn.init.zeros_(param)
 
-    l2loss = LpLoss(d=3, p=2)
+    # l2loss = LpLoss(d=2, p=2)
+    l2loss = MSELoss()
+
     trainer = Trainer(
         model=best_model, n_epochs=10000, device=device,
         data_processor=processor, wandb_log=False,

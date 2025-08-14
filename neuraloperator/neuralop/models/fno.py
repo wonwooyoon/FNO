@@ -346,10 +346,10 @@ class FNO(BaseModel, name='FNO'):
             self.film = FiLMLayer(meta_dim=self.meta_dim,
                                   feature_channels=self.hidden_channels,
                                   n_dim=self.n_dim,
-                                  width=256, depth=1,
+                                  width=256, depth=5,
                                   activation='gelu',
                                   use_layernorm=False,
-                                  dropout=0.0,
+                                  dropout=0.1,
                                   zero_init_head=True,
                                   gamma_clamp=0.1)
 
