@@ -181,10 +181,12 @@ def plot_compare(pred_phys, gt_phys, save_path, sample_nums=(0,)):
 # Main (Optuna TPE)
 # =========================
 def main():
-    merged_pt_path = "./src/preprocessing/merged.pt"
+    # merged_pt_path = "./src/preprocessing/merged.pt"
+    wjy_path = "./src/preprocessing/"
 
     # 1) 데이터 로드
-    in_summation, out_summation, meta_summation = load_merged_tensors(merged_pt_path)
+    # in_summation, out_summation, meta_summation = load_merged_tensors(merged_pt_path)
+    in_summation, out_summation, meta_summation = load_wjy_tensors(wjy_path)
 
     # 2) 디바이스
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -195,8 +197,8 @@ def main():
     out_summation = 10 ** out_summation
 
     # 3) 정규화 (원본 방식 유지: 전체 데이터로 fit)
-    in_normalizer  = UnitGaussianNormalizer(mean=in_summation,  std=in_summation,  dim=[0,2,3,4], eps=1e-6)
-    out_normalizer = UnitGaussianNormalizer(mean=out_summation, std=out_summation, dim=[0,2,3,4], eps=1e-6)
+    in_normalizer  = UnitGaussianNormalizer(mean=in_summation,  std=in_summation,  dim=[0,2,3], eps=1e-6)
+    out_normalizer = UnitGaussianNormalizer(mean=out_summation, std=out_summation, dim=[0,2,3], eps=1e-6)
     meta_normalizer = UnitGaussianNormalizer(mean=meta_summation, std=meta_summation, dim=[0], eps=1e-6)
     in_normalizer.fit(in_summation)
     out_normalizer.fit(out_summation)
@@ -205,7 +207,7 @@ def main():
 
     # 4) train/test split
     train_in, test_in, train_out, test_out, train_meta, test_meta = train_test_split(
-        in_summation, out_summation, meta_summation, test_size=0.1, random_state=42
+        in_summation, out_summation, meta_summation, test_size=0.2, random_state=42
     )
     train_dataset = CustomDataset(train_in, train_out, train_meta)
     test_dataset  = CustomDataset(test_in,  test_out, test_meta)
@@ -295,7 +297,7 @@ def main():
     # 6) Best로 재학습 후 비교 그림 저장
     #bp = study.best_params
 
-    bp = {"n_modes": (16, 8, 5), "hidden_channels": 24, "n_layers": 3, "domain_padding": [0.1, 0.1, 0.1], "train_batch_size": 16, "l2_weight": 0, "initial_lr": 1e-4}
+    bp = {"n_modes": (20, 5), "hidden_channels": 12, "n_layers": 3, "domain_padding": [0.1, 0.1], "train_batch_size": 32, "l2_weight": 0, "initial_lr": 1e-4}
     best_model = build_model(
         bp["n_modes"], bp["hidden_channels"], bp["n_layers"],
         bp["domain_padding"], domain_padding_mode_fixed, device
@@ -305,6 +307,7 @@ def main():
 
     optimizer = AdamW(best_model.parameters(), lr=bp["initial_lr"], weight_decay=bp["l2_weight"])
     scheduler = CappedCosineAnnealingWarmRestarts(optimizer, T_0=10, T_max=80, T_mult=2, eta_min=1e-6)
+    # scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.85)
 
     for param in best_model.parameters():
         if param.dim() > 1:
@@ -353,7 +356,7 @@ def main():
         g_phys = y.detach().cpu()
 
     # 최종 그림
-    plot_compare(p_phys, g_phys, save_path=str('./src/FNO/output/FNO_compare.png'), sample_num=8)
+    plot_compare(p_phys, g_phys, save_path=str('./src/FNO/output/FNO_compare.png'), sample_nums=(0, 5, 10, 15, 20))
 
 if __name__ == "__main__":
     main()
