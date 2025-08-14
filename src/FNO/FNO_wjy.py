@@ -355,6 +355,14 @@ def main():
         p_phys = out_normalizer.inverse_transform(p).detach().cpu()
         g_phys = y.detach().cpu()
 
+        sse = torch.sum((p_phys - g_phys) ** 2).item()
+        g_mean = torch.mean(g_phys).item()
+        sst = torch.sum((g_phys - g_mean) ** 2).item()
+
+        r2_global = 1.0 - sse / sst
+        print(f"R2 Global: {r2_global:.6f}")
+
+
     # 최종 그림
     plot_compare(p_phys, g_phys, save_path=str('./src/FNO/output/FNO_compare.png'), sample_nums=(0, 5, 10, 15, 20))
 
