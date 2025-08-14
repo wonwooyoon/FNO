@@ -129,13 +129,19 @@ def plot_compare(pred_phys, gt_phys, save_path, sample_nums=(0,)):
     nrows = 3  # prediction, groundtruth, error (세로)
     ncols = n_samples  # sample별로 가로로 나열
 
-    # 각 이미지의 비율을 데이터에 맞춤 (예: 100열 20행 → aspect=ny/nx)
     nx, ny = pis[0].shape  # nx: 열, ny: 행
     aspect = ny / nx
 
-    fig_size = 4  # 한 이미지 기준 세로 크기
-    fig = plt.figure(figsize=(fig_size * ncols * (nx / ny), fig_size * nrows), constrained_layout=True)
-    gs = GridSpec(nrows=nrows, ncols=ncols + 2, figure=fig, width_ratios=[1]*ncols + [0.05, 0.05])
+    fig_size = 3  # 한 이미지 기준 세로 크기 (줄임)
+    fig = plt.figure(
+        figsize=(fig_size * ncols * (nx / ny), fig_size * nrows),
+        constrained_layout=False
+    )
+    gs = GridSpec(
+        nrows=nrows, ncols=ncols + 2, figure=fig,
+        width_ratios=[1]*ncols + [0.04, 0.04],  # 컬러바 폭 줄임
+        wspace=0.05, hspace=0.05                # 이미지 간 공간 최소화
+    )
 
     axes = [[fig.add_subplot(gs[row, col]) for col in range(ncols)] for row in range(nrows)]
 
@@ -154,15 +160,17 @@ def plot_compare(pred_phys, gt_phys, save_path, sample_nums=(0,)):
         ims[2].append(im_err)
 
     # Y축 라벨
-    axes[0][0].set_ylabel("Prediction", rotation=90, labelpad=20)
-    axes[1][0].set_ylabel("Groundtruth", rotation=90, labelpad=20)
-    axes[2][0].set_ylabel("Abs Error", rotation=90, labelpad=20)
+    axes[0][0].set_ylabel("Prediction", rotation=90, labelpad=10)
+    axes[1][0].set_ylabel("Groundtruth", rotation=90, labelpad=10)
+    axes[2][0].set_ylabel("Abs Error", rotation=90, labelpad=10)
 
     # 축 꾸미기
     for row in axes:
         for ax in row:
             ax.set_xticks([])
             ax.set_yticks([])
+            ax.set_aspect(aspect)
+            ax.set_frame_on(False)
 
     # 컬러바(오른쪽 2칸 사용)
     cax_main = fig.add_subplot(gs[:, -2])     # GT/Pred 공용
@@ -172,7 +180,8 @@ def plot_compare(pred_phys, gt_phys, save_path, sample_nums=(0,)):
     cb_err = fig.colorbar(ims[2][0], cax=cax_err)
     cb_err.set_label("Abs Error")
 
-    fig.savefig(save_path, dpi=200)
+    plt.subplots_adjust(left=0.01, right=0.99, top=0.97, bottom=0.03, wspace=0.01, hspace=0.01)
+    fig.savefig(save_path, dpi=200, bbox_inches='tight', pad_inches=0.05)
     plt.close(fig)
     print(f"[OK] Saved figure: {save_path}")
 
