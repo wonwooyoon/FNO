@@ -132,15 +132,16 @@ def plot_compare(pred_phys, gt_phys, save_path, sample_nums=(0,)):
     nx, ny = pis[0].shape  # nx: 열, ny: 행
     aspect = ny / nx
 
-    fig_size = 3  # 한 이미지 기준 세로 크기 (줄임)
+    # 가로 공간 줄이기: width_ratios를 ncols에 맞게 1보다 작게, figsize도 조정
+    fig_size = 2.2  # 한 이미지 기준 세로 크기 (더 줄임)
     fig = plt.figure(
-        figsize=(fig_size * ncols * (nx / ny), fig_size * nrows),
+        figsize=(fig_size * ncols * 0.7, fig_size * nrows),  # 가로 크기 0.7배
         constrained_layout=False
     )
     gs = GridSpec(
         nrows=nrows, ncols=ncols + 2, figure=fig,
-        width_ratios=[1]*ncols + [0.04, 0.04],  # 컬러바 폭 줄임
-        wspace=0.05, hspace=0.05                # 이미지 간 공간 최소화
+        width_ratios=[0.85]*ncols + [0.04, 0.04],  # 이미지 폭 0.85로 줄임
+        wspace=0.03, hspace=0.05                   # 이미지 간 공간 최소화
     )
 
     axes = [[fig.add_subplot(gs[row, col]) for col in range(ncols)] for row in range(nrows)]
