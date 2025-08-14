@@ -126,51 +126,46 @@ def plot_compare(pred_phys, gt_phys, save_path, sample_nums=(0,)):
     vmin = min(np.min(pis), np.min(gis))
     vmax = max(np.max(pis), np.max(gis))
 
-    ncols = 1 * n_samples
-    nrows = 3  # 3 rows per sample (GT/Pred/Error)
-    fig_h = 3.6 * 3
-    fig_w = 4.5 * n_samples  # 오른쪽 컬러바 폭 고려
-    fig = plt.figure(figsize=(fig_w, fig_h), constrained_layout=True)
+    nrows = 3  # prediction, groundtruth, error (세로)
+    ncols = n_samples  # sample별로 가로로 나열
 
-    # GridSpec: (3 * n_samples)행 x 1열, 오른쪽에 컬러바 2칸
-    gs = GridSpec(nrows=nrows, ncols=ncols + 2, figure=fig,
-                  width_ratios=[1, 0.05, 0.05],
-                  height_ratios=[1] * nrows, wspace=0.08, hspace=0.12)
+    fig_size = 4  # 각 이미지가 정사각형이 되도록
+    fig = plt.figure(figsize=(fig_size * ncols, fig_size * nrows), constrained_layout=True)
+    gs = GridSpec(nrows=nrows, ncols=ncols + 2, figure=fig, width_ratios=[1]*ncols + [0.05, 0.05])
 
-    axes_gt, axes_pred, axes_err = [], [], []
-    for s in range(n_samples):
-        ax_gt = fig.add_subplot(gs[3 + 0, s])
-        ax_pred = fig.add_subplot(gs[3 + 1, s])
-        ax_err = fig.add_subplot(gs[3 + 2, s])
-        axes_gt.append(ax_gt)
-        axes_pred.append(ax_pred)
-        axes_err.append(ax_err)
+    axes = [[fig.add_subplot(gs[row, col]) for col in range(ncols)] for row in range(nrows)]
 
-    # 플롯
-    ims_gt, ims_pred, ims_err = [], [], []
-    for s in range(n_samples):
-        im1 = axes_gt[s].imshow(gis[s], vmin=vmin, vmax=vmax)
-        im2 = axes_pred[s].imshow(pis[s], vmin=vmin, vmax=vmax)
-        im3 = axes_err[s].imshow(ers[s])
-        ims_gt.append(im1)
-        ims_pred.append(im2)
-        ims_err.append(im3)
+    ims = [[], [], []]  # pred, gt, err
 
-        axes_gt[s].set_title(f"GT (sample={sample_nums[s]})")
-        axes_pred[s].set_ylabel("Prediction", rotation=90, labelpad=20)
-        axes_err[s].set_ylabel("Abs Error", rotation=90, labelpad=20)
+    for i in range(n_samples):
+        # Prediction (row 0)
+        im_pred = axes[0][i].imshow(pis[i], vmin=vmin, vmax=vmax)
+        ims[0].append(im_pred)
+        axes[0][i].set_title(f"Sample {sample_nums[i]}")
+        # Groundtruth (row 1)
+        im_gt = axes[1][i].imshow(gis[i], vmin=vmin, vmax=vmax)
+        ims[1].append(im_gt)
+        # Error (row 2)
+        im_err = axes[2][i].imshow(ers[i])
+        ims[2].append(im_err)
+
+    # Y축 라벨
+    axes[0][0].set_ylabel("Prediction", rotation=90, labelpad=20)
+    axes[1][0].set_ylabel("Groundtruth", rotation=90, labelpad=20)
+    axes[2][0].set_ylabel("Abs Error", rotation=90, labelpad=20)
 
     # 축 꾸미기
-    for ax in axes_gt + axes_pred + axes_err:
-        ax.set_xticks([])
-        ax.set_yticks([])
+    for row in axes:
+        for ax in row:
+            ax.set_xticks([])
+            ax.set_yticks([])
 
     # 컬러바(오른쪽 2칸 사용)
-    cax_main = fig.add_subplot(gs[:, 1])     # GT/Pred 공용
-    cax_err = fig.add_subplot(gs[:, 2])      # Error 전용
-    cb_main = fig.colorbar(ims_gt[0], cax=cax_main)
+    cax_main = fig.add_subplot(gs[:, -2])     # GT/Pred 공용
+    cax_err = fig.add_subplot(gs[:, -1])      # Error 전용
+    cb_main = fig.colorbar(ims[0][0], cax=cax_main)
     cb_main.set_label("Value")
-    cb_err = fig.colorbar(ims_err[0], cax=cax_err)
+    cb_err = fig.colorbar(ims[2][0], cax=cax_err)
     cb_err.set_label("Abs Error")
 
     fig.savefig(save_path, dpi=200)
