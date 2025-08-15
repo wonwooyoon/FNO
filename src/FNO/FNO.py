@@ -1,15 +1,18 @@
-# train_tfno.py
 """
-- merged 결과물(.pt dict: x,y,xc,yc,time_keys)을 직접 로드
-- 기존 기능/로직 유지하되, 하이퍼파라미터 탐색을 Grid → Optuna TPE로 변경
-- 각 Trial에서: 모델/옵티마이저/스케줄러/Trainer 생성 → 학습 → val 손실 반환
-- 최종적으로 best params로 1회 재학습하여 비교 그림 저장
+Fourier Neural Operator (FNO) Training with Optuna Hyperparameter Optimization
+
+This module implements training pipeline for TFNO models using Optuna TPE sampler
+for hyperparameter optimization. The pipeline includes data loading, normalization,
+model training, and result visualization.
 """
 
 import sys
 sys.path.append('./')
 
 import math
+from pathlib import Path
+from typing import Dict, List, Tuple, Any, Optional
+
 import numpy as np
 import torch
 import optuna
@@ -25,24 +28,81 @@ from neuraloperator.neuralop.models import TFNO
 from neuraloperator.neuralop import Trainer
 from neuraloperator.neuralop.training import AdamW
 
-# =========================
-# Dataset
-# =========================
+# Configuration Constants
+CONFIG = {
+    'MERGED_PT_PATH': './src/preprocessing/merged.pt',
+    'OUTPUT_DIR': './src/FNO/output',
+    'N_EPOCHS': 10000,
+    'EVAL_INTERVAL': 1,
+    'TEST_SIZE': 0.1,
+    'RANDOM_STATE': 42,
+    'DOMAIN_PADDING_MODE': 'symmetric',
+    'MODEL_CONFIG': {
+        'in_channels': 8,
+        'out_channels': 1,
+        'lifting_channel_ratio': 2,
+        'projection_channel_ratio': 2,
+        'positional_embedding': 'grid',
+        'film_layer': True,
+        'meta_dim': 2
+    },
+    'SCHEDULER_CONFIG': {
+        'T_0': 10,
+        'T_max': 80,
+        'T_mult': 2,
+        'eta_min': 1e-6
+    },
+    'VISUALIZATION': {
+        'SAMPLE_NUM': 8,
+        'TIME_INDICES': (0, 4, 8, 12, 16),
+        'DPI': 200
+    }
+}
+
+# ==============================================================================
+# Data Classes and Dataset
+# ==============================================================================
 class CustomDataset(Dataset):
-    def __init__(self, input_tensor, output_tensor, meta_tensor):
+    """Custom dataset for FNO training.
+    
+    Args:
+        input_tensor: Input tensor of shape (N, 9, nx, ny, nt)
+        output_tensor: Output tensor of shape (N, 1, nx, ny, nt) 
+        meta_tensor: Metadata tensor of shape (N, 2)
+    """
+    
+    def __init__(self, input_tensor: torch.Tensor, output_tensor: torch.Tensor, meta_tensor: torch.Tensor):
         self.input_tensor = input_tensor
         self.output_tensor = output_tensor
         self.meta_tensor = meta_tensor
-    def __len__(self):
+        
+    def __len__(self) -> int:
         return self.input_tensor.shape[0]
-    def __getitem__(self, idx):
-        return {'x': self.input_tensor[idx], 'y': self.output_tensor[idx], 'meta': self.meta_tensor[idx]}
+        
+    def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
+        return {
+            'x': self.input_tensor[idx], 
+            'y': self.output_tensor[idx], 
+            'meta': self.meta_tensor[idx]
+        }
 
-# =========================
-# Learning Rate Scheduler (원본 유지)
-# =========================
+# ==============================================================================
+# Learning Rate Scheduler
+# ==============================================================================
 class CappedCosineAnnealingWarmRestarts(torch.optim.lr_scheduler._LRScheduler):
-    def __init__(self, optimizer, T_0, T_max, T_mult=1, eta_min=0, last_epoch=-1):
+    """Cosine annealing warm restarts scheduler with maximum period cap.
+    
+    Args:
+        optimizer: Wrapped optimizer
+        T_0: Number of iterations for the first restart
+        T_max: Maximum period length
+        T_mult: Factor to increase period after restart
+        eta_min: Minimum learning rate
+        last_epoch: Index of last epoch
+    """
+    
+    def __init__(self, optimizer: torch.optim.Optimizer, T_0: int, T_max: int, 
+                 T_mult: int = 1, eta_min: float = 0, last_epoch: int = -1):
         self.T_0 = T_0
         self.T_max = T_max
         self.T_mult = T_mult
@@ -50,7 +110,8 @@ class CappedCosineAnnealingWarmRestarts(torch.optim.lr_scheduler._LRScheduler):
         self.T_i = T_0
         self.last_restart = 0
         super().__init__(optimizer, last_epoch)
-    def get_lr(self):
+        
+    def get_lr(self) -> List[float]:
         t = self.last_epoch - self.last_restart
         if t >= self.T_i:
             self.last_restart = self.last_epoch
@@ -61,59 +122,128 @@ class CappedCosineAnnealingWarmRestarts(torch.optim.lr_scheduler._LRScheduler):
             for base_lr in self.base_lrs
         ]
 
-# =========================
-# Utilities
-# =========================
-def load_merged_tensors(merged_pt_path: str):
-    bundle = torch.load(merged_pt_path, map_location="cpu")
-    in_summation = bundle["x"].float()   # (N, 9, nx, ny, nt)
-    out_summation = bundle["y"].float()  # (N, 1, nx, ny, nt)
-    meta_summation = bundle["meta"].float()  # (N, 2)
-    print("Loaded merged tensors:", tuple(in_summation.shape), tuple(out_summation.shape), tuple(meta_summation.shape))
-    return in_summation, out_summation, meta_summation
-# merged tensor까지 수정함. 내일은 preprocessing_merge 부분에, meta data를 추가하는 부분부터 시작할것!
+# ==============================================================================
+# Utility Functions
+# ==============================================================================
+def load_merged_tensors(merged_pt_path: str) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Load merged tensors from .pt file.
+    
+    Args:
+        merged_pt_path: Path to merged .pt file
+        
+    Returns:
+        Tuple of (input_tensor, output_tensor, meta_tensor)
+        
+    Raises:
+        FileNotFoundError: If merged file doesn't exist
+        KeyError: If required keys are missing from loaded data
+    """
+    try:
+        if not Path(merged_pt_path).exists():
+            raise FileNotFoundError(f"Merged file not found: {merged_pt_path}")
+            
+        bundle = torch.load(merged_pt_path, map_location="cpu")
+        
+        required_keys = ["x", "y", "meta"]
+        missing_keys = [key for key in required_keys if key not in bundle]
+        if missing_keys:
+            raise KeyError(f"Missing required keys in data: {missing_keys}")
+            
+        in_summation = bundle["x"].float()
+        out_summation = bundle["y"].float()
+        meta_summation = bundle["meta"].float()
+        
+        print(f"Loaded merged tensors: {tuple(in_summation.shape)}, {tuple(out_summation.shape)}, {tuple(meta_summation.shape)}")
+        return in_summation, out_summation, meta_summation
+        
+    except Exception as e:
+        print(f"Error loading merged tensors: {e}")
+        raise
 
-def build_model(n_modes, hidden_channels, n_layers, domain_padding, domain_padding_mode, device):
+def build_model(n_modes: Tuple[int, ...], hidden_channels: int, n_layers: int, 
+                domain_padding: List[float], domain_padding_mode: str, device: str) -> TFNO:
+    """Build TFNO model with given hyperparameters.
+    
+    Args:
+        n_modes: Number of modes for each dimension
+        hidden_channels: Number of hidden channels
+        n_layers: Number of layers
+        domain_padding: Domain padding values
+        domain_padding_mode: Padding mode
+        device: Device to place model on
+        
+    Returns:
+        Configured TFNO model
+    """
     model = TFNO(
         n_modes=n_modes,
-        in_channels=8,
-        out_channels=1,
+        in_channels=CONFIG['MODEL_CONFIG']['in_channels'],
+        out_channels=CONFIG['MODEL_CONFIG']['out_channels'],
         hidden_channels=hidden_channels,
         n_layers=n_layers,
-        lifting_channel_ratio=2,
-        projection_channel_ratio=2,
-        positional_embedding='grid',
+        lifting_channel_ratio=CONFIG['MODEL_CONFIG']['lifting_channel_ratio'],
+        projection_channel_ratio=CONFIG['MODEL_CONFIG']['projection_channel_ratio'],
+        positional_embedding=CONFIG['MODEL_CONFIG']['positional_embedding'],
         domain_padding=domain_padding,
         domain_padding_mode=domain_padding_mode,
-        film_layer=True,
-        meta_dim=2
+        film_layer=CONFIG['MODEL_CONFIG']['film_layer'],
+        meta_dim=CONFIG['MODEL_CONFIG']['meta_dim']
     ).to(device)
     return model
 
-@torch.no_grad()
-def plot_compare(pred_phys, gt_phys, save_path, sample_num=0, t_indices=(0,1,2,3,4)):
+def setup_data_loaders(train_dataset: CustomDataset, test_dataset: CustomDataset, 
+                       batch_size: int) -> Tuple[DataLoader, Dict[str, DataLoader]]:
+    """Setup train and test data loaders.
+    
+    Args:
+        train_dataset: Training dataset
+        test_dataset: Test dataset  
+        batch_size: Training batch size
+        
+    Returns:
+        Tuple of (train_loader, test_loaders_dict)
+    """
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    test_loader = {'test_dataloader': DataLoader(test_dataset, batch_size=len(test_dataset), shuffle=False)}
+    return train_loader, test_loader
 
-    # 데이터 수집
+def initialize_model_weights(model: TFNO) -> None:
+    """Initialize model weights using Xavier uniform initialization.
+    
+    Args:
+        model: Model to initialize
+    """
+    for param in model.parameters():
+        if param.dim() > 1:
+            torch.nn.init.xavier_uniform_(param)
+        else:
+            torch.nn.init.zeros_(param)
+
+def _collect_visualization_data(pred_phys: torch.Tensor, gt_phys: torch.Tensor, 
+                               sample_num: int, t_indices: Tuple[int, ...]) -> Tuple[List, List, List, float, float]:
+    """Collect data for visualization."""
     pis, gis, ers = [], [], []
     for t in t_indices:
-        pi = pred_phys[sample_num,0,:,:,t].cpu().numpy()
-        gi = gt_phys[sample_num,0,:,:,t].cpu().numpy()
-        pis.append(pi); gis.append(gi); ers.append(np.abs(pi-gi))
+        pi = pred_phys[sample_num, 0, :, :, t].cpu().numpy()
+        gi = gt_phys[sample_num, 0, :, :, t].cpu().numpy()
+        pis.append(pi)
+        gis.append(gi)
+        ers.append(np.abs(pi - gi))
 
-    # GT/Pred 공용 범위
     vmin = min(np.min(pis), np.min(gis))
     vmax = max(np.max(pis), np.max(gis))
+    return pis, gis, ers, vmin, vmax
 
+def _create_figure_and_axes(t_indices: Tuple[int, ...]) -> Tuple[plt.Figure, List, List, List]:
+    """Create figure and axes for visualization."""
     ncols = len(t_indices)
-    # 가로 폭은 시점 개수에 비례해서 늘림
     fig_h = 3.6 * 3
-    fig_w = 1.8 * ncols + 1.6  # 오른쪽 컬러바 폭 고려
+    fig_w = 1.8 * ncols + 1.6
     fig = plt.figure(figsize=(fig_w, fig_h), constrained_layout=True)
 
-    # GridSpec: 3행(GT/Pred/Error) x ncols(시간), 오른쪽에 컬러바 2칸
     gs = GridSpec(nrows=3, ncols=ncols+2, figure=fig,
                   width_ratios=[*([1]*ncols), 0.05, 0.05],
-                  height_ratios=[1,1,1], wspace=0.08, hspace=0.12)
+                  height_ratios=[1, 1, 1], wspace=0.08, hspace=0.12)
 
     axes_gt, axes_pred, axes_err = [], [], []
     for r in range(3):
@@ -121,95 +251,132 @@ def plot_compare(pred_phys, gt_phys, save_path, sample_num=0, t_indices=(0,1,2,3
         for c in range(ncols):
             ax = fig.add_subplot(gs[r, c])
             row_axes.append(ax)
-        if r == 0: axes_gt = row_axes
-        elif r == 1: axes_pred = row_axes
-        else: axes_err = row_axes
+        if r == 0: 
+            axes_gt = row_axes
+        elif r == 1: 
+            axes_pred = row_axes
+        else: 
+            axes_err = row_axes
+            
+    return fig, axes_gt, axes_pred, axes_err
 
-    # 플롯
+@torch.no_grad()
+def plot_compare(pred_phys: torch.Tensor, gt_phys: torch.Tensor, save_path: str, 
+                sample_num: int = 0, t_indices: Tuple[int, ...] = (0, 1, 2, 3, 4)) -> None:
+    """Plot comparison between predictions and ground truth.
+    
+    Args:
+        pred_phys: Predicted physical values
+        gt_phys: Ground truth physical values
+        save_path: Path to save the comparison plot
+        sample_num: Sample index to visualize
+        t_indices: Time indices to visualize
+    """
+    pis, gis, ers, vmin, vmax = _collect_visualization_data(pred_phys, gt_phys, sample_num, t_indices)
+    fig, axes_gt, axes_pred, axes_err = _create_figure_and_axes(t_indices)
+    
     ims_gt, ims_pred, ims_err = [], [], []
     for c, (pi, gi, er, t) in enumerate(zip(pis, gis, ers, t_indices)):
         im1 = axes_gt[c].imshow(gi, vmin=vmin, vmax=vmax)
         im2 = axes_pred[c].imshow(pi, vmin=vmin, vmax=vmax)
         im3 = axes_err[c].imshow(er)
-        ims_gt.append(im1); ims_pred.append(im2); ims_err.append(im3)
+        ims_gt.append(im1)
+        ims_pred.append(im2)
+        ims_err.append(im3)
 
         axes_gt[c].set_title(f"GT (t={t})")
         if c == 0:
             axes_pred[c].set_ylabel("Prediction", rotation=90, labelpad=20)
             axes_err[c].set_ylabel("Abs Error", rotation=90, labelpad=20)
 
-    # 축 꾸미기
     for row in (axes_gt, axes_pred, axes_err):
         for ax in row:
-            ax.set_xticks([]); ax.set_yticks([])
+            ax.set_xticks([])
+            ax.set_yticks([])
 
-    # 컬러바(오른쪽 2칸 사용)
-    cax_main = fig.add_subplot(gs[:, ncols])     # GT/Pred 공용
-    cax_err  = fig.add_subplot(gs[:, ncols+1])   # Error 전용
-    # 공용 컬러바는 GT/Pred 중 아무거나 핸들로 사용
+    ncols = len(t_indices)
+    gs = fig._gridspecs[0]
+    cax_main = fig.add_subplot(gs[:, ncols])
+    cax_err = fig.add_subplot(gs[:, ncols+1])
+    
     cb_main = fig.colorbar(ims_gt[0], cax=cax_main)
     cb_main.set_label("Value")
-    cb_err  = fig.colorbar(ims_err[0], cax=cax_err)
+    cb_err = fig.colorbar(ims_err[0], cax=cax_err)
     cb_err.set_label("Abs Error")
 
-    fig.savefig(save_path, dpi=200)
+    fig.savefig(save_path, dpi=CONFIG['VISUALIZATION']['DPI'])
     plt.close(fig)
-    print(f"[OK] Saved multi-time figure: {save_path}")
+    print(f"Saved comparison plot: {save_path}")
 
-# =========================
-# Main (Optuna TPE)
-# =========================
-def main():
-    merged_pt_path = "./src/preprocessing/merged.pt"
-
-    # 1) 데이터 로드
+# ==============================================================================
+# Data Processing and Training Functions
+# ==============================================================================
+def prepare_data_and_normalizers(merged_pt_path: str) -> Tuple:
+    """Prepare data and normalizers.
+    
+    Args:
+        merged_pt_path: Path to merged data file
+        
+    Returns:
+        Tuple containing tensors, normalizers, processor, and datasets
+    """
     in_summation, out_summation, meta_summation = load_merged_tensors(merged_pt_path)
-
-    # 2) 디바이스
+    
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    print(f"Using device: {device}")
+    
     in_summation = in_summation.to(device)
     out_summation = out_summation.to(device)
     meta_summation = meta_summation.to(device)
-
+    
     out_summation = 10 ** out_summation
-
-    # 3) 정규화 (원본 방식 유지: 전체 데이터로 fit)
-    in_normalizer  = UnitGaussianNormalizer(mean=in_summation,  std=in_summation,  dim=[0,2,3,4], eps=1e-6)
+    
+    in_normalizer = UnitGaussianNormalizer(mean=in_summation, std=in_summation, dim=[0,2,3,4], eps=1e-6)
     out_normalizer = UnitGaussianNormalizer(mean=out_summation, std=out_summation, dim=[0,2,3,4], eps=1e-6)
     meta_normalizer = UnitGaussianNormalizer(mean=meta_summation, std=meta_summation, dim=[0], eps=1e-6)
+    
     in_normalizer.fit(in_summation)
     out_normalizer.fit(out_summation)
     meta_normalizer.fit(meta_summation)
+    
     processor = DefaultDataProcessor(in_normalizer, out_normalizer, meta_normalizer).to(device)
-
-    # 4) train/test split
+    
     train_in, test_in, train_out, test_out, train_meta, test_meta = train_test_split(
-        in_summation, out_summation, meta_summation, test_size=0.1, random_state=42
+        in_summation, out_summation, meta_summation, 
+        test_size=CONFIG['TEST_SIZE'], 
+        random_state=CONFIG['RANDOM_STATE']
     )
+    
     train_dataset = CustomDataset(train_in, train_out, train_meta)
-    test_dataset  = CustomDataset(test_in,  test_out, test_meta)
+    test_dataset = CustomDataset(test_in, test_out, test_meta)
+    
+    return (in_summation, out_summation, meta_summation, device, 
+            in_normalizer, out_normalizer, meta_normalizer, processor, 
+            train_dataset, test_dataset)
 
-    # 고정 요소들
-    domain_padding_mode_fixed = 'symmetric'
-    N_EPOCHS = 10000
-    EVAL_INTERVAL = 1
-
-    # 5) Optuna 객체
-    def objective(trial: "optuna.trial.Trial"):
-        # ---- 하이퍼파라미터 공간 (원본 리스트를 카테고리컬로 유지) ----
-        # n_modes = trial.suggest_categorical("n_modes",
-        #     [(32,16,10), (16,16,10), (16,8,10), (32,16,5), (16,16,5), (16,8,5)]
-        # )
-        # hidden_channels = trial.suggest_categorical("hidden_channels", [16, 32, 64, 128])
-        # n_layers = trial.suggest_int("n_layers", 3, 5)
-        # domain_padding = trial.suggest_categorical("domain_padding", [[0.1,0.1,0.1], [0.125,0.25,0.4]])
-        # train_batch_size = trial.suggest_categorical("train_batch_size", [16, 32, 64, 128])
-        # l2_weight = trial.suggest_float("l2_weight", 1e-8, 1e-3, log=True)
-        # initial_lr = trial.suggest_float("initial_lr", 1e-4, 1e-3, log=True)
-
-        n_modes = trial.suggest_categorical("n_modes",
-            [(16,16,5), (16,8,5)]
-        )
+def create_objective_function(train_dataset: CustomDataset, test_dataset: CustomDataset, 
+                             processor: DefaultDataProcessor, device: str) -> callable:
+    """Create Optuna objective function.
+    
+    Args:
+        train_dataset: Training dataset
+        test_dataset: Test dataset  
+        processor: Data processor
+        device: Device to use
+        
+    Returns:
+        Objective function for Optuna optimization
+    """
+    def objective(trial: optuna.trial.Trial) -> float:
+        """Optuna objective function for hyperparameter optimization.
+        
+        Args:
+            trial: Optuna trial object
+            
+        Returns:
+            Validation L2 loss
+        """
+        n_modes = trial.suggest_categorical("n_modes", [(16,16,5), (16,8,5)])
         hidden_channels = trial.suggest_categorical("hidden_channels", [8])
         n_layers = trial.suggest_categorical("n_layers", [2])
         domain_padding = trial.suggest_categorical("domain_padding", [[0.125,0.25,0.4]])
@@ -217,25 +384,28 @@ def main():
         l2_weight = trial.suggest_float("l2_weight", 1e-8, 1e-3, log=True)
         initial_lr = trial.suggest_float("initial_lr", 1e-4, 1e-3, log=True)
 
-        # ---- DataLoader (train만 hp 반영, test는 전체 한 배치) ----
-        train_loader = DataLoader(train_dataset, batch_size=train_batch_size, shuffle=True)
-        test_loader  = {'test_dataloader': DataLoader(test_dataset, batch_size=len(test_dataset), shuffle=False)}
-
-        # ---- 모델/최적화/스케줄러/트레이너 ----
-        model = build_model(n_modes, hidden_channels, n_layers, domain_padding, domain_padding_mode_fixed, device)
+        train_loader, test_loader = setup_data_loaders(train_dataset, test_dataset, train_batch_size)
+        
+        model = build_model(n_modes, hidden_channels, n_layers, domain_padding, 
+                          CONFIG['DOMAIN_PADDING_MODE'], device)
         optimizer = AdamW(model.parameters(), lr=initial_lr, weight_decay=l2_weight)
-        scheduler = CappedCosineAnnealingWarmRestarts(optimizer, T_0=10, T_max=80, T_mult=2, eta_min=1e-6)
+        scheduler = CappedCosineAnnealingWarmRestarts(
+            optimizer, 
+            CONFIG['SCHEDULER_CONFIG']['T_0'], 
+            CONFIG['SCHEDULER_CONFIG']['T_max'], 
+            CONFIG['SCHEDULER_CONFIG']['T_mult'], 
+            CONFIG['SCHEDULER_CONFIG']['eta_min']
+        )
 
         l2loss = LpLoss(d=3, p=2)
         trainer = Trainer(
-            model=model, n_epochs=N_EPOCHS, device=device,
+            model=model, n_epochs=CONFIG['N_EPOCHS'], device=device,
             data_processor=processor, wandb_log=False,
-            eval_interval=EVAL_INTERVAL, use_distributed=False, verbose=True
+            eval_interval=CONFIG['EVAL_INTERVAL'], use_distributed=False, verbose=True
         )
 
-        # ---- 학습 ----
-
-        best_model_path = './src/FNO/output/optuna'
+        best_model_path = Path(CONFIG['OUTPUT_DIR']) / 'optuna'
+        best_model_path.mkdir(parents=True, exist_ok=True)
 
         trainer.train(
             train_loader=train_loader,
@@ -247,61 +417,85 @@ def main():
             training_loss=l2loss,
             eval_losses={'l2': l2loss},
             save_best='test_dataloader_l2',
-            save_dir=best_model_path
+            save_dir=str(best_model_path)
         )
 
-        model.load_state_dict(torch.load(f'{best_model_path}/best_model_state_dict.pt', map_location=device,weights_only=False))
+        model.load_state_dict(torch.load(
+            best_model_path / 'best_model_state_dict.pt', 
+            map_location=device, weights_only=False
+        ))
         model.eval()
 
         with torch.no_grad():
-            xy = next(iter(test_loader))
-            x = xy["x"].to(device)
-            y = xy["y"].to(device)
+            test_batch = next(iter(test_loader['test_dataloader']))
+            x = test_batch["x"].to(device)
+            y = test_batch["y"].to(device)
             pred = model(x)
             val_l2 = l2loss(pred, y).item()
         
         return val_l2
+    
+    return objective
 
-    # # TPE Sampler (Bayesian)
-    # sampler = optuna.samplers.TPESampler(seed=42, n_startup_trials=2)
-    # study = optuna.create_study(direction="minimize", sampler=sampler)
-    # study.optimize(objective, n_trials=2, show_progress_bar=True)
-
-    # print("\n=== Optuna Best ===")
-    # print("Value:", study.best_value)
-    # print("Params:", study.best_params)
-
-    # 6) Best로 재학습 후 비교 그림 저장
-    #bp = study.best_params
-
-    bp = {"n_modes": (16, 8, 5), "hidden_channels": 24, "n_layers": 3, "domain_padding": [0.1, 0.1, 0.1], "train_batch_size": 16, "l2_weight": 0, "initial_lr": 1e-4}
+def train_final_model(best_params: Dict[str, Any], train_dataset: CustomDataset, 
+                     test_dataset: CustomDataset, processor: DefaultDataProcessor,
+                     in_normalizer, out_normalizer, meta_normalizer, device: str) -> None:
+    """Train final model with best parameters and generate comparison plot.
+    
+    Args:
+        best_params: Best hyperparameters from optimization
+        train_dataset: Training dataset
+        test_dataset: Test dataset
+        processor: Data processor
+        in_normalizer: Input normalizer
+        out_normalizer: Output normalizer  
+        meta_normalizer: Meta normalizer
+        device: Device to use
+    """
     best_model = build_model(
-        bp["n_modes"], bp["hidden_channels"], bp["n_layers"],
-        bp["domain_padding"], domain_padding_mode_fixed, device
+        best_params["n_modes"], 
+        best_params["hidden_channels"], 
+        best_params["n_layers"],
+        best_params["domain_padding"], 
+        CONFIG['DOMAIN_PADDING_MODE'], 
+        device
     )
 
-    print(f'number of parameters: {sum(p.numel() for p in best_model.parameters())}')
+    print(f'Model parameters: {sum(p.numel() for p in best_model.parameters()):,}')
 
-    optimizer = AdamW(best_model.parameters(), lr=bp["initial_lr"], weight_decay=bp["l2_weight"])
-    scheduler = CappedCosineAnnealingWarmRestarts(optimizer, T_0=10, T_max=80, T_mult=2, eta_min=1e-6)
+    optimizer = AdamW(
+        best_model.parameters(), 
+        lr=best_params["initial_lr"], 
+        weight_decay=best_params["l2_weight"]
+    )
+    scheduler = CappedCosineAnnealingWarmRestarts(
+        optimizer, 
+        CONFIG['SCHEDULER_CONFIG']['T_0'], 
+        CONFIG['SCHEDULER_CONFIG']['T_max'], 
+        CONFIG['SCHEDULER_CONFIG']['T_mult'], 
+        CONFIG['SCHEDULER_CONFIG']['eta_min']
+    )
 
-    for param in best_model.parameters():
-        if param.dim() > 1:
-            torch.nn.init.xavier_uniform_(param)
-        else:
-            torch.nn.init.zeros_(param)
+    initialize_model_weights(best_model)
 
     l2loss = LpLoss(d=3, p=2)
     trainer = Trainer(
-        model=best_model, n_epochs=10000, device=device,
-        data_processor=processor, wandb_log=False,
-        eval_interval=1, use_distributed=False, verbose=True
+        model=best_model, 
+        n_epochs=CONFIG['N_EPOCHS'], 
+        device=device,
+        data_processor=processor, 
+        wandb_log=False,
+        eval_interval=CONFIG['EVAL_INTERVAL'], 
+        use_distributed=False, 
+        verbose=True
     )
     
-    train_loader = DataLoader(train_dataset, batch_size=bp["train_batch_size"], shuffle=True)
-    test_loader  = {'test_dataloader': DataLoader(test_dataset, batch_size=len(test_dataset), shuffle=False)}
+    train_loader, test_loader = setup_data_loaders(
+        train_dataset, test_dataset, best_params["train_batch_size"]
+    )
 
-    best_model_path = './src/FNO/output/final'
+    final_model_path = Path(CONFIG['OUTPUT_DIR']) / 'final'
+    final_model_path.mkdir(parents=True, exist_ok=True)
 
     trainer.train(
         train_loader=train_loader,
@@ -313,29 +507,77 @@ def main():
         training_loss=l2loss,
         eval_losses={'l2': l2loss},
         save_best='test_dataloader_l2',
-        save_dir=best_model_path
+        save_dir=str(final_model_path)
     )
     
-    # 그림 저장 (역정규화)
-    best_model.load_state_dict(torch.load(f'{best_model_path}/best_model_state_dict.pt', map_location=device,weights_only=False))
+    best_model.load_state_dict(torch.load(
+        final_model_path / 'best_model_state_dict.pt', 
+        map_location=device, weights_only=False
+    ))
     best_model.eval()
 
     with torch.no_grad():
-        xb = next(iter(test_loader["test_dataloader"]))
-        x = xb["x"].to(device) 
-        y = xb["y"].to(device)
-        meta = xb["meta"].to(device)
-        p = best_model(in_normalizer.transform(x), meta_normalizer.transform(meta)) 
-
-        p[:, :, 14:18, 14:18, :] = 0
+        test_batch = next(iter(test_loader["test_dataloader"]))
+        x = test_batch["x"].to(device) 
+        y = test_batch["y"].to(device)
+        meta = test_batch["meta"].to(device)
+        
+        pred = best_model(in_normalizer.transform(x), meta_normalizer.transform(meta))
+        
+        pred[:, :, 14:18, 14:18, :] = 0
         y[:, :, 14:18, 14:18, :] = 0
+        
+        pred_phys = out_normalizer.inverse_transform(pred).detach().cpu()
+        gt_phys = y.detach().cpu()
 
-        # 역정규화
-        p_phys = out_normalizer.inverse_transform(p).detach().cpu()
-        g_phys = y.detach().cpu()
-
-    # 최종 그림
-    plot_compare(p_phys, g_phys, save_path=str('./src/FNO/output/FNO_compare.png'), sample_num=8, t_indices=(0, 4, 8, 12, 16))
+    output_path = Path(CONFIG['OUTPUT_DIR']) / 'FNO_compare.png'
+    plot_compare(
+        pred_phys, gt_phys, 
+        save_path=str(output_path), 
+        sample_num=CONFIG['VISUALIZATION']['SAMPLE_NUM'], 
+        t_indices=CONFIG['VISUALIZATION']['TIME_INDICES']
+    )
+def main() -> None:
+    """Main training pipeline with hyperparameter optimization."""
+    try:
+        data_results = prepare_data_and_normalizers(CONFIG['MERGED_PT_PATH'])
+        (
+            in_summation, out_summation, meta_summation, device,
+            in_normalizer, out_normalizer, meta_normalizer, processor,
+            train_dataset, test_dataset
+        ) = data_results
+        
+        # Example: Run with predefined best parameters
+        # For actual hyperparameter optimization, uncomment the Optuna section below
+        best_params = {
+            "n_modes": (16, 8, 5), 
+            "hidden_channels": 24, 
+            "n_layers": 3, 
+            "domain_padding": [0.1, 0.1, 0.1], 
+            "train_batch_size": 16, 
+            "l2_weight": 0, 
+            "initial_lr": 1e-4
+        }
+        
+        # Uncomment for actual hyperparameter optimization:
+        # objective_fn = create_objective_function(train_dataset, test_dataset, processor, device)
+        # sampler = optuna.samplers.TPESampler(seed=42, n_startup_trials=2)
+        # study = optuna.create_study(direction="minimize", sampler=sampler)
+        # study.optimize(objective_fn, n_trials=10, show_progress_bar=True)
+        # print(f"\nOptuna Best Value: {study.best_value}")
+        # print(f"Optuna Best Params: {study.best_params}")
+        # best_params = study.best_params
+        
+        train_final_model(
+            best_params, train_dataset, test_dataset, processor,
+            in_normalizer, out_normalizer, meta_normalizer, device
+        )
+        
+        print("Training completed successfully!")
+        
+    except Exception as e:
+        print(f"Error during training: {e}")
+        raise
 
 if __name__ == "__main__":
     main()
