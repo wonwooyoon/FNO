@@ -51,12 +51,12 @@ CONFIG = {
         'film_layer': False  # Pure FNO without FiLM modulation
     },
     'SCHEDULER_CONFIG': {
-        'scheduler_type': 'step',  # Options: 'cosine', 'step'
+        'scheduler_type': 'cosine',  # Options: 'cosine', 'step'
         'early_stopping': 40,
         'T_0': 10,
         'T_max': 80,
         'T_mult': 2,
-        'eta_min': 1e-6,
+        'eta_min': 1e-8,
         'step_size': 10,
         'gamma': 0.5
     },
@@ -87,13 +87,13 @@ CONFIG = {
         'initial_lr_range': [1e-4, 1e-3]  # [min, max] for log uniform
     },
     'SINGLE_PARAMS': {
-        "n_modes": (16, 8, 5), 
-        "hidden_channels": 24, 
-        "n_layers": 3, 
+        "n_modes": (16, 8, 4), 
+        "hidden_channels": 12, 
+        "n_layers": 4, 
         "domain_padding": [0.1, 0.1, 0.1], 
         "train_batch_size": 32, 
         "l2_weight": 0, 
-        "initial_lr": 1e-4
+        "initial_lr": 1e-3
     }
 }
 
@@ -464,6 +464,7 @@ def prepare_data_and_normalizers_pure(merged_pt_path: str) -> Tuple:
     meta_summation = meta_summation.to(device)
     
     out_summation = 10 ** out_summation
+    out_summation[:, :, 12:20, 12:20, :] = 0
     
     # Combine input with uniform meta channels for full dataset
     combined_input = expand_meta_to_uniform_channels(in_summation, meta_summation)
@@ -650,11 +651,11 @@ def train_final_model(best_params: Dict[str, Any], train_dataset: CustomDatasetP
         
         pred = best_model(in_normalizer.transform(x))
         
-        pred[:, :, 14:18, 14:18, :] = 0
-        y[:, :, 14:18, 14:18, :] = 0
-        
         pred_phys = out_normalizer.inverse_transform(pred).detach().cpu()
         gt_phys = y.detach().cpu()
+
+        pred_phys[:, :, 12:20, 12:20, :] = 0
+        gt_phys[:, :, 12:20, 12:20, :] = 0
 
     output_path = Path(CONFIG['OUTPUT_DIR']) / 'FNO_pure_compare.png'
     plot_compare(
@@ -772,8 +773,8 @@ def run_eval_mode(train_dataset: CustomDatasetPure, test_dataset: CustomDatasetP
         
         pred = model(in_normalizer.transform(x))
         
-        pred[:, :, 14:18, 14:18, :] = 0
-        y[:, :, 14:18, 14:18, :] = 0
+        pred[:, :, 12:20, 12:20, :] = 0
+        y[:, :, 12:20, 12:20, :] = 0
         
         pred_phys = out_normalizer.inverse_transform(pred).detach().cpu()
         gt_phys = y.detach().cpu()

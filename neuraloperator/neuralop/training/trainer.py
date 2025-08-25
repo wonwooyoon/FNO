@@ -320,6 +320,7 @@ class Trainer:
             avg_lasso_loss /= self.n_samples
         else:
             avg_lasso_loss = None
+        print(f"n_samples_avg={self.n_samples}")
         
         lr = None
         for pg in self.optimizer.param_groups:
@@ -439,6 +440,8 @@ class Trainer:
         
         for key in errors.keys():
             errors[key] /= self.n_samples
+        
+        print(f"n_samples_test={self.n_samples}")
 
         # on last batch, log model outputs
         if self.log_output and self.wandb_log:
