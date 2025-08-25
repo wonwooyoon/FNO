@@ -9,7 +9,6 @@ providing a straightforward approach to conditional neural operators.
 
 import sys
 sys.path.append('./')
-sys.path.append('./neuraloperator')
 
 import math
 from pathlib import Path
@@ -26,12 +25,11 @@ from matplotlib.gridspec import GridSpec
 from torch.utils.data import DataLoader, Dataset
 from sklearn.model_selection import train_test_split
 
-from neuralop.data.transforms.normalizers import UnitGaussianNormalizer
-from neuralop.data.transforms.data_processors import DefaultDataProcessor
-from neuralop.utils import count_model_params
-# LpLoss will be implemented inline
-from neuralop.models import TFNO
-from neuralop.training import AdamW
+from neuraloperator.neuralop.data.transforms.normalizers import UnitGaussianNormalizer
+from neuraloperator.neuralop.data.transforms.data_processors import DefaultDataProcessor
+from neuraloperator.neuralop.utils import count_model_params
+from neuraloperator.neuralop.models import TFNO
+from neuraloperator.neuralop.training import AdamW
 
 # Direct inline training - no external utilities needed
 
@@ -93,7 +91,7 @@ CONFIG = {
     'RANDOM_STATE': 42,
     'DOMAIN_PADDING_MODE': 'symmetric',
     'MODEL_CONFIG': {
-        'in_channels': 9,  # 8 original channels + 2 uniform meta channels
+        'in_channels': 8,  # 8 original channels + 2 uniform meta channels
         'out_channels': 1,
         'lifting_channel_ratio': 2,
         'projection_channel_ratio': 2,
