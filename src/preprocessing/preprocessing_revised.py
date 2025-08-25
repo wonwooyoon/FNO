@@ -37,7 +37,6 @@ def read_one_h5(h5_path: Path):
         clino     = np.array(grp0["Clinochlore VF [m^3 mnrl_m^3 bulk]"][:])[zc_mask]
         pyrite    = np.array(grp0["Pyrite VF [m^3 mnrl_m^3 bulk]"][:])[zc_mask]
         smectite  = np.array(grp0["Smectite_MX80 VF [m^3 mnrl_m^3 bulk]"][:])[zc_mask]
-        material  = np.array(grp0["Material ID"][:])[zc_mask]
 
         # 예: 50y 속도(필요시 args로 시간 바꿔도 됨)
         grp1 = f["   1 Time  5.00000E+01 y"]
@@ -49,13 +48,12 @@ def read_one_h5(h5_path: Path):
         clino_grid     = to_grid(clino)
         pyrite_grid    = to_grid(pyrite)
         smectite_grid  = to_grid(smectite)
-        material_grid  = to_grid(material)
         x_velo_grid    = to_grid(x_velo)
         y_velo_grid    = to_grid(y_velo)
 
         input_base = np.stack(
             [perm_grid, calcite_grid, clino_grid, pyrite_grid, smectite_grid,
-             material_grid, x_velo_grid, y_velo_grid], axis=0
+             x_velo_grid, y_velo_grid], axis=0
         )[:, :, :, np.newaxis]  # (9, nx, ny, 1)
 
         # 시간 키 수집(100~2000y, 100 간격)

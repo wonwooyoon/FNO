@@ -93,7 +93,7 @@ CONFIG = {
     'RANDOM_STATE': 42,
     'DOMAIN_PADDING_MODE': 'symmetric',
     'MODEL_CONFIG': {
-        'in_channels': 10,  # 8 original channels + 2 uniform meta channels
+        'in_channels': 9,  # 8 original channels + 2 uniform meta channels
         'out_channels': 1,
         'lifting_channel_ratio': 2,
         'projection_channel_ratio': 2,
@@ -102,7 +102,7 @@ CONFIG = {
     },
     'SCHEDULER_CONFIG': {
         'scheduler_type': 'cosine',  # Options: 'cosine', 'step'
-        'early_stopping': 40,
+        'early_stopping': 80,
         'T_0': 10,
         'T_max': 80,
         'T_mult': 2,
@@ -276,14 +276,14 @@ def expand_meta_to_uniform_channels(input_tensor: torch.Tensor, meta_tensor: tor
         Combined tensor of shape (N, original_channels + meta_channels, nx, ny, nt)
     """
     N, original_channels, nx, ny, nt = input_tensor.shape
-    N_meta, meta_channels = meta_tensor.shape
+    N_meta, meta_channels = meta_tensor.unsqueeze(-1).shape
     
     if N != N_meta:
         raise ValueError(f"Batch size mismatch: input_tensor {N}, meta_tensor {N_meta}")
     
     # Expand meta tensor to match spatial dimensions
     # Shape: (N, meta_channels) -> (N, meta_channels, nx, ny, nt)
-    expanded_meta = meta_tensor.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)  # (N, meta_channels, 1, 1, 1)
+    expanded_meta = meta_tensor.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)  # (N, meta_channels, 1, 1, 1)
     expanded_meta = expanded_meta.expand(N, meta_channels, nx, ny, nt)      # (N, meta_channels, nx, ny, nt)
     
     # Concatenate along channel dimension
@@ -513,7 +513,6 @@ def prepare_data_and_normalizers_pure(merged_pt_path: str) -> Tuple:
     out_summation = out_summation.to(device)
     meta_summation = meta_summation.to(device)
     
-    out_summation = 10 ** out_summation
     out_summation[:, :, 14:18, 14:18, :] = 0
     
     # Combine input with uniform meta channels for full dataset
