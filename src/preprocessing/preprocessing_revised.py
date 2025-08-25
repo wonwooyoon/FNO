@@ -32,7 +32,7 @@ def read_one_h5(h5_path: Path):
 
         # t=0 고정 입력 성분
         grp0 = f["   0 Time  0.00000E+00 y"]
-        perm      = np.array(grp0["Permeability [m^2]"][:])[zc_mask]
+        perm      = np.log10(np.array(grp0["Permeability [m^2]"][:])[zc_mask])
         calcite   = np.array(grp0["Calcite VF [m^3 mnrl_m^3 bulk]"][:])[zc_mask]
         clino     = np.array(grp0["Clinochlore VF [m^3 mnrl_m^3 bulk]"][:])[zc_mask]
         pyrite    = np.array(grp0["Pyrite VF [m^3 mnrl_m^3 bulk]"][:])[zc_mask]
@@ -72,7 +72,7 @@ def read_one_h5(h5_path: Path):
 
         for tnum in times_sorted:
             key = available[tnum]
-            total_uo2 = np.log10(np.array(f[key]["Total UO2++ [M]"][:])[zc_mask])
+            total_uo2 = np.array(f[key]["Total UO2++ [M]"][:])[zc_mask]
             out_grid = to_grid(total_uo2)
             out_slices.append(out_grid[np.newaxis, :, :, np.newaxis])  # (1,nx,ny,1)
             in_slices.append(input_base)                                # (9,nx,ny,1)
@@ -99,7 +99,7 @@ if __name__ == "__main__":
     out_pt = f"./src/preprocessing/input_output_com{out_pt}.pt"
 
     others = pd.read_csv(others_csv)
-    meta = others.to_numpy(dtype=np.float32)[min_id:max_id+1, [0, 2]]
+    meta = others.to_numpy(dtype=np.float32)[min_id:max_id+1, 2]
     print(meta)
 
     xs, ys = [], []

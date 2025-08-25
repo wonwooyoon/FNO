@@ -9,6 +9,7 @@ providing a straightforward approach to conditional neural operators.
 
 import sys
 sys.path.append('./')
+sys.path.append('./neuraloperator')
 
 import math
 from pathlib import Path
@@ -16,6 +17,7 @@ from typing import Dict, List, Tuple, Any, Optional
 
 import numpy as np
 import torch
+import torch.nn as nn
 import torch.nn
 import optuna
 import matplotlib.pyplot as plt
@@ -24,13 +26,61 @@ from matplotlib.gridspec import GridSpec
 from torch.utils.data import DataLoader, Dataset
 from sklearn.model_selection import train_test_split
 
-from neuraloperator.neuralop.data.transforms.normalizers import UnitGaussianNormalizer
-from neuraloperator.neuralop.data.transforms.data_processors import DefaultDataProcessor
-from neuraloperator.neuralop.utils import count_model_params
-from neuraloperator.neuralop import LpLoss
-from neuraloperator.neuralop.models import TFNO
-from neuraloperator.neuralop import Trainer
-from neuraloperator.neuralop.training import AdamW
+from neuralop.data.transforms.normalizers import UnitGaussianNormalizer
+from neuralop.data.transforms.data_processors import DefaultDataProcessor
+from neuralop.utils import count_model_params
+# LpLoss will be implemented inline
+from neuralop.models import TFNO
+from neuralop.training import AdamW
+
+# Direct inline training - no external utilities needed
+
+# ==============================================================================
+# Inline Loss Functions
+# ==============================================================================
+class LpLoss(nn.Module):
+    """Lp Loss function for neural operators.
+    
+    Computes the relative Lp norm between prediction and ground truth:
+    ||pred - y||_p / ||y||_p
+    
+    Args:
+        d: Spatial dimensions to compute norm over (e.g., 2 for 2D, 3 for 3D)
+        p: Power for Lp norm (e.g., 2 for L2 norm)
+        reduction: Reduction method ('mean' or 'sum')
+    """
+    
+    def __init__(self, d=2, p=2, reduction='mean'):
+        super().__init__()
+        self.d = d
+        self.p = p
+        self.reduction = reduction
+    
+    def forward(self, pred, y):
+        # Ensure same device
+        pred = pred.to(y.device)
+        
+        # Get spatial dimensions (assuming format: [batch, channels, spatial_dims...])
+        if len(pred.shape) == 4:  # 2D: [N, C, H, W] 
+            dims = (2, 3)
+        elif len(pred.shape) == 5:  # 3D: [N, C, H, W, T]
+            dims = (2, 3, 4)
+        else:
+            raise ValueError(f"Unsupported tensor shape: {pred.shape}")
+        
+        # Compute relative Lp norm
+        diff_norm = torch.norm(pred - y, p=self.p, dim=dims, keepdim=False)
+        y_norm = torch.norm(y, p=self.p, dim=dims, keepdim=False)
+        
+        # Avoid division by zero
+        relative_error = diff_norm / (y_norm + 1e-12)
+        
+        if self.reduction == 'mean':
+            return relative_error.mean()
+        elif self.reduction == 'sum':
+            return relative_error.sum()
+        else:
+            return relative_error
 
 
 # Configuration Constants
@@ -269,7 +319,7 @@ def build_model(n_modes: Tuple[int, ...], hidden_channels: int, n_layers: int,
         domain_padding=domain_padding,
         domain_padding_mode=domain_padding_mode,
         film_layer=CONFIG['MODEL_CONFIG']['film_layer'],
-        use_channel_mlp=False
+        use_channel_mlp=True
     ).to(device)
     return model
 
@@ -464,7 +514,7 @@ def prepare_data_and_normalizers_pure(merged_pt_path: str) -> Tuple:
     meta_summation = meta_summation.to(device)
     
     out_summation = 10 ** out_summation
-    out_summation[:, :, 12:20, 12:20, :] = 0
+    out_summation[:, :, 14:18, 14:18, :] = 0
     
     # Combine input with uniform meta channels for full dataset
     combined_input = expand_meta_to_uniform_channels(in_summation, meta_summation)
@@ -533,40 +583,76 @@ def create_objective_function(train_dataset: CustomDatasetPure, test_dataset: Cu
         scheduler = create_scheduler(optimizer)
 
         loss_fn, loss_name = create_loss_function()
-        trainer = Trainer(
-            model=model, n_epochs=CONFIG['N_EPOCHS'], device=device,
-            data_processor=processor, wandb_log=False,
-            eval_interval=CONFIG['EVAL_INTERVAL'], use_distributed=False, verbose=True
-        )
-
+        
         best_model_path = Path(CONFIG['OUTPUT_DIR']) / 'optuna'
         best_model_path.mkdir(parents=True, exist_ok=True)
 
-        trainer.train(
-            train_loader=train_loader,
-            test_loaders=test_loader,
-            optimizer=optimizer,
-            scheduler=scheduler,
-            regularizer=False,
-            early_stopping=CONFIG['SCHEDULER_CONFIG']['early_stopping'],
-            training_loss=loss_fn,
-            eval_losses={loss_name: loss_fn},
-            save_best=f'test_dataloader_{loss_name}',
-            save_dir=str(best_model_path)
-        )
-
-        model.load_state_dict(torch.load(
-            best_model_path / 'best_model_state_dict.pt', 
-            map_location=device, weights_only=False
-        ))
-        model.eval()
-
-        with torch.no_grad():
-            test_batch = next(iter(test_loader['test_dataloader']))
-            x = test_batch["x"].to(device)
-            y = test_batch["y"].to(device)
-            pred = model(x)
-            val_loss = loss_fn(pred, y).item()
+        # Simple for-loop training
+        best_test_loss = float('inf')
+        patience = 0
+        early_stopping_patience = CONFIG['SCHEDULER_CONFIG']['early_stopping']
+        
+        for epoch in range(CONFIG['N_EPOCHS']):
+            # Training phase
+            model.train()
+            total_train_loss = 0
+            for batch in train_loader:
+                x = batch['x'].to(device)
+                y = batch['y'].to(device)
+                
+                # Apply input and output normalization for consistent training
+                if processor and hasattr(processor, 'in_normalizer') and processor.in_normalizer:
+                    x = processor.in_normalizer.transform(x)
+                if processor and hasattr(processor, 'out_normalizer') and processor.out_normalizer:
+                    y = processor.out_normalizer.transform(y)
+                
+                optimizer.zero_grad()
+                pred = model(x)
+                loss = loss_fn(pred, y)
+                loss.backward()
+                optimizer.step()
+                
+                total_train_loss += loss.item()
+            
+            # Evaluation phase
+            if epoch % CONFIG['EVAL_INTERVAL'] == 0:
+                model.eval()
+                total_test_loss = 0
+                with torch.no_grad():
+                    for batch in test_loader['test_dataloader']:
+                        x = batch['x'].to(device)
+                        y = batch['y'].to(device)
+                        
+                        if processor and hasattr(processor, 'in_normalizer') and processor.in_normalizer:
+                            x = processor.in_normalizer.transform(x)
+                        if processor and hasattr(processor, 'out_normalizer') and processor.out_normalizer:
+                            y = processor.out_normalizer.transform(y)
+                        
+                        pred = model(x)
+                        loss = loss_fn(pred, y)
+                        total_test_loss += loss.item()
+                
+                avg_test_loss = total_test_loss / len(test_loader['test_dataloader'])
+                
+                # Save best model
+                if avg_test_loss < best_test_loss:
+                    best_test_loss = avg_test_loss
+                    torch.save(model.state_dict(), best_model_path / 'best_model_state_dict.pt')
+                    patience = 0
+                else:
+                    patience += 1
+                
+                # Early stopping
+                if patience >= early_stopping_patience:
+                    break
+            
+            # Update learning rate
+            scheduler.step()
+        
+        # Load best model
+        model.load_state_dict(torch.load(best_model_path / 'best_model_state_dict.pt', map_location=device, weights_only=False))
+        
+        val_loss = best_test_loss
         
         return val_loss
     
@@ -607,16 +693,6 @@ def train_final_model(best_params: Dict[str, Any], train_dataset: CustomDatasetP
     initialize_model_weights(best_model)
 
     loss_fn, loss_name = create_loss_function()
-    trainer = Trainer(
-        model=best_model, 
-        n_epochs=CONFIG['N_EPOCHS'], 
-        device=device,
-        data_processor=processor, 
-        wandb_log=False,
-        eval_interval=CONFIG['EVAL_INTERVAL'], 
-        use_distributed=False, 
-        verbose=True
-    )
     
     train_loader, test_loader = setup_data_loaders(
         train_dataset, test_dataset, best_params["train_batch_size"]
@@ -625,37 +701,153 @@ def train_final_model(best_params: Dict[str, Any], train_dataset: CustomDatasetP
     final_model_path = Path(CONFIG['OUTPUT_DIR']) / 'final'
     final_model_path.mkdir(parents=True, exist_ok=True)
 
-    trainer.train(
-        train_loader=train_loader,
-        test_loaders=test_loader,
-        optimizer=optimizer,
-        scheduler=scheduler,
-        regularizer=False,
-        early_stopping=CONFIG['SCHEDULER_CONFIG']['early_stopping'],
-        training_loss=loss_fn,
-        eval_losses={loss_name: loss_fn},
-        save_best=f'test_dataloader_{loss_name}',
-        save_dir=str(final_model_path)
-    )
+    # Simple for-loop training
+    print(f"Starting training for {CONFIG['N_EPOCHS']} epochs...")
     
-    best_model.load_state_dict(torch.load(
-        final_model_path / 'best_model_state_dict.pt', 
-        map_location=device, weights_only=False
-    ))
+    best_test_loss = float('inf')
+    patience = 0
+    early_stopping_patience = CONFIG['SCHEDULER_CONFIG']['early_stopping']
+    
+    # Track losses for each epoch
+    train_losses = []
+    test_losses = []
+    
+    for epoch in range(CONFIG['N_EPOCHS']):
+        # Training phase
+        best_model.train()
+        total_train_loss = 0
+        train_count = 0
+        
+        for batch in train_loader:
+            x = batch['x'].to(device)
+            y = batch['y'].to(device)
+            
+            # Apply input and output normalization for consistent training
+            if processor and hasattr(processor, 'in_normalizer') and processor.in_normalizer:
+                x = processor.in_normalizer.transform(x)
+            if processor and hasattr(processor, 'out_normalizer') and processor.out_normalizer:
+                y = processor.out_normalizer.transform(y)
+            
+            optimizer.zero_grad()
+            pred = best_model(x)
+            loss = loss_fn(pred, y)
+            loss.backward()
+            optimizer.step()
+            
+            total_train_loss += loss.item()
+            train_count += 1
+        
+        avg_train_loss = total_train_loss / train_count
+        train_losses.append(avg_train_loss)
+        
+        # Evaluation phase - compute test loss every epoch
+        best_model.eval()
+        total_test_loss = 0
+        test_count = 0
+        
+        with torch.no_grad():
+            for batch in test_loader['test_dataloader']:
+                x = batch['x'].to(device)
+                y = batch['y'].to(device)
+                
+                if processor and hasattr(processor, 'in_normalizer') and processor.in_normalizer:
+                    x = processor.in_normalizer.transform(x)
+                if processor and hasattr(processor, 'out_normalizer') and processor.out_normalizer:
+                    y = processor.out_normalizer.transform(y)
+                
+                pred = best_model(x)
+                loss = loss_fn(pred, y)
+                total_test_loss += loss.item()
+                test_count += 1
+        
+        avg_test_loss = total_test_loss / test_count
+        test_losses.append(avg_test_loss)
+        
+        # Print losses for every epoch
+        print(f"Epoch {epoch:3d}: Train Loss={avg_train_loss:.6f}, Test Loss={avg_test_loss:.6f}")
+        
+        # Save best model
+        if avg_test_loss < best_test_loss:
+            best_test_loss = avg_test_loss
+            torch.save(best_model.state_dict(), final_model_path / 'best_model_state_dict.pt')
+            patience = 0
+            print(f"    ★ New best model saved! Test loss: {avg_test_loss:.6f}")
+        else:
+            patience += 1
+        
+        # Early stopping
+        if patience >= early_stopping_patience:
+            print(f"Early stopping after {epoch} epochs")
+            break
+        
+        # Update learning rate
+        scheduler.step()
+    
+    # Save loss history
+    loss_history = {
+        'train_losses': train_losses,
+        'test_losses': test_losses,
+        'epochs': list(range(len(train_losses)))
+    }
+    torch.save(loss_history, final_model_path / 'loss_history.pt')
+    
+    # Plot loss curves
+    plt.figure(figsize=(10, 6))
+    epochs_range = range(len(train_losses))
+    plt.plot(epochs_range, train_losses, 'b-', label='Train Loss', linewidth=2)
+    plt.plot(epochs_range, test_losses, 'r-', label='Test Loss', linewidth=2)
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.title('Training and Test Loss Over Time')
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.yscale('log')  # Use log scale for better visualization
+    
+    loss_plot_path = final_model_path / 'loss_curves.png'
+    plt.savefig(loss_plot_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    
+    print(f"\n📊 Loss history saved to: {final_model_path / 'loss_history.pt'}")
+    print(f"📈 Loss curves plotted: {loss_plot_path}")
+    print(f"📈 Final Train Loss: {train_losses[-1]:.6f}")
+    print(f"📉 Final Test Loss: {test_losses[-1]:.6f}")
+    print(f"🏆 Best Test Loss: {best_test_loss:.6f}")
+    
+    # Load best trained model
+    best_model.load_state_dict(torch.load(final_model_path / 'best_model_state_dict.pt', map_location=device, weights_only=False))
+
+    # Generate predictions for visualization
     best_model.eval()
-
+    all_pred = []
+    all_gt = []
+    
     with torch.no_grad():
-        test_batch = next(iter(test_loader["test_dataloader"]))
-        x = test_batch["x"].to(device) 
-        y = test_batch["y"].to(device)
-        
-        pred = best_model(in_normalizer.transform(x))
-        
-        pred_phys = out_normalizer.inverse_transform(pred).detach().cpu()
-        gt_phys = y.detach().cpu()
-
-        pred_phys[:, :, 12:20, 12:20, :] = 0
-        gt_phys[:, :, 12:20, 12:20, :] = 0
+        for batch in test_loader["test_dataloader"]:
+            x = batch['x'].to(device)
+            y = batch['y'].to(device)
+            
+            # Apply input normalization
+            if in_normalizer:
+                x = in_normalizer.transform(x)
+            
+            # Forward pass
+            pred = best_model(x)
+            
+            # Denormalize to physical space
+            if out_normalizer:
+                pred_phys = out_normalizer.inverse_transform(pred)
+            else:
+                pred_phys = pred
+            
+            all_pred.append(pred_phys.cpu())
+            all_gt.append(y.cpu())
+    
+    pred_phys = torch.cat(all_pred, dim=0)
+    gt_phys = torch.cat(all_gt, dim=0)
+    
+    # Apply masking as in original code
+    pred_phys[:, :, 14:18, 14:18, :] = 0
+    gt_phys[:, :, 14:18, 14:18, :] = 0
 
     output_path = Path(CONFIG['OUTPUT_DIR']) / 'FNO_pure_compare.png'
     plot_compare(
@@ -765,19 +957,38 @@ def run_eval_mode(train_dataset: CustomDatasetPure, test_dataset: CustomDatasetP
     print("GENERATING PREDICTIONS AND VISUALIZATIONS")
     print("=" * 50)
     
-    # Generate predictions and create comparison plot
+    # Generate predictions for evaluation visualization
+    model.eval()
+    all_pred = []
+    all_gt = []
+    
     with torch.no_grad():
-        test_batch = next(iter(test_loader["test_dataloader"]))
-        x = test_batch["x"].to(device) 
-        y = test_batch["y"].to(device)
-        
-        pred = model(in_normalizer.transform(x))
-        
-        pred[:, :, 12:20, 12:20, :] = 0
-        y[:, :, 12:20, 12:20, :] = 0
-        
-        pred_phys = out_normalizer.inverse_transform(pred).detach().cpu()
-        gt_phys = y.detach().cpu()
+        for batch in test_loader["test_dataloader"]:
+            x = batch['x'].to(device)
+            y = batch['y'].to(device)
+            
+            # Apply input normalization
+            if in_normalizer:
+                x = in_normalizer.transform(x)
+            
+            # Forward pass
+            pred = model(x)
+            
+            # Denormalize to physical space
+            if out_normalizer:
+                pred_phys = out_normalizer.inverse_transform(pred)
+            else:
+                pred_phys = pred
+            
+            all_pred.append(pred_phys.cpu())
+            all_gt.append(y.cpu())
+    
+    pred_phys = torch.cat(all_pred, dim=0)
+    gt_phys = torch.cat(all_gt, dim=0)
+    
+    # Apply masking as in original code
+    pred_phys[:, :, 14:18, 14:18, :] = 0
+    gt_phys[:, :, 14:18, 14:18, :] = 0
 
     output_path = Path(CONFIG['OUTPUT_DIR']) / 'FNO_pure_eval_compare.png'
     plot_compare(
