@@ -15,6 +15,7 @@ from typing import Dict, List, Tuple, Any, Optional
 
 import numpy as np
 import torch
+import torch.nn
 import optuna
 import matplotlib.pyplot as plt
 import torchinfo as summary
@@ -35,7 +36,7 @@ from neuraloperator.neuralop.training import AdamW
 CONFIG = {
     'MERGED_PT_PATH': './src/preprocessing/merged.pt',
     'OUTPUT_DIR': './src/FNO/output',
-    'N_EPOCHS': 10000,
+    'N_EPOCHS': 10,
     'EVAL_INTERVAL': 1,
     'TEST_SIZE': 0.1,
     'RANDOM_STATE': 42,
@@ -50,15 +51,23 @@ CONFIG = {
         'meta_dim': 2
     },
     'SCHEDULER_CONFIG': {
+        'scheduler_type': 'step',  # Options: 'cosine', 'step'
         'T_0': 10,
         'T_max': 80,
         'T_mult': 2,
-        'eta_min': 1e-6
+        'eta_min': 1e-6,
+        'step_size': 10,
+        'gamma': 0.5
     },
     'VISUALIZATION': {
         'SAMPLE_NUM': 8,
         'TIME_INDICES': (0, 4, 8, 12, 16),
         'DPI': 200
+    },
+    'LOSS_CONFIG': {
+        'loss_type': 'l2',  # Options: 'l2', 'mse'
+        'l2_d': 3,  # Dimension for L2 loss
+        'l2_p': 2   # Power for L2 loss
     }
 }
 
@@ -90,8 +99,22 @@ class CustomDataset(Dataset):
         }
 
 # ==============================================================================
-# Learning Rate Scheduler
+# Learning Rate Schedulers
 # ==============================================================================
+class LRStepScheduler(torch.optim.lr_scheduler.StepLR):
+    """Step Learning Rate Scheduler with configurable step size and gamma.
+    
+    Args:
+        optimizer: Wrapped optimizer
+        step_size: Period of learning rate decay
+        gamma: Multiplicative factor of learning rate decay
+        last_epoch: Index of last epoch
+    """
+    
+    def __init__(self, optimizer: torch.optim.Optimizer, step_size: int, 
+                 gamma: float = 0.1, last_epoch: int = -1):
+        super().__init__(optimizer, step_size, gamma, last_epoch)
+
 class CappedCosineAnnealingWarmRestarts(torch.optim.lr_scheduler._LRScheduler):
     """Cosine annealing warm restarts scheduler with maximum period cap.
     
@@ -211,6 +234,59 @@ def setup_data_loaders(train_dataset: CustomDataset, test_dataset: CustomDataset
     test_loader = {'test_dataloader': DataLoader(test_dataset, batch_size=len(test_dataset), shuffle=False)}
     return train_loader, test_loader
 
+def create_scheduler(optimizer: torch.optim.Optimizer, scheduler_type: str = None):
+    """Create learning rate scheduler based on configuration.
+    
+    Args:
+        optimizer: Optimizer to wrap
+        scheduler_type: Type of scheduler to create ('cosine' or 'step')
+                       If None, uses CONFIG['SCHEDULER_CONFIG']['scheduler_type']
+        
+    Returns:
+        Configured scheduler
+    """
+    if scheduler_type is None:
+        scheduler_type = CONFIG['SCHEDULER_CONFIG']['scheduler_type']
+    
+    if scheduler_type == 'cosine':
+        return CappedCosineAnnealingWarmRestarts(
+            optimizer,
+            CONFIG['SCHEDULER_CONFIG']['T_0'],
+            CONFIG['SCHEDULER_CONFIG']['T_max'],
+            CONFIG['SCHEDULER_CONFIG']['T_mult'],
+            CONFIG['SCHEDULER_CONFIG']['eta_min']
+        )
+    elif scheduler_type == 'step':
+        return LRStepScheduler(
+            optimizer,
+            CONFIG['SCHEDULER_CONFIG']['step_size'],
+            CONFIG['SCHEDULER_CONFIG']['gamma']
+        )
+    else:
+        raise ValueError(f"Unknown scheduler type: {scheduler_type}. Use 'cosine' or 'step'.")
+
+def create_loss_function() -> Tuple[Any, str]:
+    """Create loss function based on CONFIG settings.
+    
+    Returns:
+        Tuple of (loss_function, loss_name)
+    """
+    loss_type = CONFIG['LOSS_CONFIG']['loss_type']
+    
+    if loss_type == 'l2':
+        loss_fn = LpLoss(
+            d=CONFIG['LOSS_CONFIG']['l2_d'], 
+            p=CONFIG['LOSS_CONFIG']['l2_p']
+        )
+        loss_name = 'l2'
+    elif loss_type == 'mse':
+        loss_fn = torch.nn.MSELoss()
+        loss_name = 'mse'
+    else:
+        raise ValueError(f"Unknown loss type: {loss_type}. Use 'l2' or 'mse'.")
+    
+    return loss_fn, loss_name
+
 def initialize_model_weights(model):
     """Initialize model weights using Xavier uniform initialization.
     
@@ -238,7 +314,7 @@ def _collect_visualization_data(pred_phys: torch.Tensor, gt_phys: torch.Tensor,
     vmax = max(np.max(pis), np.max(gis))
     return pis, gis, ers, vmin, vmax
 
-def _create_figure_and_axes(t_indices: Tuple[int, ...]) -> Tuple[plt.Figure, List, List, List]:
+def _create_figure_and_axes(t_indices: Tuple[int, ...]) -> Tuple[plt.Figure, List, List, List, GridSpec]:
     """Create figure and axes for visualization."""
     ncols = len(t_indices)
     fig_h = 3.6 * 3
@@ -262,7 +338,7 @@ def _create_figure_and_axes(t_indices: Tuple[int, ...]) -> Tuple[plt.Figure, Lis
         else: 
             axes_err = row_axes
             
-    return fig, axes_gt, axes_pred, axes_err
+    return fig, axes_gt, axes_pred, axes_err, gs
 
 @torch.no_grad()
 def plot_compare(pred_phys: torch.Tensor, gt_phys: torch.Tensor, save_path: str, 
@@ -277,7 +353,7 @@ def plot_compare(pred_phys: torch.Tensor, gt_phys: torch.Tensor, save_path: str,
         t_indices: Time indices to visualize
     """
     pis, gis, ers, vmin, vmax = _collect_visualization_data(pred_phys, gt_phys, sample_num, t_indices)
-    fig, axes_gt, axes_pred, axes_err = _create_figure_and_axes(t_indices)
+    fig, axes_gt, axes_pred, axes_err, gs = _create_figure_and_axes(t_indices)
     
     ims_gt, ims_pred, ims_err = [], [], []
     for c, (pi, gi, er, t) in enumerate(zip(pis, gis, ers, t_indices)):
@@ -299,7 +375,6 @@ def plot_compare(pred_phys: torch.Tensor, gt_phys: torch.Tensor, save_path: str,
             ax.set_yticks([])
 
     ncols = len(t_indices)
-    gs = fig._gridspecs[0]
     cax_main = fig.add_subplot(gs[:, ncols])
     cax_err = fig.add_subplot(gs[:, ncols+1])
     
@@ -393,15 +468,9 @@ def create_objective_function(train_dataset: CustomDataset, test_dataset: Custom
         model = build_model(n_modes, hidden_channels, n_layers, domain_padding, 
                           CONFIG['DOMAIN_PADDING_MODE'], device)
         optimizer = AdamW(model.parameters(), lr=initial_lr, weight_decay=l2_weight)
-        scheduler = CappedCosineAnnealingWarmRestarts(
-            optimizer, 
-            CONFIG['SCHEDULER_CONFIG']['T_0'], 
-            CONFIG['SCHEDULER_CONFIG']['T_max'], 
-            CONFIG['SCHEDULER_CONFIG']['T_mult'], 
-            CONFIG['SCHEDULER_CONFIG']['eta_min']
-        )
+        scheduler = create_scheduler(optimizer)
 
-        l2loss = LpLoss(d=3, p=2)
+        loss_fn, loss_name = create_loss_function()
         trainer = Trainer(
             model=model, n_epochs=CONFIG['N_EPOCHS'], device=device,
             data_processor=processor, wandb_log=False,
@@ -418,9 +487,9 @@ def create_objective_function(train_dataset: CustomDataset, test_dataset: Custom
             scheduler=scheduler,
             regularizer=False,
             early_stopping=True,
-            training_loss=l2loss,
-            eval_losses={'l2': l2loss},
-            save_best='test_dataloader_l2',
+            training_loss=loss_fn,
+            eval_losses={loss_name: loss_fn},
+            save_best=f'test_dataloader_{loss_name}',
             save_dir=str(best_model_path)
         )
 
@@ -435,9 +504,9 @@ def create_objective_function(train_dataset: CustomDataset, test_dataset: Custom
             x = test_batch["x"].to(device)
             y = test_batch["y"].to(device)
             pred = model(x)
-            val_l2 = l2loss(pred, y).item()
+            val_loss = loss_fn(pred, y).item()
         
-        return val_l2
+        return val_loss
     
     return objective
 
@@ -473,17 +542,11 @@ def train_final_model(best_params: Dict[str, Any], train_dataset: CustomDataset,
         lr=best_params["initial_lr"], 
         weight_decay=best_params["l2_weight"]
     )
-    scheduler = CappedCosineAnnealingWarmRestarts(
-        optimizer, 
-        CONFIG['SCHEDULER_CONFIG']['T_0'], 
-        CONFIG['SCHEDULER_CONFIG']['T_max'], 
-        CONFIG['SCHEDULER_CONFIG']['T_mult'], 
-        CONFIG['SCHEDULER_CONFIG']['eta_min']
-    )
+    scheduler = create_scheduler(optimizer)
 
     initialize_model_weights(best_model)
 
-    l2loss = LpLoss(d=3, p=2)
+    loss_fn, loss_name = create_loss_function()
     trainer = Trainer(
         model=best_model, 
         n_epochs=CONFIG['N_EPOCHS'], 
@@ -509,9 +572,9 @@ def train_final_model(best_params: Dict[str, Any], train_dataset: CustomDataset,
         scheduler=scheduler,
         regularizer=False,
         early_stopping=True,
-        training_loss=l2loss,
-        eval_losses={'l2': l2loss},
-        save_best='test_dataloader_l2',
+        training_loss=loss_fn,
+        eval_losses={loss_name: loss_fn},
+        save_best=f'test_dataloader_{loss_name}',
         save_dir=str(final_model_path)
     )
     

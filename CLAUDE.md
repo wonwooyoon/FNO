@@ -136,3 +136,9 @@ export PFLOTRAN_DIR=/path/to/pflotran
 - Large tensor files are stored as .pt format for efficient loading
 - Data loaders use appropriate batch sizing based on available GPU memory
 - The preprocessing pipeline handles data in chunks to manage memory usage
+
+### Must Do Section
+- Conduct python only in .venv_FNO environment
+
+### Do Not Section
+- Do not edit pflotran input files (e.g., *.in, *.dat)
