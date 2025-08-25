@@ -1,9 +1,10 @@
 """
-Fourier Neural Operator (FNO) Training with Optuna Hyperparameter Optimization
+Pure FNO with Uniform Distribution Meta Training
 
-This module implements training pipeline for TFNO models using Optuna TPE sampler
-for hyperparameter optimization. The pipeline includes data loading, normalization,
-model training, and result visualization.
+This module implements training pipeline for Pure TFNO models with meta data incorporated 
+as uniform spatial channels. Meta data (e.g., permeability, porosity) is expanded to 
+uniform distribution across spatial dimensions and directly concatenated with input channels, 
+providing a straightforward approach to conditional neural operators.
 """
 
 import sys
@@ -35,23 +36,23 @@ from neuraloperator.neuralop.training import AdamW
 # Configuration Constants
 CONFIG = {
     'MERGED_PT_PATH': './src/preprocessing/merged.pt',
-    'OUTPUT_DIR': './src/FNO/output',
-    'N_EPOCHS': 10,
+    'OUTPUT_DIR': './src/FNO/output_pure',
+    'N_EPOCHS': 10000,
     'EVAL_INTERVAL': 1,
     'TEST_SIZE': 0.1,
     'RANDOM_STATE': 42,
     'DOMAIN_PADDING_MODE': 'symmetric',
     'MODEL_CONFIG': {
-        'in_channels': 8,
+        'in_channels': 10,  # 8 original channels + 2 uniform meta channels
         'out_channels': 1,
         'lifting_channel_ratio': 2,
         'projection_channel_ratio': 2,
         'positional_embedding': 'grid',
-        'film_layer': True,
-        'meta_dim': 2
+        'film_layer': False  # Pure FNO without FiLM modulation
     },
     'SCHEDULER_CONFIG': {
         'scheduler_type': 'step',  # Options: 'cosine', 'step'
+        'early_stopping': 40,
         'T_0': 10,
         'T_max': 80,
         'T_mult': 2,
@@ -68,25 +69,50 @@ CONFIG = {
         'loss_type': 'l2',  # Options: 'l2', 'mse'
         'l2_d': 3,  # Dimension for L2 loss
         'l2_p': 2   # Power for L2 loss
+    },
+    'TRAINING_CONFIG': {
+        'mode': 'single',  # Options: 'single', 'optuna', 'eval'
+        'optuna_n_trials': 10,
+        'optuna_seed': 42,
+        'optuna_n_startup_trials': 2,
+        'eval_model_path': './src/FNO/output_pure/final/best_model_state_dict.pt'  # Path for eval mode
+    },
+    'OPTUNA_SEARCH_SPACE': {
+        'n_modes_options': [(16,16,5), (16,8,5), (32,16,5)],
+        'hidden_channels_options': [8, 16, 24, 32],
+        'n_layers_options': [2, 3, 4],
+        'domain_padding_options': [[0.125,0.25,0.4], [0.1,0.1,0.1], [0.2,0.3,0.5]],
+        'train_batch_size_options': [16, 32, 64],
+        'l2_weight_range': [1e-8, 1e-3],  # [min, max] for log uniform
+        'initial_lr_range': [1e-4, 1e-3]  # [min, max] for log uniform
+    },
+    'SINGLE_PARAMS': {
+        "n_modes": (16, 8, 5), 
+        "hidden_channels": 24, 
+        "n_layers": 3, 
+        "domain_padding": [0.1, 0.1, 0.1], 
+        "train_batch_size": 32, 
+        "l2_weight": 0, 
+        "initial_lr": 1e-4
     }
 }
 
 # ==============================================================================
 # Data Classes and Dataset
 # ==============================================================================
-class CustomDataset(Dataset):
-    """Custom dataset for FNO training.
+class CustomDatasetPure(Dataset):
+    """Custom dataset for Pure FNO training with meta data as uniform spatial channels.
     
     Args:
-        input_tensor: Input tensor of shape (N, 9, nx, ny, nt)
-        output_tensor: Output tensor of shape (N, 1, nx, ny, nt) 
-        meta_tensor: Metadata tensor of shape (N, 2)
+        input_tensor: Input tensor of shape (N, original_channels, nx, ny, nt)
+        output_tensor: Output tensor of shape (N, 1, nx, ny, nt)
+        meta_tensor: Meta tensor of shape (N, meta_channels)
     """
     
     def __init__(self, input_tensor: torch.Tensor, output_tensor: torch.Tensor, meta_tensor: torch.Tensor):
-        self.input_tensor = input_tensor
+        # Combine input tensor with uniform meta channels
+        self.input_tensor = expand_meta_to_uniform_channels(input_tensor, meta_tensor)
         self.output_tensor = output_tensor
-        self.meta_tensor = meta_tensor
         
     def __len__(self) -> int:
         return self.input_tensor.shape[0]
@@ -94,8 +120,7 @@ class CustomDataset(Dataset):
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
         return {
             'x': self.input_tensor[idx], 
-            'y': self.output_tensor[idx], 
-            'meta': self.meta_tensor[idx]
+            'y': self.output_tensor[idx]
         }
 
 # ==============================================================================
@@ -151,8 +176,8 @@ class CappedCosineAnnealingWarmRestarts(torch.optim.lr_scheduler._LRScheduler):
 # ==============================================================================
 # Utility Functions
 # ==============================================================================
-def load_merged_tensors(merged_pt_path: str) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Load merged tensors from .pt file.
+def load_merged_tensors_pure(merged_pt_path: str) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Load merged tensors from .pt file including meta data for Pure FNO.
     
     Args:
         merged_pt_path: Path to merged .pt file
@@ -179,12 +204,43 @@ def load_merged_tensors(merged_pt_path: str) -> Tuple[torch.Tensor, torch.Tensor
         out_summation = bundle["y"].float()
         meta_summation = bundle["meta"].float()
         
-        print(f"Loaded merged tensors: {tuple(in_summation.shape)}, {tuple(out_summation.shape)}, {tuple(meta_summation.shape)}")
+        print(f"Loaded merged tensors for Pure FNO: {tuple(in_summation.shape)}, {tuple(out_summation.shape)}, {tuple(meta_summation.shape)}")
         return in_summation, out_summation, meta_summation
         
     except Exception as e:
         print(f"Error loading merged tensors: {e}")
         raise
+
+def expand_meta_to_uniform_channels(input_tensor: torch.Tensor, meta_tensor: torch.Tensor) -> torch.Tensor:
+    """Expand meta data to uniform spatial channels and combine with input tensor.
+    
+    This function converts meta data into spatially uniform channels where each meta value
+    is broadcasted as a constant across all spatial and temporal dimensions, then concatenated
+    with the original input channels for Pure FNO processing.
+    
+    Args:
+        input_tensor: Input tensor of shape (N, original_channels, nx, ny, nt)
+        meta_tensor: Meta tensor of shape (N, meta_channels)
+        
+    Returns:
+        Combined tensor of shape (N, original_channels + meta_channels, nx, ny, nt)
+    """
+    N, original_channels, nx, ny, nt = input_tensor.shape
+    N_meta, meta_channels = meta_tensor.shape
+    
+    if N != N_meta:
+        raise ValueError(f"Batch size mismatch: input_tensor {N}, meta_tensor {N_meta}")
+    
+    # Expand meta tensor to match spatial dimensions
+    # Shape: (N, meta_channels) -> (N, meta_channels, nx, ny, nt)
+    expanded_meta = meta_tensor.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)  # (N, meta_channels, 1, 1, 1)
+    expanded_meta = expanded_meta.expand(N, meta_channels, nx, ny, nt)      # (N, meta_channels, nx, ny, nt)
+    
+    # Concatenate along channel dimension
+    combined_tensor = torch.cat([input_tensor, expanded_meta], dim=1)  # (N, original_channels + meta_channels, nx, ny, nt)
+    
+    print(f"Combined tensor shape: {tuple(combined_tensor.shape)} (original: {original_channels}, meta: {meta_channels})")
+    return combined_tensor
 
 def build_model(n_modes: Tuple[int, ...], hidden_channels: int, n_layers: int, 
                 domain_padding: List[float], domain_padding_mode: str, device: str):
@@ -213,12 +269,11 @@ def build_model(n_modes: Tuple[int, ...], hidden_channels: int, n_layers: int,
         domain_padding=domain_padding,
         domain_padding_mode=domain_padding_mode,
         film_layer=CONFIG['MODEL_CONFIG']['film_layer'],
-        meta_dim=CONFIG['MODEL_CONFIG']['meta_dim'],
         use_channel_mlp=False
     ).to(device)
     return model
 
-def setup_data_loaders(train_dataset: CustomDataset, test_dataset: CustomDataset, 
+def setup_data_loaders(train_dataset: CustomDatasetPure, test_dataset: CustomDatasetPure, 
                        batch_size: int) -> Tuple[DataLoader, Dict[str, DataLoader]]:
     """Setup train and test data loaders.
     
@@ -390,8 +445,8 @@ def plot_compare(pred_phys: torch.Tensor, gt_phys: torch.Tensor, save_path: str,
 # ==============================================================================
 # Data Processing and Training Functions
 # ==============================================================================
-def prepare_data_and_normalizers(merged_pt_path: str) -> Tuple:
-    """Prepare data and normalizers.
+def prepare_data_and_normalizers_pure(merged_pt_path: str) -> Tuple:
+    """Prepare data and normalizers for Pure FNO with uniform meta channels.
     
     Args:
         merged_pt_path: Path to merged data file
@@ -399,7 +454,7 @@ def prepare_data_and_normalizers(merged_pt_path: str) -> Tuple:
     Returns:
         Tuple containing tensors, normalizers, processor, and datasets
     """
-    in_summation, out_summation, meta_summation = load_merged_tensors(merged_pt_path)
+    in_summation, out_summation, meta_summation = load_merged_tensors_pure(merged_pt_path)
     
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     print(f"Using device: {device}")
@@ -410,30 +465,33 @@ def prepare_data_and_normalizers(merged_pt_path: str) -> Tuple:
     
     out_summation = 10 ** out_summation
     
-    in_normalizer = UnitGaussianNormalizer(mean=in_summation, std=in_summation, dim=[0,2,3,4], eps=1e-6)
+    # Combine input with uniform meta channels for full dataset
+    combined_input = expand_meta_to_uniform_channels(in_summation, meta_summation)
+    
+    # Create normalizers for combined input and output
+    in_normalizer = UnitGaussianNormalizer(mean=combined_input, std=combined_input, dim=[0,2,3,4], eps=1e-6)
     out_normalizer = UnitGaussianNormalizer(mean=out_summation, std=out_summation, dim=[0,2,3,4], eps=1e-6)
-    meta_normalizer = UnitGaussianNormalizer(mean=meta_summation, std=meta_summation, dim=[0], eps=1e-6)
     
-    in_normalizer.fit(in_summation)
+    in_normalizer.fit(combined_input)
     out_normalizer.fit(out_summation)
-    meta_normalizer.fit(meta_summation)
     
-    processor = DefaultDataProcessor(in_normalizer, out_normalizer, meta_normalizer).to(device)
+    processor = DefaultDataProcessor(in_normalizer, out_normalizer).to(device)
     
+    # Split the original tensors, not the combined one
     train_in, test_in, train_out, test_out, train_meta, test_meta = train_test_split(
         in_summation, out_summation, meta_summation, 
         test_size=CONFIG['TEST_SIZE'], 
         random_state=CONFIG['RANDOM_STATE']
     )
     
-    train_dataset = CustomDataset(train_in, train_out, train_meta)
-    test_dataset = CustomDataset(test_in, test_out, test_meta)
+    train_dataset = CustomDatasetPure(train_in, train_out, train_meta)
+    test_dataset = CustomDatasetPure(test_in, test_out, test_meta)
     
-    return (in_summation, out_summation, meta_summation, device, 
-            in_normalizer, out_normalizer, meta_normalizer, processor, 
+    return (combined_input, out_summation, device, 
+            in_normalizer, out_normalizer, processor, 
             train_dataset, test_dataset)
 
-def create_objective_function(train_dataset: CustomDataset, test_dataset: CustomDataset, 
+def create_objective_function(train_dataset: CustomDatasetPure, test_dataset: CustomDatasetPure, 
                              processor: DefaultDataProcessor, device: str) -> callable:
     """Create Optuna objective function.
     
@@ -455,13 +513,16 @@ def create_objective_function(train_dataset: CustomDataset, test_dataset: Custom
         Returns:
             Validation L2 loss
         """
-        n_modes = trial.suggest_categorical("n_modes", [(16,16,5), (16,8,5)])
-        hidden_channels = trial.suggest_categorical("hidden_channels", [8])
-        n_layers = trial.suggest_categorical("n_layers", [2])
-        domain_padding = trial.suggest_categorical("domain_padding", [[0.125,0.25,0.4]])
-        train_batch_size = trial.suggest_categorical("train_batch_size", [64])
-        l2_weight = trial.suggest_float("l2_weight", 1e-8, 1e-3, log=True)
-        initial_lr = trial.suggest_float("initial_lr", 1e-4, 1e-3, log=True)
+        # Get search space from CONFIG
+        search_space = CONFIG['OPTUNA_SEARCH_SPACE']
+        
+        n_modes = trial.suggest_categorical("n_modes", search_space['n_modes_options'])
+        hidden_channels = trial.suggest_categorical("hidden_channels", search_space['hidden_channels_options'])
+        n_layers = trial.suggest_categorical("n_layers", search_space['n_layers_options'])
+        domain_padding = trial.suggest_categorical("domain_padding", search_space['domain_padding_options'])
+        train_batch_size = trial.suggest_categorical("train_batch_size", search_space['train_batch_size_options'])
+        l2_weight = trial.suggest_float("l2_weight", *search_space['l2_weight_range'], log=True)
+        initial_lr = trial.suggest_float("initial_lr", *search_space['initial_lr_range'], log=True)
 
         train_loader, test_loader = setup_data_loaders(train_dataset, test_dataset, train_batch_size)
         
@@ -486,7 +547,7 @@ def create_objective_function(train_dataset: CustomDataset, test_dataset: Custom
             optimizer=optimizer,
             scheduler=scheduler,
             regularizer=False,
-            early_stopping=True,
+            early_stopping=CONFIG['SCHEDULER_CONFIG']['early_stopping'],
             training_loss=loss_fn,
             eval_losses={loss_name: loss_fn},
             save_best=f'test_dataloader_{loss_name}',
@@ -510,9 +571,9 @@ def create_objective_function(train_dataset: CustomDataset, test_dataset: Custom
     
     return objective
 
-def train_final_model(best_params: Dict[str, Any], train_dataset: CustomDataset, 
-                     test_dataset: CustomDataset, processor: DefaultDataProcessor,
-                     in_normalizer, out_normalizer, meta_normalizer, device: str) -> None:
+def train_final_model(best_params: Dict[str, Any], train_dataset: CustomDatasetPure, 
+                     test_dataset: CustomDatasetPure, processor: DefaultDataProcessor,
+                     in_normalizer, out_normalizer, device: str) -> None:
     """Train final model with best parameters and generate comparison plot.
     
     Args:
@@ -522,7 +583,6 @@ def train_final_model(best_params: Dict[str, Any], train_dataset: CustomDataset,
         processor: Data processor
         in_normalizer: Input normalizer
         out_normalizer: Output normalizer  
-        meta_normalizer: Meta normalizer
         device: Device to use
     """
     best_model = build_model(
@@ -535,7 +595,6 @@ def train_final_model(best_params: Dict[str, Any], train_dataset: CustomDataset,
     )
 
     print(f'{count_model_params(best_model)}')
-    print(best_model)
 
     optimizer = AdamW(
         best_model.parameters(), 
@@ -571,7 +630,7 @@ def train_final_model(best_params: Dict[str, Any], train_dataset: CustomDataset,
         optimizer=optimizer,
         scheduler=scheduler,
         regularizer=False,
-        early_stopping=True,
+        early_stopping=CONFIG['SCHEDULER_CONFIG']['early_stopping'],
         training_loss=loss_fn,
         eval_losses={loss_name: loss_fn},
         save_best=f'test_dataloader_{loss_name}',
@@ -588,9 +647,8 @@ def train_final_model(best_params: Dict[str, Any], train_dataset: CustomDataset,
         test_batch = next(iter(test_loader["test_dataloader"]))
         x = test_batch["x"].to(device) 
         y = test_batch["y"].to(device)
-        meta = test_batch["meta"].to(device)
         
-        pred = best_model(in_normalizer.transform(x), meta_normalizer.transform(meta))
+        pred = best_model(in_normalizer.transform(x))
         
         pred[:, :, 14:18, 14:18, :] = 0
         y[:, :, 14:18, 14:18, :] = 0
@@ -598,53 +656,201 @@ def train_final_model(best_params: Dict[str, Any], train_dataset: CustomDataset,
         pred_phys = out_normalizer.inverse_transform(pred).detach().cpu()
         gt_phys = y.detach().cpu()
 
-    output_path = Path(CONFIG['OUTPUT_DIR']) / 'FNO_compare.png'
+    output_path = Path(CONFIG['OUTPUT_DIR']) / 'FNO_pure_compare.png'
     plot_compare(
         pred_phys, gt_phys, 
         save_path=str(output_path), 
         sample_num=CONFIG['VISUALIZATION']['SAMPLE_NUM'], 
         t_indices=CONFIG['VISUALIZATION']['TIME_INDICES']
     )
-def main() -> None:
-    """Main training pipeline with hyperparameter optimization."""
+
+def run_single_training() -> Dict[str, Any]:
+    """Run single training with predefined parameters.
+    
+    Returns:
+        Dict containing the predefined parameters for training
+    """
+    print("=" * 50)
+    print("RUNNING SINGLE TRAINING MODE")
+    print("Using predefined parameters from CONFIG")
+    print("=" * 50)
+    
+    return CONFIG['SINGLE_PARAMS'].copy()
+
+def run_optuna_training(train_dataset: CustomDatasetPure, test_dataset: CustomDatasetPure, 
+                       processor: DefaultDataProcessor, device: str) -> Dict[str, Any]:
+    """Run Optuna hyperparameter optimization.
+    
+    Args:
+        train_dataset: Training dataset
+        test_dataset: Test dataset
+        processor: Data processor
+        device: Device to use
+        
+    Returns:
+        Dict containing the best parameters found by Optuna
+    """
+    print("=" * 50)
+    print("RUNNING OPTUNA OPTIMIZATION MODE")
+    print(f"Number of trials: {CONFIG['TRAINING_CONFIG']['optuna_n_trials']}")
+    print("=" * 50)
+    
+    objective_fn = create_objective_function(train_dataset, test_dataset, processor, device)
+    sampler = optuna.samplers.TPESampler(
+        seed=CONFIG['TRAINING_CONFIG']['optuna_seed'], 
+        n_startup_trials=CONFIG['TRAINING_CONFIG']['optuna_n_startup_trials']
+    )
+    study = optuna.create_study(direction="minimize", sampler=sampler)
+    study.optimize(
+        objective_fn, 
+        n_trials=CONFIG['TRAINING_CONFIG']['optuna_n_trials'], 
+        show_progress_bar=True
+    )
+    
+    print(f"\nOptuna Best Value: {study.best_value}")
+    print(f"Optuna Best Params: {study.best_params}")
+    
+    return study.best_params
+
+def run_eval_mode(train_dataset: CustomDatasetPure, test_dataset: CustomDatasetPure, 
+                 processor: DefaultDataProcessor, 
+                 in_normalizer, out_normalizer, device: str) -> None:
+    """Run evaluation mode using pre-trained model.
+    
+    Args:
+        train_dataset: Training dataset (used for model architecture)
+        test_dataset: Test dataset
+        processor: Data processor
+        in_normalizer: Input normalizer
+        out_normalizer: Output normalizer
+        device: Device to use
+    """
+    print("=" * 50)
+    print("RUNNING EVALUATION MODE")
+    print("Loading pre-trained model for evaluation")
+    print("=" * 50)
+    
+    # Use SINGLE_PARAMS for model architecture (assuming model was trained with these)
+    model_params = CONFIG['SINGLE_PARAMS']
+    
+    # Build model with same architecture as training
+    model = build_model(
+        model_params["n_modes"], 
+        model_params["hidden_channels"], 
+        model_params["n_layers"],
+        model_params["domain_padding"], 
+        CONFIG['DOMAIN_PADDING_MODE'], 
+        device
+    )
+    
+    # Load pre-trained model
+    model_path = CONFIG['TRAINING_CONFIG']['eval_model_path']
     try:
-        data_results = prepare_data_and_normalizers(CONFIG['MERGED_PT_PATH'])
+        model.load_state_dict(torch.load(
+            model_path, 
+            map_location=device, weights_only=False
+        ))
+        model.eval()
+        print(f"✅ Successfully loaded model from: {model_path}")
+    except FileNotFoundError:
+        raise FileNotFoundError(f"Pre-trained model not found at: {model_path}")
+    except Exception as e:
+        raise RuntimeError(f"Error loading model: {e}")
+    
+    # Setup test data loader
+    test_loader = {'test_dataloader': DataLoader(test_dataset, batch_size=len(test_dataset), shuffle=False)}
+    
+    print("\n" + "=" * 50)
+    print("GENERATING PREDICTIONS AND VISUALIZATIONS")
+    print("=" * 50)
+    
+    # Generate predictions and create comparison plot
+    with torch.no_grad():
+        test_batch = next(iter(test_loader["test_dataloader"]))
+        x = test_batch["x"].to(device) 
+        y = test_batch["y"].to(device)
+        
+        pred = model(in_normalizer.transform(x))
+        
+        pred[:, :, 14:18, 14:18, :] = 0
+        y[:, :, 14:18, 14:18, :] = 0
+        
+        pred_phys = out_normalizer.inverse_transform(pred).detach().cpu()
+        gt_phys = y.detach().cpu()
+
+    output_path = Path(CONFIG['OUTPUT_DIR']) / 'FNO_pure_eval_compare.png'
+    plot_compare(
+        pred_phys, gt_phys, 
+        save_path=str(output_path), 
+        sample_num=CONFIG['VISUALIZATION']['SAMPLE_NUM'], 
+        t_indices=CONFIG['VISUALIZATION']['TIME_INDICES']
+    )
+    
+    print(f"✅ Evaluation completed! Results saved to: {output_path}")
+
+def run_training_mode(train_dataset: CustomDatasetPure, test_dataset: CustomDatasetPure, 
+                     processor: DefaultDataProcessor, 
+                     in_normalizer, out_normalizer, device: str) -> None:
+    """Run training based on configured mode.
+    
+    Args:
+        train_dataset: Training dataset
+        test_dataset: Test dataset
+        processor: Data processor
+        in_normalizer: Input normalizer
+        out_normalizer: Output normalizer
+        device: Device to use
+    """
+    mode = CONFIG['TRAINING_CONFIG']['mode']
+    
+    if mode == 'single':
+        best_params = run_single_training()
+        print("\n" + "=" * 50)
+        print("STARTING FINAL MODEL TRAINING")
+        print("=" * 50)
+        train_final_model(
+            best_params, train_dataset, test_dataset, processor,
+            in_normalizer, out_normalizer, device
+        )
+    elif mode == 'optuna':
+        best_params = run_optuna_training(train_dataset, test_dataset, processor, device)
+        print("\n" + "=" * 50)
+        print("STARTING FINAL MODEL TRAINING")
+        print("=" * 50)
+        train_final_model(
+            best_params, train_dataset, test_dataset, processor,
+            in_normalizer, out_normalizer, device
+        )
+    elif mode == 'eval':
+        run_eval_mode(
+            train_dataset, test_dataset, processor,
+            in_normalizer, out_normalizer, device
+        )
+    else:
+        raise ValueError(f"Unknown training mode: {mode}. Options: 'single', 'optuna', 'eval'")
+
+def main() -> None:
+    """Main training pipeline for Pure FNO with uniform meta channels."""
+    try:
+        data_results = prepare_data_and_normalizers_pure(CONFIG['MERGED_PT_PATH'])
         (
-            in_summation, out_summation, meta_summation, device,
-            in_normalizer, out_normalizer, meta_normalizer, processor,
+            combined_input, out_summation, device,
+            in_normalizer, out_normalizer, processor,
             train_dataset, test_dataset
         ) = data_results
         
-        # Example: Run with predefined best parameters
-        # For actual hyperparameter optimization, uncomment the Optuna section below
-        best_params = {
-            "n_modes": (16, 8, 5), 
-            "hidden_channels": 24, 
-            "n_layers": 3, 
-            "domain_padding": [0.1, 0.1, 0.1], 
-            "train_batch_size": 16, 
-            "l2_weight": 0, 
-            "initial_lr": 1e-4
-        }
+        print(f"\n🚀 FNO-Pure Training Pipeline Started")
+        print(f"Training Mode: {CONFIG['TRAINING_CONFIG']['mode'].upper()}")
         
-        # Uncomment for actual hyperparameter optimization:
-        # objective_fn = create_objective_function(train_dataset, test_dataset, processor, device)
-        # sampler = optuna.samplers.TPESampler(seed=42, n_startup_trials=2)
-        # study = optuna.create_study(direction="minimize", sampler=sampler)
-        # study.optimize(objective_fn, n_trials=10, show_progress_bar=True)
-        # print(f"\nOptuna Best Value: {study.best_value}")
-        # print(f"Optuna Best Params: {study.best_params}")
-        # best_params = study.best_params
-        
-        train_final_model(
-            best_params, train_dataset, test_dataset, processor,
-            in_normalizer, out_normalizer, meta_normalizer, device
+        run_training_mode(
+            train_dataset, test_dataset, processor,
+            in_normalizer, out_normalizer, device
         )
         
-        print("Training completed successfully!")
+        print("\n✅ Training completed successfully!")
         
     except Exception as e:
-        print(f"Error during training: {e}")
+        print(f"\n❌ Error during training: {e}")
         raise
 
 if __name__ == "__main__":

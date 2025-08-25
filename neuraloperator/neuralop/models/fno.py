@@ -342,7 +342,7 @@ class FNO(BaseModel, name='FNO'):
         if self.complex_data:
             self.projection = ComplexValued(self.projection)
 
-        if self.film_layer is not None:
+        if self.film_layer:
             self.film = FiLMLayer(meta_dim=self.meta_dim,
                                   feature_channels=self.hidden_channels,
                                   n_dim=self.n_dim,
@@ -403,7 +403,7 @@ class FNO(BaseModel, name='FNO'):
         if self.domain_padding is not None:
             x = self.domain_padding.unpad(x)
 
-        if self.film_layer is not None:
+        if self.film_layer:
             assert meta.shape[0] == x.shape[0], "meta batch size must match x"
             x = self.film(x, meta)
 

@@ -99,7 +99,7 @@ class Trainer:
         test_loaders,
         optimizer,
         scheduler,
-        early_stopping=None,
+        early_stopping: int=None,
         regularizer=None,
         training_loss=None,
         eval_losses=None,
@@ -218,7 +218,7 @@ class Trainer:
             self.save_every = None
 
         if early_stopping is not None:
-            patience = 160
+            patience = early_stopping
             endured = 0
 
         if self.verbose:
