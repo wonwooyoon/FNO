@@ -56,7 +56,7 @@ CONFIG = {
         'scheduler_type': 'cosine',  # Options: 'cosine', 'step'
         'early_stopping': 40,
         'T_0': 10,
-        'T_max': 80,
+        'T_max': 40,
         'T_mult': 2,
         'eta_min': 1e-6,
         'step_size': 10,
