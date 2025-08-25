@@ -17,16 +17,19 @@ import numpy as np
 import torch
 import optuna
 import matplotlib.pyplot as plt
+import torchinfo as summary
 from matplotlib.gridspec import GridSpec
 from torch.utils.data import DataLoader, Dataset
 from sklearn.model_selection import train_test_split
 
 from neuraloperator.neuralop.data.transforms.normalizers import UnitGaussianNormalizer
 from neuraloperator.neuralop.data.transforms.data_processors import DefaultDataProcessor
+from neuraloperator.neuralop.utils import count_model_params
 from neuraloperator.neuralop import LpLoss
 from neuraloperator.neuralop.models import TFNO
 from neuraloperator.neuralop import Trainer
 from neuraloperator.neuralop.training import AdamW
+
 
 # Configuration Constants
 CONFIG = {
@@ -161,7 +164,7 @@ def load_merged_tensors(merged_pt_path: str) -> Tuple[torch.Tensor, torch.Tensor
         raise
 
 def build_model(n_modes: Tuple[int, ...], hidden_channels: int, n_layers: int, 
-                domain_padding: List[float], domain_padding_mode: str, device: str) -> TFNO:
+                domain_padding: List[float], domain_padding_mode: str, device: str):
     """Build TFNO model with given hyperparameters.
     
     Args:
@@ -187,7 +190,8 @@ def build_model(n_modes: Tuple[int, ...], hidden_channels: int, n_layers: int,
         domain_padding=domain_padding,
         domain_padding_mode=domain_padding_mode,
         film_layer=CONFIG['MODEL_CONFIG']['film_layer'],
-        meta_dim=CONFIG['MODEL_CONFIG']['meta_dim']
+        meta_dim=CONFIG['MODEL_CONFIG']['meta_dim'],
+        use_channel_mlp=False
     ).to(device)
     return model
 
@@ -207,7 +211,7 @@ def setup_data_loaders(train_dataset: CustomDataset, test_dataset: CustomDataset
     test_loader = {'test_dataloader': DataLoader(test_dataset, batch_size=len(test_dataset), shuffle=False)}
     return train_loader, test_loader
 
-def initialize_model_weights(model: TFNO) -> None:
+def initialize_model_weights(model):
     """Initialize model weights using Xavier uniform initialization.
     
     Args:
@@ -461,7 +465,8 @@ def train_final_model(best_params: Dict[str, Any], train_dataset: CustomDataset,
         device
     )
 
-    print(f'Model parameters: {sum(p.numel() for p in best_model.parameters()):,}')
+    print(f'{count_model_params(best_model)}')
+    print(best_model)
 
     optimizer = AdamW(
         best_model.parameters(), 
