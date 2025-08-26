@@ -139,6 +139,9 @@ export PFLOTRAN_DIR=/path/to/pflotran
 
 ### Must Do Section
 - Conduct python only in .venv_FNO environment
+- Always run the Python file from the '/home/geofluids/research/FNO/' path.
+- Keep the code as simple and readable as possible.
+- Actively use functions for repetitive tasks. In the main() function, add comments to outline the workflow, making the code's logic intuitive to understand.
 
 ### Do Not Section
 - Do not edit pflotran input files (e.g., *.in, *.dat)
