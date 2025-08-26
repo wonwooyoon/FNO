@@ -1,12 +1,12 @@
 """
-Pure FNO with Uniform Distribution Meta Training - Refactored Version
+Pure U-Net with Uniform Distribution Meta Training - Based on FNO_pure_ref.py
 
-This module implements training pipeline for Pure TFNO models with meta data incorporated 
+This module implements training pipeline for Pure U-Net models with meta data incorporated 
 as uniform spatial channels. Meta data (e.g., permeability, porosity) is expanded to 
 uniform distribution across spatial dimensions and directly concatenated with input channels, 
 providing a straightforward approach to conditional neural operators.
 
-Refactored for improved readability and maintainability following CLAUDE.md guidelines:
+Based on FNO_pure_ref.py but adapted for 3D U-Net architecture:
 - Keep code simple and readable
 - Use functions for repetitive tasks
 - Add comments to outline workflow in main()
@@ -32,40 +32,42 @@ from sklearn.model_selection import train_test_split
 from neuraloperator.neuralop.data.transforms.normalizers import UnitGaussianNormalizer
 from neuraloperator.neuralop.data.transforms.data_processors import DefaultDataProcessor
 from neuraloperator.neuralop.utils import count_model_params
-from neuraloperator.neuralop.models import TFNO
 from neuraloperator.neuralop.training import AdamW
+
+# Import our custom U-Net model
+from models.unet3d import UNet3D
 
 # ==============================================================================
 # Configuration
 # ==============================================================================
 CONFIG = {
     'MERGED_PT_PATH': './src/preprocessing/merged.pt',
-    'OUTPUT_DIR': './src/FNO/output_pure',
-    'N_EPOCHS': 3,  # Reduced for testing
+    'OUTPUT_DIR': './src/FNO/output_unet',
+    'N_EPOCHS': 10000,  # Reduced for testing
     'EVAL_INTERVAL': 1,
     'TEST_SIZE': 0.1,
     'RANDOM_STATE': 42,
-    'DOMAIN_PADDING_MODE': 'symmetric',
     'MODEL_CONFIG': {
-        'in_channels': 8,  # 7 original channels + 1 uniform meta channel
-        'out_channels': 1,
-        'lifting_channel_ratio': 2,
-        'projection_channel_ratio': 2,
-        'positional_embedding': 'grid',
+        # Fixed model architecture settings (not optimized by Optuna)
+        'in_channels': 8,              # 7 original channels + 1 uniform meta channel
+        'out_channels': 1,             # Single output channel
+        'use_batch_norm': True,        # Batch normalization (generally always beneficial)
+        'activation': 'relu',          # Activation function (standard choice)
+        'final_activation': None,      # No final activation (for regression)
     },
     'SCHEDULER_CONFIG': {
-        'scheduler_type': 'cosine',  # Options: 'cosine', 'step'
+        'scheduler_type': 'step',  # Options: 'cosine', 'step'
         'early_stopping': 80,
         'T_0': 10,
         'T_max': 80,
         'T_mult': 2,
         'eta_min': 1e-8,
-        'step_size': 10,
+        'step_size': 30,
         'gamma': 0.5
     },
     'VISUALIZATION': {
         'SAMPLE_NUM': 8,
-        'TIME_INDICES': (4, 9, 14, 19),
+        'TIME_INDICES': (3, 7, 11, 15),
         'DPI': 200
     },
     'LOSS_CONFIG': {
@@ -78,34 +80,35 @@ CONFIG = {
         'optuna_n_trials': 10,
         'optuna_seed': 42,
         'optuna_n_startup_trials': 2,
-        'eval_model_path': './src/FNO/output_pure/final/best_model_state_dict.pt'
+        'eval_model_path': './src/FNO/output_unet/final/best_model_state_dict.pt'
     },
     'OPTUNA_SEARCH_SPACE': {
-        'n_modes_options': [(16,16,5), (16,8,5), (32,16,5)],
-        'hidden_channels_options': [8, 16, 24, 32],
-        'n_layers_options': [2, 3, 4],
-        'domain_padding_options': [[0.125,0.25,0.4], [0.1,0.1,0.1], [0.2,0.3,0.5]],
-        'train_batch_size_options': [16, 32, 64],
-        'l2_weight_range': [1e-8, 1e-3],  # [min, max] for log uniform
-        'initial_lr_range': [1e-4, 1e-3]  # [min, max] for log uniform
+        'unet_depth_options': [2, 3, 4],                      # Variable U-Net depth (limited by temporal dimension)
+        'base_channels_options': [16, 24, 32, 48],            # Base channel options
+        'kernel_size_options': [1, 3, 5],                     # Kernel size options (padding auto-calculated)
+        'dropout_rate_range': [0.0, 0.3],                     # Dropout range
+        'train_batch_size_options': [16, 32, 64],             # Batch size options
+        'l2_weight_range': [1e-8, 1e-3],                      # L2 weight range [min, max] for log uniform
+        'initial_lr_range': [1e-4, 1e-3]                      # Learning rate range [min, max] for log uniform
     },
     'SINGLE_PARAMS': {
-        "n_modes": (16, 8, 4), 
-        "hidden_channels": 12, 
-        "n_layers": 4, 
-        "domain_padding": [0.1, 0.1, 0.1], 
-        "train_batch_size": 32, 
-        "l2_weight": 0, 
-        "initial_lr": 1e-3
+        # Hyperparameters that can be optimized by Optuna
+        "unet_depth": 3,           # U-Net depth (n-layer) - changed to 2 so 2^2=4 divides temporal dimension 20
+        "base_channels": 32,       # Base number of channels  
+        "kernel_size": 3,          # Convolution kernel size (padding auto-calculated)
+        "dropout_rate": 0.1,       # Dropout probability
+        "train_batch_size": 32,    # Training batch size
+        "l2_weight": 0,            # L2 regularization weight
+        "initial_lr": 1e-4         # Initial learning rate
     }
 }
 
 # ==============================================================================
-# Data Classes and Dataset
+# Data Classes and Dataset (Same as FNO version)
 # ==============================================================================
 
 class CustomDatasetPure(Dataset):
-    """Custom dataset for Pure FNO training with meta data already combined as uniform spatial channels.
+    """Custom dataset for Pure U-Net training with meta data already combined as uniform spatial channels.
     
     Note: This version expects input_tensor to already have meta channels combined,
     unlike the original version that combines them internally.
@@ -129,12 +132,12 @@ class CustomDatasetPure(Dataset):
         }
 
 # ==============================================================================
-# Data Processing Functions
+# Data Processing Functions (Same as FNO version)
 # ==============================================================================
 
 def preprocessing(config: Dict, verbose: bool = True) -> Tuple:
     """
-    Unified data preprocessing function for Pure FNO training.
+    Unified data preprocessing function for Pure U-Net training.
     
     Processing Steps:
     1. Load saved tensors (x, y, meta)
@@ -174,9 +177,11 @@ def preprocessing(config: Dict, verbose: bool = True) -> Tuple:
         if missing_keys:
             raise KeyError(f"Missing required keys in data: {missing_keys}")
             
-        in_data = bundle["x"].float().to(device)
-        out_data = bundle["y"].float().to(device) 
+        in_data = bundle["x"].float().to(device)[:, :, :, :, :16]
+        out_data = bundle["y"].float().to(device) [:, :, :, :, :16]
         meta_data = bundle["meta"].float().to(device)
+
+        print(f'in_data.shape: {in_data.shape}')
         
         if verbose:
             print(f"   Loaded tensors - Input: {tuple(in_data.shape)}, Output: {tuple(out_data.shape)}, Meta: {tuple(meta_data.shape)}")
@@ -273,7 +278,7 @@ def preprocessing(config: Dict, verbose: bool = True) -> Tuple:
     return (processor, train_dataset, test_dataset, device)
 
 # ==============================================================================
-# Loss Function Options
+# Loss Function Options (Same as FNO version)
 # ==============================================================================
 
 class LpLoss(nn.Module):
@@ -306,7 +311,7 @@ class LpLoss(nn.Module):
         # Compute relative Lp norm: ||pred - y||_p / ||y||_p
         diff_norm = torch.norm(pred - y, p=self.p, dim=dims, keepdim=False)
         y_norm = torch.norm(y, p=self.p, dim=dims, keepdim=False)
-        relative_error = diff_norm / (y_norm + 1e-12)  # Add small epsilon to avoid division by zero
+        relative_error = diff_norm / (y_norm + 1e-5)  # Add small epsilon to avoid division by zero
         
         if self.reduction == 'mean':
             return relative_error.mean()
@@ -315,9 +320,8 @@ class LpLoss(nn.Module):
         else:
             return relative_error
 
-
 # ==============================================================================
-# Scheduler Options
+# Scheduler Options (Same as FNO version)
 # ==============================================================================
 
 class LRStepScheduler(torch.optim.lr_scheduler.StepLR):
@@ -368,17 +372,16 @@ class CappedCosineAnnealingWarmRestarts(torch.optim.lr_scheduler._LRScheduler):
         
         return lrs
 
-
 # ==============================================================================
-# Model Building Functions
+# Model Building Functions (Modified for U-Net)
 # ==============================================================================
 
 def create_model(config: Dict, train_dataset, test_dataset, device: str, 
-                n_modes: Tuple[int, ...], hidden_channels: int, n_layers: int, 
-                domain_padding: List[float], train_batch_size: int, 
+                unet_depth: int, base_channels: int, kernel_size: int,
+                dropout_rate: float, train_batch_size: int, 
                 initial_lr: float, l2_weight: float):
     """
-    Create complete model setup including DataLoaders, loss function, optimizer, 
+    Create complete U-Net model setup including DataLoaders, loss function, optimizer, 
     scheduler, and model architecture.
     
     Args:
@@ -386,10 +389,10 @@ def create_model(config: Dict, train_dataset, test_dataset, device: str,
         train_dataset: Training dataset
         test_dataset: Test dataset  
         device: Device to use (cuda/cpu)
-        n_modes: Number of modes for each dimension
-        hidden_channels: Number of hidden channels
-        n_layers: Number of layers
-        domain_padding: Domain padding values
+        unet_depth: Depth of U-Net (number of encoder/decoder levels)
+        base_channels: Base number of channels
+        kernel_size: Convolution kernel size
+        dropout_rate: Dropout probability
         train_batch_size: Training batch size
         initial_lr: Initial learning rate
         l2_weight: L2 weight regularization
@@ -427,19 +430,21 @@ def create_model(config: Dict, train_dataset, test_dataset, device: str,
     else:
         raise ValueError(f"Unknown loss type: {loss_type}. Use 'l2' or 'mse'.")
     
-    # 3. Create TFNO model
-    model = TFNO(
-        n_modes=n_modes,
+    # 3. Create U-Net model
+    # Auto-calculate padding for dimension preservation: padding = (kernel_size - 1) / 2
+    auto_padding = (kernel_size - 1) // 2
+    
+    model = UNet3D(
         in_channels=config['MODEL_CONFIG']['in_channels'],
         out_channels=config['MODEL_CONFIG']['out_channels'],
-        hidden_channels=hidden_channels,
-        n_layers=n_layers,
-        lifting_channel_ratio=config['MODEL_CONFIG']['lifting_channel_ratio'],
-        projection_channel_ratio=config['MODEL_CONFIG']['projection_channel_ratio'],
-        positional_embedding=config['MODEL_CONFIG']['positional_embedding'],
-        domain_padding=domain_padding,
-        domain_padding_mode=config['DOMAIN_PADDING_MODE'],
-        use_channel_mlp=True
+        depth=unet_depth,
+        base_channels=base_channels,
+        kernel_size=kernel_size,
+        padding=auto_padding,  # Auto-calculated padding
+        use_batch_norm=config['MODEL_CONFIG']['use_batch_norm'],
+        dropout_rate=dropout_rate,
+        activation=config['MODEL_CONFIG']['activation'],
+        final_activation=config['MODEL_CONFIG']['final_activation']
     ).to(device)
     
     # 4. Create optimizer
@@ -467,19 +472,19 @@ def create_model(config: Dict, train_dataset, test_dataset, device: str,
     return (model, train_loader, test_loader, optimizer, scheduler, loss_fn)
 
 # ==============================================================================
-# Training Functions
+# Training Functions (Same as FNO version)
 # ==============================================================================
 
 def train_model(config: Dict, processor, device: str, model, train_loader, test_loader, 
                 optimizer, scheduler, loss_fn, verbose: bool = True):
     """
-    Train the FNO model with early stopping and loss tracking.
+    Train the U-Net model with early stopping and loss tracking.
     
     Args:
         config: Configuration dictionary
         processor: Data processor for normalization
         device: Device to use (cuda/cpu)
-        model: TFNO model to train
+        model: U-Net model to train
         train_loader: Training data loader
         test_loader: Test data loader
         optimizer: Optimizer
@@ -592,7 +597,7 @@ def train_model(config: Dict, processor, device: str, model, train_loader, test_
     plt.plot(epochs_range, test_losses, 'r-', label='Test Loss', linewidth=2)
     plt.xlabel('Epoch')
     plt.ylabel('Loss')
-    plt.title('FNO Training and Test Loss Over Time')
+    plt.title('U-Net Training and Test Loss Over Time')
     plt.legend()
     plt.grid(True, alpha=0.3)
     plt.yscale('log')  # Use log scale for better visualization
@@ -615,16 +620,8 @@ def train_model(config: Dict, processor, device: str, model, train_loader, test_
     return model
 
 # ==============================================================================
-# Visualization Functions
+# Visualization Functions (Same as FNO version with U-Net naming)
 # ==============================================================================
-
-import torch
-from torch.utils.data import DataLoader
-from pathlib import Path
-from typing import Dict
-import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.colors as colors
 
 def visualization(config: Dict, processor, device: str, trained_model, train_dataset, 
                  test_dataset, verbose: bool = True):
@@ -637,7 +634,7 @@ def visualization(config: Dict, processor, device: str, trained_model, train_dat
         config: Configuration dictionary.
         processor: Data processor for normalization.
         device: Device to use (e.g., 'cuda' or 'cpu').
-        trained_model: The trained FNO model.
+        trained_model: The trained U-Net model.
         train_dataset: The training dataset.
         test_dataset: The test dataset for generating predictions.
         verbose: If True, prints progress information.
@@ -727,7 +724,7 @@ def visualization(config: Dict, processor, device: str, trained_model, train_dat
     fig_inputs.tight_layout(rect=[0, 0.03, 1, 0.95])
     
     # Save the input data figure
-    output_path_inputs = Path(config['OUTPUT_DIR']) / 'FNO_input_visualization.png'
+    output_path_inputs = Path(config['OUTPUT_DIR']) / 'UNet_input_visualization.png'
     output_path_inputs.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(output_path_inputs, dpi=config['VISUALIZATION']['DPI'], bbox_inches='tight')
     plt.close(fig_inputs)
@@ -775,7 +772,7 @@ def visualization(config: Dict, processor, device: str, trained_model, train_dat
         fig.colorbar(im_err, ax=axes[2, :].ravel().tolist(), orientation='horizontal', pad=0.05, aspect=40)
 
     # Save the main comparison figure
-    output_path_grid = Path(config['OUTPUT_DIR']) / 'FNO_comparison_grid.png'
+    output_path_grid = Path(config['OUTPUT_DIR']) / 'UNet_comparison_grid.png'
     plt.savefig(output_path_grid, dpi=config['VISUALIZATION']['DPI'], bbox_inches='tight')
     plt.close(fig)
     
@@ -788,7 +785,7 @@ def visualization(config: Dict, processor, device: str, trained_model, train_dat
 
 def main() -> None:
     """
-    Main training pipeline for Pure FNO with uniform meta channels.
+    Main training pipeline for Pure U-Net with uniform meta channels.
     
     Workflow:
     1. Load and preprocess data with unified preprocessing function
@@ -798,7 +795,7 @@ def main() -> None:
     """
     try:
         # Step 1: Unified data preprocessing
-        print(f"\n🚀 FNO-Pure Training Pipeline Started")
+        print(f"\n🚀 U-Net-Pure Training Pipeline Started")
         print(f"Training Mode: {CONFIG['TRAINING_CONFIG']['mode'].upper()}")
         
         processor, train_dataset, test_dataset, device = preprocessing(
@@ -807,7 +804,7 @@ def main() -> None:
         )
         
         # Step 2: Create model setup
-        print("\n🔥 Creating model setup...")
+        print("\n🔥 Creating U-Net model setup...")
         
         # Get parameters from config for testing
         params = CONFIG['SINGLE_PARAMS']
@@ -816,10 +813,10 @@ def main() -> None:
             train_dataset=train_dataset,
             test_dataset=test_dataset,
             device=device,
-            n_modes=params['n_modes'],
-            hidden_channels=params['hidden_channels'],
-            n_layers=params['n_layers'],
-            domain_padding=params['domain_padding'],
+            unet_depth=params['unet_depth'],
+            base_channels=params['base_channels'],
+            kernel_size=params['kernel_size'],
+            dropout_rate=params['dropout_rate'],
             train_batch_size=params['train_batch_size'],
             initial_lr=params['initial_lr'],
             l2_weight=params['l2_weight']
@@ -829,7 +826,8 @@ def main() -> None:
         trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
         total_params = sum(p.numel() for p in model.parameters())
         
-        print(f"   ✅ Model created - Device: {device}")
+        print(f"   ✅ U-Net Model created - Device: {device}")
+        print(f"   ✅ Architecture: {model.get_architecture_info()}")
         print(f"   ✅ Trainable parameters: {trainable_params:,}")
         print(f"   ✅ Total parameters: {total_params:,}")
         print(f"   ✅ Train batches: {len(train_loader)}, Test batches: {len(test_loader)}")
@@ -863,7 +861,7 @@ def main() -> None:
             verbose=True
         )
         
-        print("\n✅ Training pipeline completed successfully!")
+        print("\n✅ U-Net training pipeline completed successfully!")
         
     except Exception as e:
         print(f"\n❌ Error during training: {e}")
