@@ -83,8 +83,8 @@ CONFIG = {
     },
     'OPTUNA_SEARCH_SPACE': {
         'n_modes_options': [(24, 12, 4), (16, 8, 4), (12, 6, 4), (8, 4, 4), (24, 12, 2), (16, 8, 2), (12, 6, 2), (8, 4, 2)],
-        'hidden_channels_options': [8, 16, 24],
-        'n_layers_options': [2, 3, 4],
+        'hidden_channels_range': [8, 24],  # [min, max] for suggest_int
+        'n_layers_range': [2, 4],  # [min, max] for suggest_int
         'domain_padding_options': [[0.125,0.25,0.4], [0.1,0.1,0.1]],
         'train_batch_size_options': [16, 32, 64],
         'l2_weight_range': [1e-8, 1e-4],  # [min, max] for log uniform
@@ -724,10 +724,16 @@ def optuna_optimization(config: Dict, processor, train_dataset, val_dataset, tes
         
         # Sample categorical parameters
         n_modes = trial.suggest_categorical('n_modes', search_space['n_modes_options'])
-        hidden_channels = trial.suggest_categorical('hidden_channels', search_space['hidden_channels_options'])
-        n_layers = trial.suggest_categorical('n_layers', search_space['n_layers_options'])
         domain_padding = trial.suggest_categorical('domain_padding', search_space['domain_padding_options'])
         train_batch_size = trial.suggest_categorical('train_batch_size', search_space['train_batch_size_options'])
+        
+        # Sample integer parameters with ranges
+        hidden_channels = trial.suggest_int('hidden_channels', 
+                                           search_space['hidden_channels_range'][0], 
+                                           search_space['hidden_channels_range'][1])
+        n_layers = trial.suggest_int('n_layers', 
+                                    search_space['n_layers_range'][0], 
+                                    search_space['n_layers_range'][1])
         
         # Sample continuous parameters with log uniform distribution
         l2_weight = trial.suggest_float('l2_weight', 
