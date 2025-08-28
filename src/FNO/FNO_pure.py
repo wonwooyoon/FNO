@@ -43,7 +43,8 @@ CONFIG = {
     'OUTPUT_DIR': './src/FNO/output_pure',
     'N_EPOCHS': 3,  # Reduced for testing
     'EVAL_INTERVAL': 1,
-    'TEST_SIZE': 0.1,
+    'VAL_SIZE': 0.1,  # Validation set size
+    'TEST_SIZE': 0.1,  # Test set size
     'RANDOM_STATE': 42,
     'DOMAIN_PADDING_MODE': 'symmetric',
     'MODEL_CONFIG': {
@@ -54,14 +55,14 @@ CONFIG = {
         'positional_embedding': 'grid',
     },
     'SCHEDULER_CONFIG': {
-        'scheduler_type': 'cosine',  # Options: 'cosine', 'step'
+        'scheduler_type': 'step',  # Options: 'cosine', 'step'
         'early_stopping': 80,
         'T_0': 10,
         'T_max': 80,
         'T_mult': 2,
-        'eta_min': 1e-8,
-        'step_size': 10,
-        'gamma': 0.5
+        'eta_min': 1e-5,
+        'step_size': 30,
+        'gamma': 0.8
     },
     'VISUALIZATION': {
         'SAMPLE_NUM': 8,
@@ -75,28 +76,28 @@ CONFIG = {
     },
     'TRAINING_CONFIG': {
         'mode': 'single',  # Options: 'single', 'optuna', 'eval'
-        'optuna_n_trials': 10,
+        'optuna_n_trials': 100,
         'optuna_seed': 42,
-        'optuna_n_startup_trials': 2,
+        'optuna_n_startup_trials': 10,
         'eval_model_path': './src/FNO/output_pure/final/best_model_state_dict.pt'
     },
     'OPTUNA_SEARCH_SPACE': {
-        'n_modes_options': [(16,16,5), (16,8,5), (32,16,5)],
-        'hidden_channels_options': [8, 16, 24, 32],
+        'n_modes_options': [(24, 12, 4), (16, 8, 4), (12, 6, 4), (8, 4, 4), (24, 12, 2), (16, 8, 2), (12, 6, 2), (8, 4, 2)],
+        'hidden_channels_options': [8, 16, 24],
         'n_layers_options': [2, 3, 4],
-        'domain_padding_options': [[0.125,0.25,0.4], [0.1,0.1,0.1], [0.2,0.3,0.5]],
+        'domain_padding_options': [[0.125,0.25,0.4], [0.1,0.1,0.1]],
         'train_batch_size_options': [16, 32, 64],
-        'l2_weight_range': [1e-8, 1e-3],  # [min, max] for log uniform
-        'initial_lr_range': [1e-4, 1e-3]  # [min, max] for log uniform
+        'l2_weight_range': [1e-8, 1e-4],  # [min, max] for log uniform
+        'initial_lr_range': [1e-4, 1e-2]  # [min, max] for log uniform
     },
     'SINGLE_PARAMS': {
-        "n_modes": (16, 8, 4), 
-        "hidden_channels": 12, 
+        "n_modes": (24, 12, 4), 
+        "hidden_channels": 24, 
         "n_layers": 4, 
-        "domain_padding": [0.1, 0.1, 0.1], 
-        "train_batch_size": 32, 
-        "l2_weight": 0, 
-        "initial_lr": 1e-3
+        "domain_padding": [0.125,0.25,0.4], 
+        "train_batch_size": 64, 
+        "l2_weight": 1e-5, 
+        "initial_lr": 1e-2
     }
 }
 
@@ -140,7 +141,7 @@ def preprocessing(config: Dict, verbose: bool = True) -> Tuple:
     1. Load saved tensors (x, y, meta)
     2. Transform meta data to uniform channels and combine with input
     3. Create normalizers and fit them, form DefaultDataProcessor
-    4. Perform train/test split and create datasets
+    4. Perform train/val/test split and create datasets
     5. Return necessary objects for training
     
     Args:
@@ -148,11 +149,11 @@ def preprocessing(config: Dict, verbose: bool = True) -> Tuple:
         verbose: Whether to print progress information
         
     Returns:
-        Tuple containing (processor, train_dataset, test_dataset, device)
+        Tuple containing (processor, train_dataset, val_dataset, test_dataset, device)
     """
     
     if verbose:
-        print(f"\n📊 Starting unified data preprocessing...")
+        print(f"\nStarting unified data preprocessing...")
     
     # Determine device
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -245,32 +246,46 @@ def preprocessing(config: Dict, verbose: bool = True) -> Tuple:
         raise RuntimeError(f"Failed at Step 3 (normalizer creation): {e}")
     
     try:
-        # Step 4: Perform train/test split and create datasets
+        # Step 4: Perform train/val/test split and create datasets
         if verbose:
-            print("Step 4: Creating train/test datasets...")
+            print("Step 4: Creating train/val/test datasets...")
             
-        # Split using the already combined input tensor
-        train_combined, test_combined, train_out, test_out = train_test_split(
+        # First split: separate test set (final 10%)
+        train_temp_combined, test_combined, train_temp_out, test_out = train_test_split(
             combined_input, out_data,
             test_size=config['TEST_SIZE'], 
             random_state=config['RANDOM_STATE']
         )
         
+        # Second split: separate validation set from remaining data
+        # Val size relative to remaining data: 0.1 / (1 - 0.1) = ~0.111
+        val_size_relative = config['VAL_SIZE'] / (1 - config['TEST_SIZE'])
+        train_combined, val_combined, train_out, val_out = train_test_split(
+            train_temp_combined, train_temp_out,
+            test_size=val_size_relative,
+            random_state=config['RANDOM_STATE']
+        )
+        
         # Create datasets with already combined inputs
         train_dataset = CustomDatasetPure(train_combined, train_out)
+        val_dataset = CustomDatasetPure(val_combined, val_out)
         test_dataset = CustomDatasetPure(test_combined, test_out)
         
         if verbose:
-            print(f"   Train dataset size: {len(train_dataset)}, Test dataset size: {len(test_dataset)}")
+            print(f"   Train dataset size: {len(train_dataset)}")
+            print(f"   Validation dataset size: {len(val_dataset)}")
+            print(f"   Test dataset size: {len(test_dataset)}")
+            total_size = len(train_dataset) + len(val_dataset) + len(test_dataset)
+            print(f"   Split ratios: Train {len(train_dataset)/total_size:.1%}, Val {len(val_dataset)/total_size:.1%}, Test {len(test_dataset)/total_size:.1%}")
             
     except Exception as e:
         raise RuntimeError(f"Failed at Step 4 (dataset creation): {e}")
     
     if verbose:
-        print("✅ Data preprocessing completed successfully!")
+        print("Data preprocessing completed successfully!")
     
     # Step 5: Return necessary objects
-    return (processor, train_dataset, test_dataset, device)
+    return (processor, train_dataset, val_dataset, test_dataset, device)
 
 # ==============================================================================
 # Loss Function Options
@@ -373,7 +388,7 @@ class CappedCosineAnnealingWarmRestarts(torch.optim.lr_scheduler._LRScheduler):
 # Model Building Functions
 # ==============================================================================
 
-def create_model(config: Dict, train_dataset, test_dataset, device: str, 
+def create_model(config: Dict, train_dataset, val_dataset, test_dataset, device: str, 
                 n_modes: Tuple[int, ...], hidden_channels: int, n_layers: int, 
                 domain_padding: List[float], train_batch_size: int, 
                 initial_lr: float, l2_weight: float):
@@ -384,6 +399,7 @@ def create_model(config: Dict, train_dataset, test_dataset, device: str,
     Args:
         config: Configuration dictionary
         train_dataset: Training dataset
+        val_dataset: Validation dataset
         test_dataset: Test dataset  
         device: Device to use (cuda/cpu)
         n_modes: Number of modes for each dimension
@@ -395,7 +411,7 @@ def create_model(config: Dict, train_dataset, test_dataset, device: str,
         l2_weight: L2 weight regularization
         
     Returns:
-        Tuple containing (model, train_loader, test_loader, optimizer, scheduler, loss_fn)
+        Tuple containing (model, train_loader, val_loader, test_loader, optimizer, scheduler, loss_fn)
     """
     
     # 1. Create DataLoaders
@@ -403,6 +419,14 @@ def create_model(config: Dict, train_dataset, test_dataset, device: str,
         train_dataset, 
         batch_size=train_batch_size, 
         shuffle=True, 
+        num_workers=0, 
+        pin_memory=False
+    )
+    
+    val_loader = DataLoader(
+        val_dataset, 
+        batch_size=train_batch_size, 
+        shuffle=False, 
         num_workers=0, 
         pin_memory=False
     )
@@ -464,13 +488,13 @@ def create_model(config: Dict, train_dataset, test_dataset, device: str,
     else:
         raise ValueError(f"Unknown scheduler type: {scheduler_type}. Use 'cosine' or 'step'.")
     
-    return (model, train_loader, test_loader, optimizer, scheduler, loss_fn)
+    return (model, train_loader, val_loader, test_loader, optimizer, scheduler, loss_fn)
 
 # ==============================================================================
 # Training Functions
 # ==============================================================================
 
-def train_model(config: Dict, processor, device: str, model, train_loader, test_loader, 
+def train_model(config: Dict, processor, device: str, model, train_loader, val_loader, test_loader, 
                 optimizer, scheduler, loss_fn, verbose: bool = True):
     """
     Train the FNO model with early stopping and loss tracking.
@@ -481,6 +505,7 @@ def train_model(config: Dict, processor, device: str, model, train_loader, test_
         device: Device to use (cuda/cpu)
         model: TFNO model to train
         train_loader: Training data loader
+        val_loader: Validation data loader
         test_loader: Test data loader
         optimizer: Optimizer
         scheduler: Learning rate scheduler
@@ -492,16 +517,16 @@ def train_model(config: Dict, processor, device: str, model, train_loader, test_
     """
     
     if verbose:
-        print(f"\n🔥 Starting model training for {config['N_EPOCHS']} epochs...")
+        print(f"\nStarting model training for {config['N_EPOCHS']} epochs...")
     
     # Training setup
-    best_test_loss = float('inf')
+    best_val_loss = float('inf')
     patience = 0
     early_stopping_patience = config['SCHEDULER_CONFIG']['early_stopping']
     
     # Track losses for each epoch
     train_losses = []
-    test_losses = []
+    val_losses = []
     
     # Create output directory for saving best model
     output_dir = Path(config['OUTPUT_DIR']) / 'final'
@@ -533,13 +558,13 @@ def train_model(config: Dict, processor, device: str, model, train_loader, test_
         train_loss = total_train_loss / train_count
         train_losses.append(train_loss)
         
-        # Evaluation phase - compute test loss every epoch
+        # Validation phase - compute validation loss every epoch
         model.eval()
-        total_test_loss = 0
-        test_count = 0
+        total_val_loss = 0
+        val_count = 0
         
         with torch.no_grad():
-            for batch in test_loader:
+            for batch in val_loader:
                 x = batch['x'].to(device)
                 y = batch['y'].to(device)
                 
@@ -548,23 +573,23 @@ def train_model(config: Dict, processor, device: str, model, train_loader, test_
                 
                 pred = model(x)
                 loss = loss_fn(pred, y)
-                total_test_loss += loss.item()
-                test_count += 1
+                total_val_loss += loss.item()
+                val_count += 1
         
-        test_loss = total_test_loss / test_count
-        test_losses.append(test_loss)
+        val_loss = total_val_loss / val_count
+        val_losses.append(val_loss)
         
         # Print losses for every epoch
         if verbose:
-            print(f"Epoch {epoch:3d}: Train Loss={train_loss:.6f}, Test Loss={test_loss:.6f}")
+            print(f"Epoch {epoch:3d}: Train Loss={train_loss:.6f}, Val Loss={val_loss:.6f}")
         
-        # Save best model
-        if test_loss < best_test_loss:
-            best_test_loss = test_loss
+        # Save best model based on validation loss
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
             torch.save(model.state_dict(), output_dir / 'best_model_state_dict.pt')
             patience = 0
             if verbose:
-                print(f"    ★ New best model saved! Test loss: {test_loss:.6f}")
+                print(f"    New best model saved! Val loss: {val_loss:.6f}")
         else:
             patience += 1
         
@@ -577,22 +602,63 @@ def train_model(config: Dict, processor, device: str, model, train_loader, test_
         # Update learning rate
         scheduler.step()
     
+    # Load best model for final test evaluation
+    model.load_state_dict(torch.load(output_dir / 'best_model_state_dict.pt', map_location=device, weights_only=False))
+    
+    # Final test evaluation
+    model.eval()
+    total_test_loss = 0
+    total_test_mse_loss = 0  # For MSE calculation when using LpLoss
+    test_count = 0
+    
+    # Create MSE loss function for additional metric when using LpLoss
+    mse_loss_fn = torch.nn.MSELoss() if isinstance(loss_fn, LpLoss) else None
+    
+    with torch.no_grad():
+        for batch in test_loader:
+            x = batch['x'].to(device)
+            y = batch['y'].to(device)
+            
+            x = processor.in_normalizer.transform(x)
+            y = processor.out_normalizer.transform(y)
+            
+            pred = model(x)
+            loss = loss_fn(pred, y)
+            total_test_loss += loss.item()
+            
+            # Calculate MSE loss additionally when using LpLoss
+            if mse_loss_fn is not None:
+                mse_loss = mse_loss_fn(pred, y)
+                total_test_mse_loss += mse_loss.item()
+            
+            test_count += 1
+    
+    final_test_loss = total_test_loss / test_count
+    final_test_mse_loss = total_test_mse_loss / test_count if mse_loss_fn is not None else None
+    
     # Save loss history
     loss_history = {
         'train_losses': train_losses,
-        'test_losses': test_losses,
+        'val_losses': val_losses,
+        'final_test_loss': final_test_loss,
         'epochs': list(range(len(train_losses)))
     }
+    
+    # Add MSE loss to history if calculated
+    if final_test_mse_loss is not None:
+        loss_history['final_test_mse_loss'] = final_test_mse_loss
+    
     torch.save(loss_history, output_dir / 'loss_history.pt')
     
     # Plot loss curves
     plt.figure(figsize=(10, 6))
     epochs_range = range(len(train_losses))
     plt.plot(epochs_range, train_losses, 'b-', label='Train Loss', linewidth=2)
-    plt.plot(epochs_range, test_losses, 'r-', label='Test Loss', linewidth=2)
+    plt.plot(epochs_range, val_losses, 'r-', label='Validation Loss', linewidth=2)
+    plt.axhline(y=final_test_loss, color='g', linestyle='--', label=f'Final Test Loss: {final_test_loss:.6f}', linewidth=2)
     plt.xlabel('Epoch')
     plt.ylabel('Loss')
-    plt.title('FNO Training and Test Loss Over Time')
+    plt.title('FNO Training and Validation Loss Over Time')
     plt.legend()
     plt.grid(True, alpha=0.3)
     plt.yscale('log')  # Use log scale for better visualization
@@ -602,17 +668,238 @@ def train_model(config: Dict, processor, device: str, model, train_loader, test_
     plt.close()
     
     if verbose:
-        print(f"\n📊 Training completed!")
-        print(f"📈 Final Train Loss: {train_losses[-1]:.6f}")
-        print(f"📉 Final Test Loss: {test_losses[-1]:.6f}")
-        print(f"🏆 Best Test Loss: {best_test_loss:.6f}")
-        print(f"💾 Loss history saved to: {output_dir / 'loss_history.pt'}")
-        print(f"📈 Loss curves saved to: {loss_plot_path}")
-    
-    # Load and return the best trained model
-    model.load_state_dict(torch.load(output_dir / 'best_model_state_dict.pt', map_location=device, weights_only=False))
+        print(f"\nTraining completed!")
+        print(f"Final Train Loss: {train_losses[-1]:.6f}")
+        print(f"Final Validation Loss: {val_losses[-1]:.6f}")
+        
+        # Print test loss information
+        loss_type = config['LOSS_CONFIG']['loss_type']
+        if loss_type == 'l2' and final_test_mse_loss is not None:
+            print(f"Final Test Loss (L{config['LOSS_CONFIG']['l2_p']}): {final_test_loss:.6f}")
+            print(f"Final Test Loss (MSE): {final_test_mse_loss:.6f}")
+        else:
+            print(f"Final Test Loss: {final_test_loss:.6f}")
+            
+        print(f"Best Validation Loss: {best_val_loss:.6f}")
+        print(f"Loss history saved to: {output_dir / 'loss_history.pt'}")
+        print(f"Loss curves saved to: {loss_plot_path}")
     
     return model
+
+# ==============================================================================
+# Optuna Optimization Functions
+# ==============================================================================
+
+def optuna_optimization(config: Dict, processor, train_dataset, val_dataset, test_dataset, device: str, 
+                        verbose: bool = True) -> Dict:
+    """
+    Perform hyperparameter optimization using Optuna.
+    
+    Args:
+        config: Configuration dictionary
+        processor: Data processor for normalization
+        train_dataset: Training dataset
+        val_dataset: Validation dataset
+        test_dataset: Test dataset
+        device: Device to use (cuda/cpu)
+        verbose: Whether to print progress information
+        
+    Returns:
+        Dictionary containing best parameters and optimization results
+    """
+    
+    if verbose:
+        print(f"\nStarting Optuna hyperparameter optimization...")
+        print(f"Number of trials: {config['TRAINING_CONFIG']['optuna_n_trials']}")
+    
+    # Create output directory for optuna results
+    optuna_output_dir = Path(config['OUTPUT_DIR']) / 'optuna'
+    optuna_output_dir.mkdir(parents=True, exist_ok=True)
+    
+    def objective(trial):
+        """Objective function for Optuna optimization."""
+        
+        # Sample hyperparameters from search space
+        search_space = config['OPTUNA_SEARCH_SPACE']
+        
+        # Sample categorical parameters
+        n_modes = trial.suggest_categorical('n_modes', search_space['n_modes_options'])
+        hidden_channels = trial.suggest_categorical('hidden_channels', search_space['hidden_channels_options'])
+        n_layers = trial.suggest_categorical('n_layers', search_space['n_layers_options'])
+        domain_padding = trial.suggest_categorical('domain_padding', search_space['domain_padding_options'])
+        train_batch_size = trial.suggest_categorical('train_batch_size', search_space['train_batch_size_options'])
+        
+        # Sample continuous parameters with log uniform distribution
+        l2_weight = trial.suggest_float('l2_weight', 
+                                       search_space['l2_weight_range'][0], 
+                                       search_space['l2_weight_range'][1], 
+                                       log=True)
+        initial_lr = trial.suggest_float('initial_lr', 
+                                        search_space['initial_lr_range'][0], 
+                                        search_space['initial_lr_range'][1], 
+                                        log=True)
+        
+        try:
+            # Create model with sampled parameters
+            model, train_loader, val_loader, test_loader, optimizer, scheduler, loss_fn = create_model(
+                config=config,
+                train_dataset=train_dataset,
+                val_dataset=val_dataset,
+                test_dataset=test_dataset,
+                device=device,
+                n_modes=n_modes,
+                hidden_channels=hidden_channels,
+                n_layers=n_layers,
+                domain_padding=domain_padding,
+                train_batch_size=train_batch_size,
+                initial_lr=initial_lr,
+                l2_weight=l2_weight
+            )
+            
+            # Train model and get best validation loss
+            trained_model = train_model(
+                config=config,
+                processor=processor,
+                device=device,
+                model=model,
+                train_loader=train_loader,
+                val_loader=val_loader,
+                test_loader=test_loader,
+                optimizer=optimizer,
+                scheduler=scheduler,
+                loss_fn=loss_fn,
+                verbose=False  # Reduce verbosity during optimization
+            )
+            
+            # Get best validation loss from training history
+            loss_history_path = Path(config['OUTPUT_DIR']) / 'final' / 'loss_history.pt'
+            if loss_history_path.exists():
+                loss_history = torch.load(loss_history_path, map_location='cpu', weights_only=False)
+                best_val_loss = min(loss_history['val_losses'])
+            else:
+                # Fallback: return a high loss value if history not found
+                best_val_loss = float('inf')
+            
+            return best_val_loss
+            
+        except Exception as e:
+            if verbose:
+                print(f"Trial {trial.number} failed with error: {e}")
+            # Return high loss for failed trials
+            return float('inf')
+    
+    # Create optuna study
+    study = optuna.create_study(
+        direction='minimize',
+        seed=config['TRAINING_CONFIG']['optuna_seed'],
+        sampler=optuna.samplers.TPESampler(
+            n_startup_trials=config['TRAINING_CONFIG']['optuna_n_startup_trials'],
+            seed=config['TRAINING_CONFIG']['optuna_seed']
+        )
+    )
+    
+    # Define callback for progress reporting
+    def progress_callback(study, trial):
+        if verbose:
+            current_best = study.best_value
+            print(f"Trial {trial.number:3d} completed. "
+                  f"Value: {trial.value:.6f}, Best: {current_best:.6f}")
+    
+    # Run optimization with progress callback
+    study.optimize(
+        objective, 
+        n_trials=config['TRAINING_CONFIG']['optuna_n_trials'],
+        callbacks=[progress_callback] if verbose else None
+    )
+    
+    # Get best parameters
+    best_params = study.best_params
+    best_value = study.best_value
+    
+    if verbose:
+        print(f"\nOptuna optimization completed!")
+        print(f"Best validation loss: {best_value:.6f}")
+        print(f"Best parameters:")
+        for param_name, param_value in best_params.items():
+            print(f"  {param_name}: {param_value}")
+    
+    # Save optimization results
+    optimization_results = {
+        'best_params': best_params,
+        'best_value': best_value,
+        'study': study,
+        'n_trials': len(study.trials),
+        'config': config
+    }
+    
+    # Save results to file
+    results_path = optuna_output_dir / 'optimization_results.pt'
+    torch.save(optimization_results, results_path)
+    
+    # Save study as pickle for later analysis
+    study_path = optuna_output_dir / 'optuna_study.pkl'
+    import pickle
+    with open(study_path, 'wb') as f:
+        pickle.dump(study, f)
+    
+    # Generate optimization visualizations
+    try:
+        # 1. Optimization history plot
+        fig, ax = plt.subplots(figsize=(10, 6))
+        trial_numbers = [trial.number for trial in study.trials]
+        trial_values = [trial.value if trial.value is not None else float('inf') for trial in study.trials]
+        
+        ax.plot(trial_numbers, trial_values, 'b-', alpha=0.7, label='Trial Values')
+        
+        # Add best value line
+        best_values = []
+        current_best = float('inf')
+        for value in trial_values:
+            if value < current_best:
+                current_best = value
+            best_values.append(current_best)
+        
+        ax.plot(trial_numbers, best_values, 'r-', linewidth=2, label='Best Value')
+        ax.set_xlabel('Trial Number')
+        ax.set_ylabel('Validation Loss')
+        ax.set_title('Optuna Optimization History')
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+        ax.set_yscale('log')
+        
+        history_plot_path = optuna_output_dir / 'optimization_history.png'
+        plt.savefig(history_plot_path, dpi=150, bbox_inches='tight')
+        plt.close(fig)
+        
+        # 2. Parameter importance plot (if available)
+        if len(study.trials) > 1:
+            try:
+                import optuna.visualization.matplotlib as optuna_vis
+                
+                fig, ax = plt.subplots(figsize=(10, 6))
+                optuna_vis.plot_param_importances(study, ax=ax)
+                importance_plot_path = optuna_output_dir / 'parameter_importance.png'
+                plt.savefig(importance_plot_path, dpi=150, bbox_inches='tight')
+                plt.close(fig)
+                
+                if verbose:
+                    print(f"Parameter importance plot saved to: {importance_plot_path}")
+            except Exception as e:
+                if verbose:
+                    print(f"Could not generate parameter importance plot: {e}")
+        
+        if verbose:
+            print(f"Optimization history plot saved to: {history_plot_path}")
+    
+    except Exception as e:
+        if verbose:
+            print(f"Could not generate optimization plots: {e}")
+    
+    if verbose:
+        print(f"Optimization results saved to: {results_path}")
+        print(f"Study object saved to: {study_path}")
+    
+    return optimization_results
 
 # ==============================================================================
 # Visualization Functions
@@ -644,7 +931,7 @@ def visualization(config: Dict, processor, device: str, trained_model, train_dat
     """
     
     if verbose:
-        print(f"\n📊 Generating visualization...")
+        print(f"\nGenerating visualization...")
     
     # Ensure the model is in evaluation mode
     trained_model.eval()
@@ -732,7 +1019,7 @@ def visualization(config: Dict, processor, device: str, trained_model, train_dat
     plt.savefig(output_path_inputs, dpi=config['VISUALIZATION']['DPI'], bbox_inches='tight')
     plt.close(fig_inputs)
     if verbose:
-        print(f"✅ Input visualization saved to: {output_path_inputs}")
+        print(f"Input visualization saved to: {output_path_inputs}")
 
     # --- Plot 2: GT, Prediction, and Error Grid ---
     t_indices = config['VISUALIZATION']['TIME_INDICES']
@@ -780,7 +1067,7 @@ def visualization(config: Dict, processor, device: str, trained_model, train_dat
     plt.close(fig)
     
     if verbose:
-        print(f"✅ Comparison grid saved to: {output_path_grid}")
+        print(f"Comparison grid saved to: {output_path_grid}")
 
 # ==============================================================================
 # Utility Functions
@@ -798,61 +1085,158 @@ def main() -> None:
     """
     try:
         # Step 1: Unified data preprocessing
-        print(f"\n🚀 FNO-Pure Training Pipeline Started")
+        print(f"\nFNO-Pure Training Pipeline Started")
         print(f"Training Mode: {CONFIG['TRAINING_CONFIG']['mode'].upper()}")
         
-        processor, train_dataset, test_dataset, device = preprocessing(
+        processor, train_dataset, val_dataset, test_dataset, device = preprocessing(
             config=CONFIG, 
             verbose=True
         )
         
-        # Step 2: Create model setup
-        print("\n🔥 Creating model setup...")
+        # Step 2: Execute based on training mode
+        training_mode = CONFIG['TRAINING_CONFIG']['mode']
         
-        # Get parameters from config for testing
-        params = CONFIG['SINGLE_PARAMS']
-        model, train_loader, test_loader, optimizer, scheduler, loss_fn = create_model(
-            config=CONFIG,
-            train_dataset=train_dataset,
-            test_dataset=test_dataset,
-            device=device,
-            n_modes=params['n_modes'],
-            hidden_channels=params['hidden_channels'],
-            n_layers=params['n_layers'],
-            domain_padding=params['domain_padding'],
-            train_batch_size=params['train_batch_size'],
-            initial_lr=params['initial_lr'],
-            l2_weight=params['l2_weight']
-        )
+        if training_mode == 'single':
+            # Single training mode - use predefined parameters
+            print("\nExecuting single training mode...")
+            
+            params = CONFIG['SINGLE_PARAMS']
+            model, train_loader, val_loader, test_loader, optimizer, scheduler, loss_fn = create_model(
+                config=CONFIG,
+                train_dataset=train_dataset,
+                val_dataset=val_dataset,
+                test_dataset=test_dataset,
+                device=device,
+                n_modes=params['n_modes'],
+                hidden_channels=params['hidden_channels'],
+                n_layers=params['n_layers'],
+                domain_padding=params['domain_padding'],
+                train_batch_size=params['train_batch_size'],
+                initial_lr=params['initial_lr'],
+                l2_weight=params['l2_weight']
+            )
+            
+            # Count trainable parameters
+            trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+            total_params = sum(p.numel() for p in model.parameters())
+            
+            print(f"   Model created - Device: {device}")
+            print(f"   Trainable parameters: {trainable_params:,}")
+            print(f"   Total parameters: {total_params:,}")
+            print(f"   Train batches: {len(train_loader)}, Val batches: {len(val_loader)}, Test batches: {len(test_loader)}")
+            print(f"   Optimizer: {type(optimizer).__name__}")
+            print(f"   Scheduler: {type(scheduler).__name__}")
+            print(f"   Loss function: {type(loss_fn).__name__}")
+            print(f"   Processor: {type(processor).__name__}")
+            
+            # Train the model
+            trained_model = train_model(
+                config=CONFIG,
+                processor=processor,
+                device=device,
+                model=model,
+                train_loader=train_loader,
+                val_loader=val_loader,
+                test_loader=test_loader,
+                optimizer=optimizer,
+                scheduler=scheduler,
+                loss_fn=loss_fn,
+                verbose=True
+            )
+            
+        elif training_mode == 'optuna':
+            # Optuna optimization mode
+            print("\nExecuting Optuna optimization mode...")
+            
+            # Run hyperparameter optimization
+            optimization_results = optuna_optimization(
+                config=CONFIG,
+                processor=processor,
+                train_dataset=train_dataset,
+                val_dataset=val_dataset,
+                test_dataset=test_dataset,
+                device=device,
+                verbose=True
+            )
+            
+            # Train final model with best parameters
+            print(f"\nTraining final model with best parameters...")
+            best_params = optimization_results['best_params']
+            
+            model, train_loader, val_loader, test_loader, optimizer, scheduler, loss_fn = create_model(
+                config=CONFIG,
+                train_dataset=train_dataset,
+                val_dataset=val_dataset,
+                test_dataset=test_dataset,
+                device=device,
+                n_modes=best_params['n_modes'],
+                hidden_channels=best_params['hidden_channels'],
+                n_layers=best_params['n_layers'],
+                domain_padding=best_params['domain_padding'],
+                train_batch_size=best_params['train_batch_size'],
+                initial_lr=best_params['initial_lr'],
+                l2_weight=best_params['l2_weight']
+            )
+            
+            # Count trainable parameters
+            trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+            total_params = sum(p.numel() for p in model.parameters())
+            
+            print(f"   Final model created - Device: {device}")
+            print(f"   Trainable parameters: {trainable_params:,}")
+            print(f"   Total parameters: {total_params:,}")
+            
+            # Train final model with best parameters
+            trained_model = train_model(
+                config=CONFIG,
+                processor=processor,
+                device=device,
+                model=model,
+                train_loader=train_loader,
+                val_loader=val_loader,
+                test_loader=test_loader,
+                optimizer=optimizer,
+                scheduler=scheduler,
+                loss_fn=loss_fn,
+                verbose=True
+            )
+            
+        elif training_mode == 'eval':
+            # Evaluation mode - load pretrained model
+            print("\nExecuting evaluation mode...")
+            
+            eval_model_path = CONFIG['TRAINING_CONFIG']['eval_model_path']
+            if not Path(eval_model_path).exists():
+                raise FileNotFoundError(f"Model file not found: {eval_model_path}")
+            
+            # Create model with single params for evaluation
+            params = CONFIG['SINGLE_PARAMS']
+            model, train_loader, val_loader, test_loader, optimizer, scheduler, loss_fn = create_model(
+                config=CONFIG,
+                train_dataset=train_dataset,
+                val_dataset=val_dataset,
+                test_dataset=test_dataset,
+                device=device,
+                n_modes=params['n_modes'],
+                hidden_channels=params['hidden_channels'],
+                n_layers=params['n_layers'],
+                domain_padding=params['domain_padding'],
+                train_batch_size=params['train_batch_size'],
+                initial_lr=params['initial_lr'],
+                l2_weight=params['l2_weight']
+            )
+            
+            # Load pretrained model
+            model.load_state_dict(torch.load(eval_model_path, map_location=device, weights_only=False))
+            print(f"   Loaded model from: {eval_model_path}")
+            
+            # Set as trained model for visualization
+            trained_model = model
+            
+        else:
+            raise ValueError(f"Unknown training mode: {training_mode}. Use 'single', 'optuna', or 'eval'.")
         
-        # Count trainable parameters
-        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-        total_params = sum(p.numel() for p in model.parameters())
-        
-        print(f"   ✅ Model created - Device: {device}")
-        print(f"   ✅ Trainable parameters: {trainable_params:,}")
-        print(f"   ✅ Total parameters: {total_params:,}")
-        print(f"   ✅ Train batches: {len(train_loader)}, Test batches: {len(test_loader)}")
-        print(f"   ✅ Optimizer: {type(optimizer).__name__}")
-        print(f"   ✅ Scheduler: {type(scheduler).__name__}")
-        print(f"   ✅ Loss function: {type(loss_fn).__name__}")
-        print(f"   ✅ Processor: {type(processor).__name__}")
-        
-        # Step 3: Train the model
-        trained_model = train_model(
-            config=CONFIG,
-            processor=processor,
-            device=device,
-            model=model,
-            train_loader=train_loader,
-            test_loader=test_loader,
-            optimizer=optimizer,
-            scheduler=scheduler,
-            loss_fn=loss_fn,
-            verbose=True
-        )
-        
-        # Step 4: Generate visualization
+        # Step 3: Generate visualization (for all modes)
         visualization(
             config=CONFIG,
             processor=processor,
@@ -863,10 +1247,10 @@ def main() -> None:
             verbose=True
         )
         
-        print("\n✅ Training pipeline completed successfully!")
+        print("\nTraining pipeline completed successfully!")
         
     except Exception as e:
-        print(f"\n❌ Error during training: {e}")
+        print(f"\nError during training: {e}")
         raise
 
 if __name__ == "__main__":

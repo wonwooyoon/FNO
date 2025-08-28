@@ -45,7 +45,8 @@ CONFIG = {
     'OUTPUT_DIR': './src/FNO/output_unet',
     'N_EPOCHS': 10000,  # Reduced for testing
     'EVAL_INTERVAL': 1,
-    'TEST_SIZE': 0.1,
+    'VAL_SIZE': 0.1,  # Validation set size
+    'TEST_SIZE': 0.1,  # Test set size
     'RANDOM_STATE': 42,
     'MODEL_CONFIG': {
         # Fixed model architecture settings (not optimized by Optuna)
@@ -143,7 +144,7 @@ def preprocessing(config: Dict, verbose: bool = True) -> Tuple:
     1. Load saved tensors (x, y, meta)
     2. Transform meta data to uniform channels and combine with input
     3. Create normalizers and fit them, form DefaultDataProcessor
-    4. Perform train/test split and create datasets
+    4. Perform train/val/test split and create datasets
     5. Return necessary objects for training
     
     Args:
@@ -151,11 +152,11 @@ def preprocessing(config: Dict, verbose: bool = True) -> Tuple:
         verbose: Whether to print progress information
         
     Returns:
-        Tuple containing (processor, train_dataset, test_dataset, device)
+        Tuple containing (processor, train_dataset, val_dataset, test_dataset, device)
     """
     
     if verbose:
-        print(f"\n📊 Starting unified data preprocessing...")
+        print(f"\nStarting unified data preprocessing...")
     
     # Determine device
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -250,32 +251,46 @@ def preprocessing(config: Dict, verbose: bool = True) -> Tuple:
         raise RuntimeError(f"Failed at Step 3 (normalizer creation): {e}")
     
     try:
-        # Step 4: Perform train/test split and create datasets
+        # Step 4: Perform train/val/test split and create datasets
         if verbose:
-            print("Step 4: Creating train/test datasets...")
+            print("Step 4: Creating train/val/test datasets...")
             
-        # Split using the already combined input tensor
-        train_combined, test_combined, train_out, test_out = train_test_split(
+        # First split: separate test set (final 10%)
+        train_temp_combined, test_combined, train_temp_out, test_out = train_test_split(
             combined_input, out_data,
             test_size=config['TEST_SIZE'], 
             random_state=config['RANDOM_STATE']
         )
         
+        # Second split: separate validation set from remaining data
+        # Val size relative to remaining data: 0.1 / (1 - 0.1) = ~0.111
+        val_size_relative = config['VAL_SIZE'] / (1 - config['TEST_SIZE'])
+        train_combined, val_combined, train_out, val_out = train_test_split(
+            train_temp_combined, train_temp_out,
+            test_size=val_size_relative,
+            random_state=config['RANDOM_STATE']
+        )
+        
         # Create datasets with already combined inputs
         train_dataset = CustomDatasetPure(train_combined, train_out)
+        val_dataset = CustomDatasetPure(val_combined, val_out)
         test_dataset = CustomDatasetPure(test_combined, test_out)
         
         if verbose:
-            print(f"   Train dataset size: {len(train_dataset)}, Test dataset size: {len(test_dataset)}")
+            print(f"   Train dataset size: {len(train_dataset)}")
+            print(f"   Validation dataset size: {len(val_dataset)}")
+            print(f"   Test dataset size: {len(test_dataset)}")
+            total_size = len(train_dataset) + len(val_dataset) + len(test_dataset)
+            print(f"   Split ratios: Train {len(train_dataset)/total_size:.1%}, Val {len(val_dataset)/total_size:.1%}, Test {len(test_dataset)/total_size:.1%}")
             
     except Exception as e:
         raise RuntimeError(f"Failed at Step 4 (dataset creation): {e}")
     
     if verbose:
-        print("✅ Data preprocessing completed successfully!")
+        print("Data preprocessing completed successfully!")
     
     # Step 5: Return necessary objects
-    return (processor, train_dataset, test_dataset, device)
+    return (processor, train_dataset, val_dataset, test_dataset, device)
 
 # ==============================================================================
 # Loss Function Options (Same as FNO version)
@@ -376,7 +391,7 @@ class CappedCosineAnnealingWarmRestarts(torch.optim.lr_scheduler._LRScheduler):
 # Model Building Functions (Modified for U-Net)
 # ==============================================================================
 
-def create_model(config: Dict, train_dataset, test_dataset, device: str, 
+def create_model(config: Dict, train_dataset, val_dataset, test_dataset, device: str, 
                 unet_depth: int, base_channels: int, kernel_size: int,
                 dropout_rate: float, train_batch_size: int, 
                 initial_lr: float, l2_weight: float):
@@ -387,6 +402,7 @@ def create_model(config: Dict, train_dataset, test_dataset, device: str,
     Args:
         config: Configuration dictionary
         train_dataset: Training dataset
+        val_dataset: Validation dataset
         test_dataset: Test dataset  
         device: Device to use (cuda/cpu)
         unet_depth: Depth of U-Net (number of encoder/decoder levels)
@@ -398,7 +414,7 @@ def create_model(config: Dict, train_dataset, test_dataset, device: str,
         l2_weight: L2 weight regularization
         
     Returns:
-        Tuple containing (model, train_loader, test_loader, optimizer, scheduler, loss_fn)
+        Tuple containing (model, train_loader, val_loader, test_loader, optimizer, scheduler, loss_fn)
     """
     
     # 1. Create DataLoaders
@@ -406,6 +422,14 @@ def create_model(config: Dict, train_dataset, test_dataset, device: str,
         train_dataset, 
         batch_size=train_batch_size, 
         shuffle=True, 
+        num_workers=0, 
+        pin_memory=False
+    )
+    
+    val_loader = DataLoader(
+        val_dataset, 
+        batch_size=train_batch_size, 
+        shuffle=False, 
         num_workers=0, 
         pin_memory=False
     )
@@ -469,13 +493,13 @@ def create_model(config: Dict, train_dataset, test_dataset, device: str,
     else:
         raise ValueError(f"Unknown scheduler type: {scheduler_type}. Use 'cosine' or 'step'.")
     
-    return (model, train_loader, test_loader, optimizer, scheduler, loss_fn)
+    return (model, train_loader, val_loader, test_loader, optimizer, scheduler, loss_fn)
 
 # ==============================================================================
 # Training Functions (Same as FNO version)
 # ==============================================================================
 
-def train_model(config: Dict, processor, device: str, model, train_loader, test_loader, 
+def train_model(config: Dict, processor, device: str, model, train_loader, val_loader, test_loader, 
                 optimizer, scheduler, loss_fn, verbose: bool = True):
     """
     Train the U-Net model with early stopping and loss tracking.
@@ -486,6 +510,7 @@ def train_model(config: Dict, processor, device: str, model, train_loader, test_
         device: Device to use (cuda/cpu)
         model: U-Net model to train
         train_loader: Training data loader
+        val_loader: Validation data loader
         test_loader: Test data loader
         optimizer: Optimizer
         scheduler: Learning rate scheduler
@@ -497,16 +522,16 @@ def train_model(config: Dict, processor, device: str, model, train_loader, test_
     """
     
     if verbose:
-        print(f"\n🔥 Starting model training for {config['N_EPOCHS']} epochs...")
+        print(f"\nStarting model training for {config['N_EPOCHS']} epochs...")
     
     # Training setup
-    best_test_loss = float('inf')
+    best_val_loss = float('inf')
     patience = 0
     early_stopping_patience = config['SCHEDULER_CONFIG']['early_stopping']
     
     # Track losses for each epoch
     train_losses = []
-    test_losses = []
+    val_losses = []
     
     # Create output directory for saving best model
     output_dir = Path(config['OUTPUT_DIR']) / 'final'
@@ -538,13 +563,13 @@ def train_model(config: Dict, processor, device: str, model, train_loader, test_
         train_loss = total_train_loss / train_count
         train_losses.append(train_loss)
         
-        # Evaluation phase - compute test loss every epoch
+        # Validation phase - compute validation loss every epoch
         model.eval()
-        total_test_loss = 0
-        test_count = 0
+        total_val_loss = 0
+        val_count = 0
         
         with torch.no_grad():
-            for batch in test_loader:
+            for batch in val_loader:
                 x = batch['x'].to(device)
                 y = batch['y'].to(device)
                 
@@ -553,23 +578,23 @@ def train_model(config: Dict, processor, device: str, model, train_loader, test_
                 
                 pred = model(x)
                 loss = loss_fn(pred, y)
-                total_test_loss += loss.item()
-                test_count += 1
+                total_val_loss += loss.item()
+                val_count += 1
         
-        test_loss = total_test_loss / test_count
-        test_losses.append(test_loss)
+        val_loss = total_val_loss / val_count
+        val_losses.append(val_loss)
         
         # Print losses for every epoch
         if verbose:
-            print(f"Epoch {epoch:3d}: Train Loss={train_loss:.6f}, Test Loss={test_loss:.6f}")
+            print(f"Epoch {epoch:3d}: Train Loss={train_loss:.6f}, Val Loss={val_loss:.6f}")
         
-        # Save best model
-        if test_loss < best_test_loss:
-            best_test_loss = test_loss
+        # Save best model based on validation loss
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
             torch.save(model.state_dict(), output_dir / 'best_model_state_dict.pt')
             patience = 0
             if verbose:
-                print(f"    ★ New best model saved! Test loss: {test_loss:.6f}")
+                print(f"    New best model saved! Val loss: {val_loss:.6f}")
         else:
             patience += 1
         
@@ -582,22 +607,63 @@ def train_model(config: Dict, processor, device: str, model, train_loader, test_
         # Update learning rate
         scheduler.step()
     
+    # Load best model for final test evaluation
+    model.load_state_dict(torch.load(output_dir / 'best_model_state_dict.pt', map_location=device, weights_only=False))
+    
+    # Final test evaluation
+    model.eval()
+    total_test_loss = 0
+    total_test_mse_loss = 0  # For MSE calculation when using LpLoss
+    test_count = 0
+    
+    # Create MSE loss function for additional metric when using LpLoss
+    mse_loss_fn = torch.nn.MSELoss() if isinstance(loss_fn, LpLoss) else None
+    
+    with torch.no_grad():
+        for batch in test_loader:
+            x = batch['x'].to(device)
+            y = batch['y'].to(device)
+            
+            x = processor.in_normalizer.transform(x)
+            y = processor.out_normalizer.transform(y)
+            
+            pred = model(x)
+            loss = loss_fn(pred, y)
+            total_test_loss += loss.item()
+            
+            # Calculate MSE loss additionally when using LpLoss
+            if mse_loss_fn is not None:
+                mse_loss = mse_loss_fn(pred, y)
+                total_test_mse_loss += mse_loss.item()
+            
+            test_count += 1
+    
+    final_test_loss = total_test_loss / test_count
+    final_test_mse_loss = total_test_mse_loss / test_count if mse_loss_fn is not None else None
+    
     # Save loss history
     loss_history = {
         'train_losses': train_losses,
-        'test_losses': test_losses,
+        'val_losses': val_losses,
+        'final_test_loss': final_test_loss,
         'epochs': list(range(len(train_losses)))
     }
+    
+    # Add MSE loss to history if calculated
+    if final_test_mse_loss is not None:
+        loss_history['final_test_mse_loss'] = final_test_mse_loss
+    
     torch.save(loss_history, output_dir / 'loss_history.pt')
     
     # Plot loss curves
     plt.figure(figsize=(10, 6))
     epochs_range = range(len(train_losses))
     plt.plot(epochs_range, train_losses, 'b-', label='Train Loss', linewidth=2)
-    plt.plot(epochs_range, test_losses, 'r-', label='Test Loss', linewidth=2)
+    plt.plot(epochs_range, val_losses, 'r-', label='Validation Loss', linewidth=2)
+    plt.axhline(y=final_test_loss, color='g', linestyle='--', label=f'Final Test Loss: {final_test_loss:.6f}', linewidth=2)
     plt.xlabel('Epoch')
     plt.ylabel('Loss')
-    plt.title('U-Net Training and Test Loss Over Time')
+    plt.title('U-Net Training and Validation Loss Over Time')
     plt.legend()
     plt.grid(True, alpha=0.3)
     plt.yscale('log')  # Use log scale for better visualization
@@ -607,12 +673,21 @@ def train_model(config: Dict, processor, device: str, model, train_loader, test_
     plt.close()
     
     if verbose:
-        print(f"\n📊 Training completed!")
-        print(f"📈 Final Train Loss: {train_losses[-1]:.6f}")
-        print(f"📉 Final Test Loss: {test_losses[-1]:.6f}")
-        print(f"🏆 Best Test Loss: {best_test_loss:.6f}")
-        print(f"💾 Loss history saved to: {output_dir / 'loss_history.pt'}")
-        print(f"📈 Loss curves saved to: {loss_plot_path}")
+        print(f"\nTraining completed!")
+        print(f"Final Train Loss: {train_losses[-1]:.6f}")
+        print(f"Final Validation Loss: {val_losses[-1]:.6f}")
+        
+        # Print test loss information
+        loss_type = config['LOSS_CONFIG']['loss_type']
+        if loss_type == 'l2' and final_test_mse_loss is not None:
+            print(f"Final Test Loss (L{config['LOSS_CONFIG']['l2_p']}): {final_test_loss:.6f}")
+            print(f"Final Test Loss (MSE): {final_test_mse_loss:.6f}")
+        else:
+            print(f"Final Test Loss: {final_test_loss:.6f}")
+            
+        print(f"Best Validation Loss: {best_val_loss:.6f}")
+        print(f"Loss history saved to: {output_dir / 'loss_history.pt'}")
+        print(f"Loss curves saved to: {loss_plot_path}")
     
     # Load and return the best trained model
     model.load_state_dict(torch.load(output_dir / 'best_model_state_dict.pt', map_location=device, weights_only=False))
@@ -641,7 +716,7 @@ def visualization(config: Dict, processor, device: str, trained_model, train_dat
     """
     
     if verbose:
-        print(f"\n📊 Generating visualization...")
+        print(f"\nGenerating visualization...")
     
     # Ensure the model is in evaluation mode
     trained_model.eval()
@@ -729,7 +804,7 @@ def visualization(config: Dict, processor, device: str, trained_model, train_dat
     plt.savefig(output_path_inputs, dpi=config['VISUALIZATION']['DPI'], bbox_inches='tight')
     plt.close(fig_inputs)
     if verbose:
-        print(f"✅ Input visualization saved to: {output_path_inputs}")
+        print(f"Input visualization saved to: {output_path_inputs}")
 
     # --- Plot 2: GT, Prediction, and Error Grid ---
     t_indices = config['VISUALIZATION']['TIME_INDICES']
@@ -777,7 +852,7 @@ def visualization(config: Dict, processor, device: str, trained_model, train_dat
     plt.close(fig)
     
     if verbose:
-        print(f"✅ Comparison grid saved to: {output_path_grid}")
+        print(f"Comparison grid saved to: {output_path_grid}")
 
 # ==============================================================================
 # Utility Functions
@@ -795,22 +870,23 @@ def main() -> None:
     """
     try:
         # Step 1: Unified data preprocessing
-        print(f"\n🚀 U-Net-Pure Training Pipeline Started")
+        print(f"\nU-Net-Pure Training Pipeline Started")
         print(f"Training Mode: {CONFIG['TRAINING_CONFIG']['mode'].upper()}")
         
-        processor, train_dataset, test_dataset, device = preprocessing(
+        processor, train_dataset, val_dataset, test_dataset, device = preprocessing(
             config=CONFIG, 
             verbose=True
         )
         
         # Step 2: Create model setup
-        print("\n🔥 Creating U-Net model setup...")
+        print("\nCreating U-Net model setup...")
         
         # Get parameters from config for testing
         params = CONFIG['SINGLE_PARAMS']
-        model, train_loader, test_loader, optimizer, scheduler, loss_fn = create_model(
+        model, train_loader, val_loader, test_loader, optimizer, scheduler, loss_fn = create_model(
             config=CONFIG,
             train_dataset=train_dataset,
+            val_dataset=val_dataset,
             test_dataset=test_dataset,
             device=device,
             unet_depth=params['unet_depth'],
@@ -826,15 +902,15 @@ def main() -> None:
         trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
         total_params = sum(p.numel() for p in model.parameters())
         
-        print(f"   ✅ U-Net Model created - Device: {device}")
-        print(f"   ✅ Architecture: {model.get_architecture_info()}")
-        print(f"   ✅ Trainable parameters: {trainable_params:,}")
-        print(f"   ✅ Total parameters: {total_params:,}")
-        print(f"   ✅ Train batches: {len(train_loader)}, Test batches: {len(test_loader)}")
-        print(f"   ✅ Optimizer: {type(optimizer).__name__}")
-        print(f"   ✅ Scheduler: {type(scheduler).__name__}")
-        print(f"   ✅ Loss function: {type(loss_fn).__name__}")
-        print(f"   ✅ Processor: {type(processor).__name__}")
+        print(f"   U-Net Model created - Device: {device}")
+        print(f"   Architecture: {model.get_architecture_info()}")
+        print(f"   Trainable parameters: {trainable_params:,}")
+        print(f"   Total parameters: {total_params:,}")
+        print(f"   Train batches: {len(train_loader)}, Val batches: {len(val_loader)}, Test batches: {len(test_loader)}")
+        print(f"   Optimizer: {type(optimizer).__name__}")
+        print(f"   Scheduler: {type(scheduler).__name__}")
+        print(f"   Loss function: {type(loss_fn).__name__}")
+        print(f"   Processor: {type(processor).__name__}")
         
         # Step 3: Train the model
         trained_model = train_model(
@@ -843,6 +919,7 @@ def main() -> None:
             device=device,
             model=model,
             train_loader=train_loader,
+            val_loader=val_loader,
             test_loader=test_loader,
             optimizer=optimizer,
             scheduler=scheduler,
@@ -861,10 +938,10 @@ def main() -> None:
             verbose=True
         )
         
-        print("\n✅ U-Net training pipeline completed successfully!")
+        print("\nU-Net training pipeline completed successfully!")
         
     except Exception as e:
-        print(f"\n❌ Error during training: {e}")
+        print(f"\nError during training: {e}")
         raise
 
 if __name__ == "__main__":
