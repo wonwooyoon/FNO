@@ -78,14 +78,14 @@ CONFIG = {
     },
     'TRAINING_CONFIG': {
         'mode': 'single',  # Options: 'single', 'optuna', 'eval'
-        'optuna_n_trials': 10,
+        'optuna_n_trials': 50,
         'optuna_seed': 42,
-        'optuna_n_startup_trials': 2,
+        'optuna_n_startup_trials': 5,
         'eval_model_path': './src/FNO/output_unet/final/best_model_state_dict.pt'
     },
     'OPTUNA_SEARCH_SPACE': {
         'unet_depth_options': [2, 3, 4],                      # Variable U-Net depth (limited by temporal dimension)
-        'base_channels_options': [16, 24, 32, 48],            # Base channel options
+        'base_channels_range': [16, 48],                      # [min, max] for suggest_int
         'kernel_size_options': [1, 3, 5],                     # Kernel size options (padding auto-calculated)
         'dropout_rate_range': [0.0, 0.3],                     # Dropout range
         'train_batch_size_options': [16, 32, 64],             # Batch size options
@@ -607,13 +607,65 @@ def train_model(config: Dict, processor, device: str, model, train_loader, val_l
         # Update learning rate
         scheduler.step()
     
-    # Load best model for final test evaluation
-    model.load_state_dict(torch.load(output_dir / 'best_model_state_dict.pt', map_location=device, weights_only=False))
+    # Save loss history
+    loss_history = {
+        'train_losses': train_losses,
+        'val_losses': val_losses,
+        'epochs': list(range(len(train_losses)))
+    }
+    torch.save(loss_history, output_dir / 'loss_history.pt')
     
-    # Final test evaluation
+    # Plot training curves
+    plt.figure(figsize=(10, 6))
+    epochs_range = range(len(train_losses))
+    plt.plot(epochs_range, train_losses, 'b-', label='Train Loss', linewidth=2)
+    plt.plot(epochs_range, val_losses, 'r-', label='Validation Loss', linewidth=2)
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.title('U-Net Training and Validation Loss Over Time')
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.yscale('log')
+    
+    loss_plot_path = output_dir / 'loss_curves.png'
+    plt.savefig(loss_plot_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    
+    if verbose:
+        print(f"\nTraining completed!")
+        print(f"Best Validation Loss: {best_val_loss:.6f}")
+        print(f"Loss history saved to: {output_dir / 'loss_history.pt'}")
+        print(f"Loss curves saved to: {loss_plot_path}")
+    
+    # Load and return best model
+    model.load_state_dict(torch.load(output_dir / 'best_model_state_dict.pt', map_location=device, weights_only=False))
+    return model
+
+
+def model_evaluation(config: Dict, processor, device: str, model, test_loader, loss_fn, verbose: bool = True):
+    """
+    Evaluate the trained U-Net model on test set and print detailed results.
+    
+    Args:
+        config: Configuration dictionary
+        processor: Data processor for normalization
+        device: Device to use (cuda/cpu)
+        model: Trained model to evaluate
+        test_loader: Test data loader
+        loss_fn: Loss function
+        verbose: Whether to print evaluation results
+        
+    Returns:
+        Dictionary containing evaluation results
+    """
+    
+    if verbose:
+        print(f"\nEvaluating model on test set...")
+    
+    # Test evaluation
     model.eval()
     total_test_loss = 0
-    total_test_mse_loss = 0  # For MSE calculation when using LpLoss
+    total_test_mse_loss = 0
     test_count = 0
     
     # Create MSE loss function for additional metric when using LpLoss
@@ -641,58 +693,248 @@ def train_model(config: Dict, processor, device: str, model, train_loader, val_l
     final_test_loss = total_test_loss / test_count
     final_test_mse_loss = total_test_mse_loss / test_count if mse_loss_fn is not None else None
     
-    # Save loss history
-    loss_history = {
-        'train_losses': train_losses,
-        'val_losses': val_losses,
-        'final_test_loss': final_test_loss,
-        'epochs': list(range(len(train_losses)))
+    # Create evaluation results
+    eval_results = {
+        'test_loss': final_test_loss,
+        'test_mse_loss': final_test_mse_loss if final_test_mse_loss is not None else None
     }
     
-    # Add MSE loss to history if calculated
-    if final_test_mse_loss is not None:
-        loss_history['final_test_mse_loss'] = final_test_mse_loss
-    
-    torch.save(loss_history, output_dir / 'loss_history.pt')
-    
-    # Plot loss curves
-    plt.figure(figsize=(10, 6))
-    epochs_range = range(len(train_losses))
-    plt.plot(epochs_range, train_losses, 'b-', label='Train Loss', linewidth=2)
-    plt.plot(epochs_range, val_losses, 'r-', label='Validation Loss', linewidth=2)
-    plt.axhline(y=final_test_loss, color='g', linestyle='--', label=f'Final Test Loss: {final_test_loss:.6f}', linewidth=2)
-    plt.xlabel('Epoch')
-    plt.ylabel('Loss')
-    plt.title('U-Net Training and Validation Loss Over Time')
-    plt.legend()
-    plt.grid(True, alpha=0.3)
-    plt.yscale('log')  # Use log scale for better visualization
-    
-    loss_plot_path = output_dir / 'loss_curves.png'
-    plt.savefig(loss_plot_path, dpi=150, bbox_inches='tight')
-    plt.close()
+    # Save evaluation results
+    output_dir = Path(config['OUTPUT_DIR']) / 'final'
+    eval_results_path = output_dir / 'evaluation_results.pt'
+    torch.save(eval_results, eval_results_path)
     
     if verbose:
-        print(f"\nTraining completed!")
-        print(f"Final Train Loss: {train_losses[-1]:.6f}")
-        print(f"Final Validation Loss: {val_losses[-1]:.6f}")
-        
-        # Print test loss information
+        print(f"Model Evaluation Results:")
         loss_type = config['LOSS_CONFIG']['loss_type']
         if loss_type == 'l2' and final_test_mse_loss is not None:
-            print(f"Final Test Loss (L{config['LOSS_CONFIG']['l2_p']}): {final_test_loss:.6f}")
-            print(f"Final Test Loss (MSE): {final_test_mse_loss:.6f}")
+            print(f"  Test Loss (L{config['LOSS_CONFIG']['l2_p']}): {final_test_loss:.6f}")
+            print(f"  Test Loss (MSE): {final_test_mse_loss:.6f}")
         else:
-            print(f"Final Test Loss: {final_test_loss:.6f}")
+            print(f"  Test Loss: {final_test_loss:.6f}")
+        print(f"Evaluation results saved to: {eval_results_path}")
+    
+    return eval_results
+
+# ==============================================================================
+# Optuna Optimization Functions
+# ==============================================================================
+
+def optuna_optimization(config: Dict, processor, train_dataset, val_dataset, test_dataset, device: str, 
+                        verbose: bool = True) -> Dict:
+    """
+    Perform hyperparameter optimization using Optuna for U-Net.
+    
+    Args:
+        config: Configuration dictionary
+        processor: Data processor for normalization
+        train_dataset: Training dataset
+        val_dataset: Validation dataset
+        test_dataset: Test dataset
+        device: Device to use (cuda/cpu)
+        verbose: Whether to print progress information
+        
+    Returns:
+        Dictionary containing best parameters and optimization results
+    """
+    
+    if verbose:
+        print(f"\nStarting Optuna hyperparameter optimization for U-Net...")
+        print(f"Number of trials: {config['TRAINING_CONFIG']['optuna_n_trials']}")
+    
+    # Create output directory for optuna results
+    optuna_output_dir = Path(config['OUTPUT_DIR']) / 'optuna'
+    optuna_output_dir.mkdir(parents=True, exist_ok=True)
+    
+    def objective(trial):
+        """Objective function for Optuna optimization."""
+        
+        # Sample hyperparameters from search space
+        search_space = config['OPTUNA_SEARCH_SPACE']
+        
+        # Sample categorical parameters
+        unet_depth = trial.suggest_categorical('unet_depth', search_space['unet_depth_options'])
+        kernel_size = trial.suggest_categorical('kernel_size', search_space['kernel_size_options'])
+        train_batch_size = trial.suggest_categorical('train_batch_size', search_space['train_batch_size_options'])
+        
+        # Sample integer parameters with ranges
+        base_channels = trial.suggest_int('base_channels', 
+                                         search_space['base_channels_range'][0], 
+                                         search_space['base_channels_range'][1])
+        
+        # Sample continuous parameters
+        dropout_rate = trial.suggest_float('dropout_rate', 
+                                          search_space['dropout_rate_range'][0], 
+                                          search_space['dropout_rate_range'][1])
+        l2_weight = trial.suggest_float('l2_weight', 
+                                       search_space['l2_weight_range'][0], 
+                                       search_space['l2_weight_range'][1], 
+                                       log=True)
+        initial_lr = trial.suggest_float('initial_lr', 
+                                        search_space['initial_lr_range'][0], 
+                                        search_space['initial_lr_range'][1], 
+                                        log=True)
+        
+        try:
+            # Create model with sampled parameters
+            model, train_loader, val_loader, test_loader, optimizer, scheduler, loss_fn = create_model(
+                config=config,
+                train_dataset=train_dataset,
+                val_dataset=val_dataset,
+                test_dataset=test_dataset,
+                device=device,
+                unet_depth=unet_depth,
+                base_channels=base_channels,
+                kernel_size=kernel_size,
+                dropout_rate=dropout_rate,
+                train_batch_size=train_batch_size,
+                initial_lr=initial_lr,
+                l2_weight=l2_weight
+            )
             
-        print(f"Best Validation Loss: {best_val_loss:.6f}")
-        print(f"Loss history saved to: {output_dir / 'loss_history.pt'}")
-        print(f"Loss curves saved to: {loss_plot_path}")
+            # Train model and get best validation loss
+            trained_model = train_model(
+                config=config,
+                processor=processor,
+                device=device,
+                model=model,
+                train_loader=train_loader,
+                val_loader=val_loader,
+                test_loader=test_loader,
+                optimizer=optimizer,
+                scheduler=scheduler,
+                loss_fn=loss_fn,
+                verbose=False  # Reduce verbosity during optimization
+            )
+            
+            # Get best validation loss from training history
+            loss_history_path = Path(config['OUTPUT_DIR']) / 'final' / 'loss_history.pt'
+            if loss_history_path.exists():
+                loss_history = torch.load(loss_history_path, map_location='cpu', weights_only=False)
+                best_val_loss = min(loss_history['val_losses'])
+            else:
+                # Fallback: return a high loss value if history not found
+                best_val_loss = float('inf')
+            
+            return best_val_loss
+            
+        except Exception as e:
+            if verbose:
+                print(f"Trial {trial.number} failed with error: {e}")
+            # Return high loss for failed trials
+            return float('inf')
     
-    # Load and return the best trained model
-    model.load_state_dict(torch.load(output_dir / 'best_model_state_dict.pt', map_location=device, weights_only=False))
+    # Create optuna study
+    study = optuna.create_study(
+        direction='minimize',
+        sampler=optuna.samplers.TPESampler(
+            n_startup_trials=config['TRAINING_CONFIG']['optuna_n_startup_trials'],
+            seed=config['TRAINING_CONFIG']['optuna_seed']
+        )
+    )
     
-    return model
+    # Define callback for progress reporting
+    def progress_callback(study, trial):
+        if verbose:
+            current_best = study.best_value
+            print(f"Trial {trial.number:3d} completed. "
+                  f"Value: {trial.value:.6f}, Best: {current_best:.6f}")
+    
+    # Run optimization with progress callback
+    study.optimize(
+        objective, 
+        n_trials=config['TRAINING_CONFIG']['optuna_n_trials'],
+        callbacks=[progress_callback] if verbose else None
+    )
+    
+    # Get best parameters
+    best_params = study.best_params
+    best_value = study.best_value
+    
+    if verbose:
+        print(f"\nOptuna optimization completed!")
+        print(f"Best validation loss: {best_value:.6f}")
+        print(f"Best parameters:")
+        for param_name, param_value in best_params.items():
+            print(f"  {param_name}: {param_value}")
+    
+    # Save optimization results
+    optimization_results = {
+        'best_params': best_params,
+        'best_value': best_value,
+        'study': study,
+        'n_trials': len(study.trials),
+        'config': config
+    }
+    
+    # Save results to file
+    results_path = optuna_output_dir / 'optimization_results.pt'
+    torch.save(optimization_results, results_path)
+    
+    # Save study as pickle for later analysis
+    study_path = optuna_output_dir / 'optuna_study.pkl'
+    import pickle
+    with open(study_path, 'wb') as f:
+        pickle.dump(study, f)
+    
+    # Generate optimization visualizations
+    try:
+        # 1. Optimization history plot
+        fig, ax = plt.subplots(figsize=(10, 6))
+        trial_numbers = [trial.number for trial in study.trials]
+        trial_values = [trial.value if trial.value is not None else float('inf') for trial in study.trials]
+        
+        ax.plot(trial_numbers, trial_values, 'b-', alpha=0.7, label='Trial Values')
+        
+        # Add best value line
+        best_values = []
+        current_best = float('inf')
+        for value in trial_values:
+            if value < current_best:
+                current_best = value
+            best_values.append(current_best)
+        
+        ax.plot(trial_numbers, best_values, 'r-', linewidth=2, label='Best Value')
+        ax.set_xlabel('Trial Number')
+        ax.set_ylabel('Validation Loss')
+        ax.set_title('U-Net Optuna Optimization History')
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+        ax.set_yscale('log')
+        
+        history_plot_path = optuna_output_dir / 'optimization_history.png'
+        plt.savefig(history_plot_path, dpi=150, bbox_inches='tight')
+        plt.close(fig)
+        
+        # 2. Parameter importance plot (if available)
+        if len(study.trials) > 1:
+            try:
+                import optuna.visualization.matplotlib as optuna_vis
+                
+                fig, ax = plt.subplots(figsize=(10, 6))
+                optuna_vis.plot_param_importances(study, ax=ax)
+                importance_plot_path = optuna_output_dir / 'parameter_importance.png'
+                plt.savefig(importance_plot_path, dpi=150, bbox_inches='tight')
+                plt.close(fig)
+                
+                if verbose:
+                    print(f"Parameter importance plot saved to: {importance_plot_path}")
+            except Exception as e:
+                if verbose:
+                    print(f"Could not generate parameter importance plot: {e}")
+        
+        if verbose:
+            print(f"Optimization history plot saved to: {history_plot_path}")
+    
+    except Exception as e:
+        if verbose:
+            print(f"Could not generate optimization plots: {e}")
+    
+    if verbose:
+        print(f"Optimization results saved to: {results_path}")
+        print(f"Study object saved to: {study_path}")
+    
+    return optimization_results
 
 # ==============================================================================
 # Visualization Functions (Same as FNO version with U-Net naming)
@@ -878,56 +1120,185 @@ def main() -> None:
             verbose=True
         )
         
-        # Step 2: Create model setup
-        print("\nCreating U-Net model setup...")
+        # Step 2: Execute based on training mode
+        training_mode = CONFIG['TRAINING_CONFIG']['mode']
         
-        # Get parameters from config for testing
-        params = CONFIG['SINGLE_PARAMS']
-        model, train_loader, val_loader, test_loader, optimizer, scheduler, loss_fn = create_model(
-            config=CONFIG,
-            train_dataset=train_dataset,
-            val_dataset=val_dataset,
-            test_dataset=test_dataset,
-            device=device,
-            unet_depth=params['unet_depth'],
-            base_channels=params['base_channels'],
-            kernel_size=params['kernel_size'],
-            dropout_rate=params['dropout_rate'],
-            train_batch_size=params['train_batch_size'],
-            initial_lr=params['initial_lr'],
-            l2_weight=params['l2_weight']
-        )
+        if training_mode == 'single':
+            # Single training mode - use predefined parameters
+            print("\nExecuting single training mode...")
+            
+            params = CONFIG['SINGLE_PARAMS']
+            model, train_loader, val_loader, test_loader, optimizer, scheduler, loss_fn = create_model(
+                config=CONFIG,
+                train_dataset=train_dataset,
+                val_dataset=val_dataset,
+                test_dataset=test_dataset,
+                device=device,
+                unet_depth=params['unet_depth'],
+                base_channels=params['base_channels'],
+                kernel_size=params['kernel_size'],
+                dropout_rate=params['dropout_rate'],
+                train_batch_size=params['train_batch_size'],
+                initial_lr=params['initial_lr'],
+                l2_weight=params['l2_weight']
+            )
+            
+            # Count trainable parameters
+            trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+            total_params = sum(p.numel() for p in model.parameters())
+            
+            print(f"   U-Net Model created - Device: {device}")
+            print(f"   Architecture: {model.get_architecture_info()}")
+            print(f"   Trainable parameters: {trainable_params:,}")
+            print(f"   Total parameters: {total_params:,}")
+            print(f"   Train batches: {len(train_loader)}, Val batches: {len(val_loader)}, Test batches: {len(test_loader)}")
+            print(f"   Optimizer: {type(optimizer).__name__}")
+            print(f"   Scheduler: {type(scheduler).__name__}")
+            print(f"   Loss function: {type(loss_fn).__name__}")
+            print(f"   Processor: {type(processor).__name__}")
+            
+            # Train the model
+            trained_model = train_model(
+                config=CONFIG,
+                processor=processor,
+                device=device,
+                model=model,
+                train_loader=train_loader,
+                val_loader=val_loader,
+                test_loader=test_loader,
+                optimizer=optimizer,
+                scheduler=scheduler,
+                loss_fn=loss_fn,
+                verbose=True
+            )
+            
+            # Evaluate the model
+            model_evaluation(
+                config=CONFIG,
+                processor=processor,
+                device=device,
+                model=trained_model,
+                test_loader=test_loader,
+                loss_fn=loss_fn,
+                verbose=True
+            )
+            
+        elif training_mode == 'optuna':
+            # Optuna optimization mode
+            print("\nExecuting Optuna optimization mode...")
+            
+            # Run hyperparameter optimization
+            optimization_results = optuna_optimization(
+                config=CONFIG,
+                processor=processor,
+                train_dataset=train_dataset,
+                val_dataset=val_dataset,
+                test_dataset=test_dataset,
+                device=device,
+                verbose=True
+            )
+            
+            # Train final model with best parameters
+            print(f"\nTraining final model with best parameters...")
+            best_params = optimization_results['best_params']
+            
+            model, train_loader, val_loader, test_loader, optimizer, scheduler, loss_fn = create_model(
+                config=CONFIG,
+                train_dataset=train_dataset,
+                val_dataset=val_dataset,
+                test_dataset=test_dataset,
+                device=device,
+                unet_depth=best_params['unet_depth'],
+                base_channels=best_params['base_channels'],
+                kernel_size=best_params['kernel_size'],
+                dropout_rate=best_params['dropout_rate'],
+                train_batch_size=best_params['train_batch_size'],
+                initial_lr=best_params['initial_lr'],
+                l2_weight=best_params['l2_weight']
+            )
+            
+            # Count trainable parameters
+            trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+            total_params = sum(p.numel() for p in model.parameters())
+            
+            print(f"   Final U-Net model created - Device: {device}")
+            print(f"   Architecture: {model.get_architecture_info()}")
+            print(f"   Trainable parameters: {trainable_params:,}")
+            print(f"   Total parameters: {total_params:,}")
+            
+            # Train final model with best parameters
+            trained_model = train_model(
+                config=CONFIG,
+                processor=processor,
+                device=device,
+                model=model,
+                train_loader=train_loader,
+                val_loader=val_loader,
+                test_loader=test_loader,
+                optimizer=optimizer,
+                scheduler=scheduler,
+                loss_fn=loss_fn,
+                verbose=True
+            )
+            
+            # Evaluate the final model
+            model_evaluation(
+                config=CONFIG,
+                processor=processor,
+                device=device,
+                model=trained_model,
+                test_loader=test_loader,
+                loss_fn=loss_fn,
+                verbose=True
+            )
+            
+        elif training_mode == 'eval':
+            # Evaluation mode - load pretrained model
+            print("\nExecuting evaluation mode...")
+            
+            eval_model_path = CONFIG['TRAINING_CONFIG']['eval_model_path']
+            if not Path(eval_model_path).exists():
+                raise FileNotFoundError(f"Model file not found: {eval_model_path}")
+            
+            # Create model with single params for evaluation
+            params = CONFIG['SINGLE_PARAMS']
+            model, train_loader, val_loader, test_loader, optimizer, scheduler, loss_fn = create_model(
+                config=CONFIG,
+                train_dataset=train_dataset,
+                val_dataset=val_dataset,
+                test_dataset=test_dataset,
+                device=device,
+                unet_depth=params['unet_depth'],
+                base_channels=params['base_channels'],
+                kernel_size=params['kernel_size'],
+                dropout_rate=params['dropout_rate'],
+                train_batch_size=params['train_batch_size'],
+                initial_lr=params['initial_lr'],
+                l2_weight=params['l2_weight']
+            )
+            
+            # Load pretrained model
+            model.load_state_dict(torch.load(eval_model_path, map_location=device, weights_only=False))
+            print(f"   Loaded model from: {eval_model_path}")
+            
+            # Set as trained model for visualization
+            trained_model = model
+            
+            # Evaluate the loaded model
+            model_evaluation(
+                config=CONFIG,
+                processor=processor,
+                device=device,
+                model=trained_model,
+                test_loader=test_loader,
+                loss_fn=loss_fn,
+                verbose=True
+            )
+            
+        else:
+            raise ValueError(f"Unknown training mode: {training_mode}. Use 'single', 'optuna', or 'eval'.")
         
-        # Count trainable parameters
-        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-        total_params = sum(p.numel() for p in model.parameters())
-        
-        print(f"   U-Net Model created - Device: {device}")
-        print(f"   Architecture: {model.get_architecture_info()}")
-        print(f"   Trainable parameters: {trainable_params:,}")
-        print(f"   Total parameters: {total_params:,}")
-        print(f"   Train batches: {len(train_loader)}, Val batches: {len(val_loader)}, Test batches: {len(test_loader)}")
-        print(f"   Optimizer: {type(optimizer).__name__}")
-        print(f"   Scheduler: {type(scheduler).__name__}")
-        print(f"   Loss function: {type(loss_fn).__name__}")
-        print(f"   Processor: {type(processor).__name__}")
-        
-        # Step 3: Train the model
-        trained_model = train_model(
-            config=CONFIG,
-            processor=processor,
-            device=device,
-            model=model,
-            train_loader=train_loader,
-            val_loader=val_loader,
-            test_loader=test_loader,
-            optimizer=optimizer,
-            scheduler=scheduler,
-            loss_fn=loss_fn,
-            verbose=True
-        )
-        
-        # Step 4: Generate visualization
+        # Step 3: Generate visualization (for all modes)
         visualization(
             config=CONFIG,
             processor=processor,

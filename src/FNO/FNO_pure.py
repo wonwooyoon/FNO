@@ -85,17 +85,17 @@ CONFIG = {
         'n_modes_options': [(24, 12, 4), (16, 8, 4), (12, 6, 4), (8, 4, 4), (24, 12, 2), (16, 8, 2), (12, 6, 2), (8, 4, 2)],
         'hidden_channels_range': [8, 24],  # [min, max] for suggest_int
         'n_layers_range': [2, 4],  # [min, max] for suggest_int
-        'domain_padding_options': [[0.125,0.25,0.4], [0.1,0.1,0.1]],
+        'domain_padding_options': [(0.1,0.1,0.1)],
         'train_batch_size_options': [16, 32, 64],
         'l2_weight_range': [1e-8, 1e-4],  # [min, max] for log uniform
         'initial_lr_range': [1e-4, 1e-2]  # [min, max] for log uniform
     },
     'SINGLE_PARAMS': {
-        "n_modes": (24, 12, 4), 
-        "hidden_channels": 24, 
-        "n_layers": 4, 
-        "domain_padding": [0.125,0.25,0.4], 
-        "train_batch_size": 64, 
+        "n_modes": (16, 8, 4), 
+        "hidden_channels": 8, 
+        "n_layers": 2, 
+        "domain_padding": (0.1,0.1,0.1), 
+        "train_batch_size": 32, 
         "l2_weight": 1e-5, 
         "initial_lr": 1e-2
     }
@@ -602,13 +602,65 @@ def train_model(config: Dict, processor, device: str, model, train_loader, val_l
         # Update learning rate
         scheduler.step()
     
-    # Load best model for final test evaluation
-    model.load_state_dict(torch.load(output_dir / 'best_model_state_dict.pt', map_location=device, weights_only=False))
+    # Save loss history
+    loss_history = {
+        'train_losses': train_losses,
+        'val_losses': val_losses,
+        'epochs': list(range(len(train_losses)))
+    }
+    torch.save(loss_history, output_dir / 'loss_history.pt')
     
-    # Final test evaluation
+    # Plot training curves
+    plt.figure(figsize=(10, 6))
+    epochs_range = range(len(train_losses))
+    plt.plot(epochs_range, train_losses, 'b-', label='Train Loss', linewidth=2)
+    plt.plot(epochs_range, val_losses, 'r-', label='Validation Loss', linewidth=2)
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.title('FNO Training and Validation Loss Over Time')
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.yscale('log')
+    
+    loss_plot_path = output_dir / 'loss_curves.png'
+    plt.savefig(loss_plot_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    
+    if verbose:
+        print(f"\nTraining completed!")
+        print(f"Best Validation Loss: {best_val_loss:.6f}")
+        print(f"Loss history saved to: {output_dir / 'loss_history.pt'}")
+        print(f"Loss curves saved to: {loss_plot_path}")
+    
+    # Load and return best model
+    model.load_state_dict(torch.load(output_dir / 'best_model_state_dict.pt', map_location=device, weights_only=False))
+    return model
+
+
+def model_evaluation(config: Dict, processor, device: str, model, test_loader, loss_fn, verbose: bool = True):
+    """
+    Evaluate the trained model on test set and print detailed results.
+    
+    Args:
+        config: Configuration dictionary
+        processor: Data processor for normalization
+        device: Device to use (cuda/cpu)
+        model: Trained model to evaluate
+        test_loader: Test data loader
+        loss_fn: Loss function
+        verbose: Whether to print evaluation results
+        
+    Returns:
+        Dictionary containing evaluation results
+    """
+    
+    if verbose:
+        print(f"\nEvaluating model on test set...")
+    
+    # Test evaluation
     model.eval()
     total_test_loss = 0
-    total_test_mse_loss = 0  # For MSE calculation when using LpLoss
+    total_test_mse_loss = 0
     test_count = 0
     
     # Create MSE loss function for additional metric when using LpLoss
@@ -636,55 +688,28 @@ def train_model(config: Dict, processor, device: str, model, train_loader, val_l
     final_test_loss = total_test_loss / test_count
     final_test_mse_loss = total_test_mse_loss / test_count if mse_loss_fn is not None else None
     
-    # Save loss history
-    loss_history = {
-        'train_losses': train_losses,
-        'val_losses': val_losses,
-        'final_test_loss': final_test_loss,
-        'epochs': list(range(len(train_losses)))
+    # Create evaluation results
+    eval_results = {
+        'test_loss': final_test_loss,
+        'test_mse_loss': final_test_mse_loss if final_test_mse_loss is not None else None
     }
     
-    # Add MSE loss to history if calculated
-    if final_test_mse_loss is not None:
-        loss_history['final_test_mse_loss'] = final_test_mse_loss
-    
-    torch.save(loss_history, output_dir / 'loss_history.pt')
-    
-    # Plot loss curves
-    plt.figure(figsize=(10, 6))
-    epochs_range = range(len(train_losses))
-    plt.plot(epochs_range, train_losses, 'b-', label='Train Loss', linewidth=2)
-    plt.plot(epochs_range, val_losses, 'r-', label='Validation Loss', linewidth=2)
-    plt.axhline(y=final_test_loss, color='g', linestyle='--', label=f'Final Test Loss: {final_test_loss:.6f}', linewidth=2)
-    plt.xlabel('Epoch')
-    plt.ylabel('Loss')
-    plt.title('FNO Training and Validation Loss Over Time')
-    plt.legend()
-    plt.grid(True, alpha=0.3)
-    plt.yscale('log')  # Use log scale for better visualization
-    
-    loss_plot_path = output_dir / 'loss_curves.png'
-    plt.savefig(loss_plot_path, dpi=150, bbox_inches='tight')
-    plt.close()
+    # Save evaluation results
+    output_dir = Path(config['OUTPUT_DIR']) / 'final'
+    eval_results_path = output_dir / 'evaluation_results.pt'
+    torch.save(eval_results, eval_results_path)
     
     if verbose:
-        print(f"\nTraining completed!")
-        print(f"Final Train Loss: {train_losses[-1]:.6f}")
-        print(f"Final Validation Loss: {val_losses[-1]:.6f}")
-        
-        # Print test loss information
+        print(f"Model Evaluation Results:")
         loss_type = config['LOSS_CONFIG']['loss_type']
         if loss_type == 'l2' and final_test_mse_loss is not None:
-            print(f"Final Test Loss (L{config['LOSS_CONFIG']['l2_p']}): {final_test_loss:.6f}")
-            print(f"Final Test Loss (MSE): {final_test_mse_loss:.6f}")
+            print(f"  Test Loss (L{config['LOSS_CONFIG']['l2_p']}): {final_test_loss:.6f}")
+            print(f"  Test Loss (MSE): {final_test_mse_loss:.6f}")
         else:
-            print(f"Final Test Loss: {final_test_loss:.6f}")
-            
-        print(f"Best Validation Loss: {best_val_loss:.6f}")
-        print(f"Loss history saved to: {output_dir / 'loss_history.pt'}")
-        print(f"Loss curves saved to: {loss_plot_path}")
+            print(f"  Test Loss: {final_test_loss:.6f}")
+        print(f"Evaluation results saved to: {eval_results_path}")
     
-    return model
+    return eval_results
 
 # ==============================================================================
 # Optuna Optimization Functions
@@ -797,7 +822,6 @@ def optuna_optimization(config: Dict, processor, train_dataset, val_dataset, tes
     # Create optuna study
     study = optuna.create_study(
         direction='minimize',
-        seed=config['TRAINING_CONFIG']['optuna_seed'],
         sampler=optuna.samplers.TPESampler(
             n_startup_trials=config['TRAINING_CONFIG']['optuna_n_startup_trials'],
             seed=config['TRAINING_CONFIG']['optuna_seed']
@@ -1150,6 +1174,17 @@ def main() -> None:
                 verbose=True
             )
             
+            # Evaluate the model
+            model_evaluation(
+                config=CONFIG,
+                processor=processor,
+                device=device,
+                model=trained_model,
+                test_loader=test_loader,
+                loss_fn=loss_fn,
+                verbose=True
+            )
+            
         elif training_mode == 'optuna':
             # Optuna optimization mode
             print("\nExecuting Optuna optimization mode...")
@@ -1207,6 +1242,17 @@ def main() -> None:
                 verbose=True
             )
             
+            # Evaluate the final model
+            model_evaluation(
+                config=CONFIG,
+                processor=processor,
+                device=device,
+                model=trained_model,
+                test_loader=test_loader,
+                loss_fn=loss_fn,
+                verbose=True
+            )
+            
         elif training_mode == 'eval':
             # Evaluation mode - load pretrained model
             print("\nExecuting evaluation mode...")
@@ -1238,6 +1284,17 @@ def main() -> None:
             
             # Set as trained model for visualization
             trained_model = model
+            
+            # Evaluate the loaded model
+            model_evaluation(
+                config=CONFIG,
+                processor=processor,
+                device=device,
+                model=trained_model,
+                test_loader=test_loader,
+                loss_fn=loss_fn,
+                verbose=True
+            )
             
         else:
             raise ValueError(f"Unknown training mode: {training_mode}. Use 'single', 'optuna', or 'eval'.")
