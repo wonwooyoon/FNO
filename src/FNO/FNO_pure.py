@@ -749,9 +749,13 @@ def optuna_optimization(config: Dict, processor, train_dataset, val_dataset, tes
         # Sample hyperparameters from search space
         search_space = config['OPTUNA_SEARCH_SPACE']
         
-        # Sample categorical parameters
-        n_modes = trial.suggest_categorical('n_modes', search_space['n_modes_options'])
-        domain_padding = trial.suggest_categorical('domain_padding', search_space['domain_padding_options'])
+        # Sample categorical parameters using indices to avoid tuple serialization issues
+        n_modes_idx = trial.suggest_categorical('n_modes_idx', list(range(len(search_space['n_modes_options']))))
+        n_modes = search_space['n_modes_options'][n_modes_idx]
+        
+        domain_padding_idx = trial.suggest_categorical('domain_padding_idx', list(range(len(search_space['domain_padding_options']))))
+        domain_padding = search_space['domain_padding_options'][domain_padding_idx]
+        
         train_batch_size = trial.suggest_categorical('train_batch_size', search_space['train_batch_size_options'])
         
         # Sample integer parameters with ranges
@@ -1257,16 +1261,21 @@ def main() -> None:
             print(f"\nTraining final model with best parameters...")
             best_params = optimization_results['best_params']
             
+            # Convert index-based parameters back to actual values
+            search_space = CONFIG['OPTUNA_SEARCH_SPACE']
+            n_modes = search_space['n_modes_options'][best_params['n_modes_idx']]
+            domain_padding = search_space['domain_padding_options'][best_params['domain_padding_idx']]
+            
             model, train_loader, val_loader, test_loader, optimizer, scheduler, loss_fn = create_model(
                 config=CONFIG,
                 train_dataset=train_dataset,
                 val_dataset=val_dataset,
                 test_dataset=test_dataset,
                 device=device,
-                n_modes=best_params['n_modes'],
+                n_modes=n_modes,
                 hidden_channels=best_params['hidden_channels'],
                 n_layers=best_params['n_layers'],
-                domain_padding=best_params['domain_padding'],
+                domain_padding=domain_padding,
                 train_batch_size=best_params['train_batch_size'],
                 initial_lr=best_params['initial_lr'],
                 l2_weight=best_params['l2_weight']
