@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Dict, List, Tuple, Any, Optional
 
 import numpy as np
+import pandas as pd
 import torch
 import torch.nn as nn
 import torch.nn
@@ -69,7 +70,8 @@ CONFIG = {
     'VISUALIZATION': {
         'SAMPLE_NUM': 8,
         'TIME_INDICES': (3, 7, 11, 15),
-        'DPI': 200
+        'DPI': 200,
+        'SAVEASCSV': False  # Save visualization data as CSV format
     },
     'LOSS_CONFIG': {
         'loss_type': 'l2',  # Options: 'l2', 'mse'
@@ -1095,6 +1097,57 @@ def visualization(config: Dict, processor, device: str, trained_model, train_dat
     
     if verbose:
         print(f"Comparison grid saved to: {output_path_grid}")
+    
+    # --- CSV Export Feature ---
+    if config['VISUALIZATION']['SAVEASCSV']:
+        if verbose:
+            print(f"Saving visualization data as CSV...")
+        
+        # Create coordinate grids
+        nx, ny = gt_sample.shape[:2]  # Data dimensions
+        x_coords = np.arange(nx)
+        y_coords = np.arange(ny)
+        X, Y = np.meshgrid(x_coords, y_coords, indexing='ij')
+        
+        # Flatten coordinate arrays
+        x_flat = X.flatten()
+        y_flat = Y.flatten()
+        
+        # Initialize CSV data dictionary with coordinates
+        csv_data = {
+            'x_coord': x_flat,
+            'y_coord': y_flat
+        }
+        
+        # Process each time index
+        t_indices = config['VISUALIZATION']['TIME_INDICES']
+        sample_num = config['VISUALIZATION']['SAMPLE_NUM']
+        
+        for t_idx in t_indices:
+            # Extract 2D slices for this time index
+            gt_slice = gt_sample[:, :, t_idx]          # (nx, ny)
+            pred_slice = pred_sample[:, :, t_idx]      # (nx, ny)
+            error_slice = error_sample[:, :, t_idx]    # (nx, ny)
+            
+            # Flatten the 2D data to 1D arrays
+            gt_flat = gt_slice.flatten()
+            pred_flat = pred_slice.flatten()
+            error_flat = error_slice.flatten()
+            
+            # Add columns with naming pattern: sample_time_type
+            csv_data[f'{sample_num}_{t_idx}_gt'] = gt_flat
+            csv_data[f'{sample_num}_{t_idx}_pred'] = pred_flat
+            csv_data[f'{sample_num}_{t_idx}_error'] = error_flat
+        
+        # Create DataFrame and save to CSV
+        df = pd.DataFrame(csv_data)
+        csv_output_path = Path(config['OUTPUT_DIR']) / 'UNet_visualization_data.csv'
+        df.to_csv(csv_output_path, index=False)
+        
+        if verbose:
+            print(f"CSV data saved to: {csv_output_path}")
+            print(f"CSV shape: {df.shape}")
+            print(f"CSV columns: {list(df.columns)}")
 
 # ==============================================================================
 # Utility Functions
