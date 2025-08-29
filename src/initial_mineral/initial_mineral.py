@@ -149,12 +149,12 @@ if __name__ == "__main__":
         output_dir2 = f"/home/geofluids/research/FNO/src/initial_mineral/output/clinochlore_{i}.h5"
         output_dir3 = f"/home/geofluids/research/FNO/src/initial_mineral/output/pyrite_{i}.h5"
 
-        mu1 = np.random.uniform(0.02, 0.04)
-        mu2 = np.random.uniform(0.5, 0.15)
-        mu3 = np.random.uniform(5e-5, 1.5e-4)
-        s1 = np.random.uniform(0.5, 0.9)
-        s2 = np.random.uniform(0.2, 0.6)
-        s3 = np.random.uniform(1.0, 1.5)
+        mu1 = np.random.uniform(0.05, 0.15) # mean 0.107
+        mu2 = np.random.uniform(0.1, 0.3) # mean 0.216
+        mu3 = np.random.uniform(0.001, 0.003) # mean 0.002328
+        s1 = np.random.uniform(0.1, 0.3) # std 0.23
+        s2 = np.random.uniform(0.3, 0.5) # std 0.444
+        s3 = np.random.uniform(0.010, 0.015) # std 0.01162
 
         generate_calcite_map(Z1, mu1, s1, output_dir1, i)
         generate_clinochlore_map(Z2, mu2, s2, output_dir2, i)

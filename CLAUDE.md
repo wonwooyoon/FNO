@@ -145,3 +145,5 @@ export PFLOTRAN_DIR=/path/to/pflotran
 
 ### Do Not Section
 - Do not edit pflotran input files (e.g., *.in, *.dat)
+- Do not leave any test code after the testing
+- Unless I specify otherwise, implement all the required features within a single file.
