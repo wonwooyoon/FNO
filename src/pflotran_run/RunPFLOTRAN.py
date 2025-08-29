@@ -6,7 +6,7 @@ def run_pflotran():
     shopt -s extglob
     base_dir="/home/geofluids/research/FNO"
 
-    for i in {61..499}; do
+    for i in {0..299}; do
         infile="${base_dir}/src/pflotran_code/output/pflotran_${i}.in"
         mpirun -n 36 $PFLOTRAN_DIR/src/pflotran/pflotran -input_prefix "${infile%.*}"
         output_subdir="${base_dir}/src/pflotran_run/output/$(basename ${infile%.*})"
