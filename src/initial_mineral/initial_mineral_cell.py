@@ -35,8 +35,8 @@ def precompute_coordinates(domain_cells, domain_vertices, materials_cell_ids, ma
         # 버텍스 좌표들 가져오기
         vertices = domain_vertices[cell_row[1:] - 1]
         # 평균 좌표 계산 및 변환
-        mean_x = int((np.mean(vertices[:, 0]) + 8.0) / 0.125)
-        mean_y = int((np.mean(vertices[:, 1]) + 4.0) / 0.125)
+        mean_x = int((np.mean(vertices[:, 0]) + 8.0) / 0.25)
+        mean_y = int((np.mean(vertices[:, 1]) + 4.0) / 0.25)
         coordinates[idx] = (mean_x, mean_y)
     
     print(f"Precomputed coordinates for {len(material_1_indices)} material_id=1 cells")

@@ -61,7 +61,7 @@ def generate_calcite_map(Z, m, s, output_dir, i):
         data_dataset[:, :] = Z
         calcite_group.attrs.create('Dimension', ['XY'], dtype=h5py.string_dtype(encoding='ascii', length=10))
         calcite_group.attrs.create('Space Interpolation Method', ['STEP'], dtype=h5py.string_dtype(encoding='ascii', length=10))
-        calcite_group.attrs['Discretization'] = [0.125, 0.125]
+        calcite_group.attrs['Discretization'] = [0.25, 0.25]
         calcite_group.attrs['Origin'] = [-8.0, -4.0]
         calcite_group.attrs['Cell Centered'] = [True]
 
@@ -85,7 +85,7 @@ def generate_clinochlore_map(Z, m, s, output_dir, n):
         data_dataset[:, :] = Z
         clinochlore_group.attrs.create('Dimension', ['XY'], dtype=h5py.string_dtype(encoding='ascii', length=10))
         clinochlore_group.attrs.create('Space Interpolation Method', ['STEP'], dtype=h5py.string_dtype(encoding='ascii', length=10))
-        clinochlore_group.attrs['Discretization'] = [0.125, 0.125]
+        clinochlore_group.attrs['Discretization'] = [0.25, 0.25]
         clinochlore_group.attrs['Origin'] = [-8.0, -4.0]
         clinochlore_group.attrs['Cell Centered'] = [True]
 
@@ -109,17 +109,17 @@ def generate_pyrite_map(Z, m, s, output_dir, n):
         data_dataset[:, :] = Z
         pyrite_group.attrs.create('Dimension', ['XY'], dtype=h5py.string_dtype(encoding='ascii', length=10))
         pyrite_group.attrs.create('Space Interpolation Method', ['STEP'], dtype=h5py.string_dtype(encoding='ascii', length=10))
-        pyrite_group.attrs['Discretization'] = [0.125, 0.125]
+        pyrite_group.attrs['Discretization'] = [0.25, 0.25]
         pyrite_group.attrs['Origin'] = [-8.0, -4.0]
         pyrite_group.attrs['Cell Centered'] = [True]
 
 if __name__ == "__main__":
     
     n = 3000
-    X = 128
-    Y = 64
-    nX = 128
-    nY = 64
+    X = 64
+    Y = 32
+    nX = 64
+    nY = 32
     mean = 0.0
     std = 1.0
 

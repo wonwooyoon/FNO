@@ -4,43 +4,61 @@ import h5py
 from multiprocessing import Pool
 
 
-def generate_scp_field(N, b, size, level_max, density_map_size, iteration):
+def generate_scp_field(N, b, size_x, size_y, level_max, density_map_ratio, iteration):
 
-    density_map = np.ones((density_map_size, density_map_size))
+    # Calculate density map dimensions based on ratio
+    density_map_size_x = int(size_x * density_map_ratio)
+    density_map_size_y = int(size_y * density_map_ratio)
+    density_map = np.ones((density_map_size_x, density_map_size_y))  # (rows, cols) = (X, Y)
 
-    def draw_squares(N, b, size, level=1, parent_coords=[(0, 0)]):
+    def draw_squares(N, b, size_x, size_y, level=1, parent_coords=[(0, 0)]):
         
         if level > level_max:
             return
         
-        side_length = size / (b ** level)
+        # Calculate side_length as average of dimensions divided by b^level
+        side_length = (size_x + size_y) / 2 / (b ** level)
         new_coords = []
         for px, py in parent_coords:
             for _ in range(N):
-                x = px + random.uniform(0, side_length * b)
-                y = py + random.uniform(0, side_length * b)
+                if level == 1:  # First level: distribute across entire domain
+                    x = random.uniform(0, size_x)
+                    y = random.uniform(0, size_y)
+                else:  # Subsequent levels: fractal subdivision
+                    x = px + random.uniform(0, side_length * b)
+                    y = py + random.uniform(0, side_length * b)
 
-                if x >= size:
-                    x = x - size
-                if y >= size:
-                    y = y - size
+                # Handle wrapping for rectangular domain
+                if x >= size_x:
+                    x = x - size_x
+                if y >= size_y:
+                    y = y - size_y
 
                 new_coords.append((x, y))
 
                 if level == level_max:
-                    update_density_map(density_map, x, y, side_length, size)
+                    update_density_map(density_map, x, y, side_length, size_x, size_y, density_map_size_x, density_map_size_y)
                     
-        draw_squares(N, b, size, level + 1, new_coords)
+        draw_squares(N, b, size_x, size_y, level + 1, new_coords)
 
-    def update_density_map(density_map, x, y, side_length, size):
+    def update_density_map(density_map, x, y, side_length, size_x, size_y, density_map_size_x, density_map_size_y):
 
         for i in range(int(side_length)):
             for j in range(int(side_length)):
-                xi = int((x + i) // (size / density_map_size))
-                yj = int((y + j) // (size / density_map_size))
-                density_map[yj, xi] += 1
+                
+                # Calculate grid indices for rectangular domain
+                xi = int((x + i) // (size_x / density_map_size_x))  # X coordinate -> row index
+                yj = int((y + j) // (size_y / density_map_size_y))  # Y coordinate -> column index
+                
+                # Handle wrapping for rectangular density map
+                if xi > density_map_size_x-1:
+                    xi = xi - density_map_size_x
+                if yj > density_map_size_y-1:
+                    yj = yj - density_map_size_y
 
-    def generate_perm_map(density_map, iteration):
+                density_map[xi, yj] += 1  # [X_row_index, Y_col_index]
+
+    def generate_perm_map(density_map, iteration, size_x, size_y, density_map_size_x, density_map_size_y):
         
         average_aperature = np.random.uniform(0.00001, 0.0001)
 
@@ -65,8 +83,8 @@ def generate_scp_field(N, b, size, level_max, density_map_size, iteration):
             data_dataset = permsX_group.create_dataset('Data', shape=data_shape, dtype=data_dtype)
             data_dataset[:, :] = perm_map
             permsX_group.attrs.create('Dimension', ['XY'], dtype=h5py.string_dtype(encoding='ascii', length=10))
-            permsX_group.attrs['Discretization'] = [0.125, 0.125]
-            permsX_group.attrs['Origin'] = [-8.0, -4.0]
+            permsX_group.attrs['Discretization'] = [0.25, 0.25]
+            permsX_group.attrs['Origin'] = [-8, -4]
             permsX_group.attrs['Cell Centered'] = [True]
         
         with h5py.File(poro_dir, 'w') as hdf5_file:
@@ -76,12 +94,12 @@ def generate_scp_field(N, b, size, level_max, density_map_size, iteration):
             data_dataset = porosX_group.create_dataset('Data', shape=data_shape, dtype=data_dtype)
             data_dataset[:, :] = poro_map
             porosX_group.attrs.create('Dimension', ['XY'], dtype=h5py.string_dtype(encoding='ascii', length=10))
-            porosX_group.attrs['Discretization'] = [0.125, 0.125]
-            porosX_group.attrs['Origin'] = [-8.0, -4.0]
+            porosX_group.attrs['Discretization'] = [0.25, 0.25]
+            porosX_group.attrs['Origin'] = [-8, -4]
             porosX_group.attrs['Cell Centered'] = [True]
         
-    draw_squares(N, b, size)
-    generate_perm_map(density_map, iteration)
+    draw_squares(N, b, size_x, size_y)
+    generate_perm_map(density_map, iteration, size_x, size_y, density_map_size_x, density_map_size_y)
 
 
 if __name__ == '__main__':
@@ -89,10 +107,11 @@ if __name__ == '__main__':
     map_num = 3000
     N = 9
     b = 2.64
-    size = 256
+    size_x = 256  # Width of rectangular domain
+    size_y = 128  # Height of rectangular domain  
     level_max = 5
-    density_map_size = 128
+    density_map_ratio = 0.25  # Ratio for density map resolution (0.25 * 256 = 64)
 
     with Pool(30) as p:
-        p.starmap(generate_scp_field, [(N, b, size, level_max, density_map_size, i) for i in range(map_num)])
+        p.starmap(generate_scp_field, [(N, b, size_x, size_y, level_max, density_map_ratio, i) for i in range(map_num)])
         

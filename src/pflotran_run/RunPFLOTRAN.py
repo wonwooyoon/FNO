@@ -15,6 +15,7 @@ def run_pflotran():
         mv ${base_dir}/src/pflotran_code/output/*.xmf "${output_subdir}"
         mv ${base_dir}/src/pflotran_code/output/*.pft "${output_subdir}"
         mv ${base_dir}/src/pflotran_code/output/pflotran*.dat "${output_subdir}"
+        rm -rf ${base_dir}/src/pflotran_code/output/*.out
     done 
     """
     subprocess.run(bash_code, shell=True, executable="/bin/bash")
