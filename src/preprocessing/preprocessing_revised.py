@@ -5,6 +5,8 @@ import h5py
 import numpy as np
 import pandas as pd
 import torch
+import sys
+import re
 
 def read_one_h5(h5_path: Path):
     with h5py.File(h5_path, "r") as f:
@@ -80,34 +82,64 @@ def read_one_h5(h5_path: Path):
         y = np.concatenate(out_slices, axis=3).astype(np.float32)  # (1,nx,ny,nt)
         return x, y, (xc_unique.astype(np.float32), yc_unique.astype(np.float32)), t_labels
 
+def get_available_ids(base_dir: str):
+    """Automatically detect available pflotran IDs from output directory"""
+    base_path = Path(base_dir)
+    if not base_path.exists():
+        print(f"[ERROR] Directory not found: {base_dir}")
+        return []
+    
+    available_ids = []
+    for item in base_path.iterdir():
+        if item.is_dir() and item.name.startswith("pflotran_"):
+            match = re.match(r"pflotran_(\d+)", item.name)
+            if match:
+                id_num = int(match.group(1))
+                h5_file = item / f"pflotran_{id_num}.h5"
+                if h5_file.exists():
+                    available_ids.append(id_num)
+    
+    available_ids.sort()
+    return available_ids
+
 if __name__ == "__main__":
-    # 실행 후 대화형 입력
-    base_dir = input("HDF5 base 디렉토리 경로를 입력하세요 (기본값: ./src/pflotran_run/output): ").strip()
-    if not base_dir:
-        base_dir = "./src/pflotran_run/output"
-
-    others_csv = input("others.csv 경로를 입력하세요 (기본값: ./src/initial_others/output/others.csv): ").strip()
-    if not others_csv:
-        others_csv = "./src/initial_others/output/others.csv"
-
-    min_id = int(input("처리할 최소 시뮬레이션 ID (예: 0): "))
-    max_id = int(input("처리할 최대 시뮬레이션 ID (예: 46): "))
-
-    out_pt = input("저장할 .pt 파일 경로 번호 입력 (예: ./src/preprocessing/input_output_com-번호-.pt로 저장됨): ").strip()
-    out_pt = f"./src/preprocessing/input_output_com{out_pt}.pt"
-
+    # Default paths - no more interactive input for these
+    base_dir = "./src/pflotran_run/output"
+    others_csv = "./src/initial_others/output/others.csv"
+    
+    # Get output suffix from command line or interactive input
+    if len(sys.argv) > 1:
+        out_suffix = sys.argv[1]
+    else:
+        out_suffix = input("저장할 .pt 파일 suffix를 입력하세요 (예: server1_0_14): ").strip()
+        if not out_suffix:
+            print("[ERROR] Output suffix is required!")
+            sys.exit(1)
+    
+    # Automatically detect available IDs
+    print(f"Scanning {base_dir} for available pflotran data...")
+    available_ids = get_available_ids(base_dir)
+    
+    if not available_ids:
+        print(f"[ERROR] No valid pflotran data found in {base_dir}")
+        sys.exit(1)
+    
+    min_id = min(available_ids)
+    max_id = max(available_ids)
+    print(f"Found {len(available_ids)} simulations: IDs {min_id}-{max_id}")
+    print(f"Available IDs: {available_ids}")
+    
+    # Process data
     others = pd.read_csv(others_csv)
     meta = others.to_numpy(dtype=np.float32)[min_id:max_id+1, 2]
-    print(meta)
+    print(f"Meta shape: {meta.shape}")
 
     xs, ys = [], []
     coords_saved, times_saved = None, None
 
-    for i in range(min_id, max_id + 1):
+    for i in available_ids:
         h5_path = Path(base_dir) / f"pflotran_{i}" / f"pflotran_{i}.h5"
-        if not h5_path.exists():
-            print(f"[WARN] Skip missing file: {h5_path}")
-            continue
+        print(f"Processing {h5_path}...")
         x, y, coords, tlabels = read_one_h5(h5_path)
         xs.append(x[np.newaxis, ...])
         ys.append(y[np.newaxis, ...])
@@ -115,19 +147,21 @@ if __name__ == "__main__":
             coords_saved = coords
             times_saved = tlabels
 
-    import torch, numpy as np
     if len(xs) == 0:
-        raise RuntimeError("No simulations found in given range.")
+        raise RuntimeError("No simulations were processed successfully.")
 
     X = torch.from_numpy(np.concatenate(xs, axis=0))
     Y = torch.from_numpy(np.concatenate(ys, axis=0))
     meta = torch.from_numpy(meta)
+    
     payload = {
         "x": X, "y": Y, "meta": meta,
         "xc": torch.from_numpy(coords_saved[0]),
         "yc": torch.from_numpy(coords_saved[1]),
         "time_keys": times_saved,
     }
+    
+    out_pt = f"./src/preprocessing/input_output_com{out_suffix}.pt"
     Path(out_pt).parent.mkdir(parents=True, exist_ok=True)
     torch.save(payload, out_pt)
     print(f"[OK] Saved shard: {out_pt} | x{tuple(X.shape)} y{tuple(Y.shape)} meta{tuple(meta.shape)}")
