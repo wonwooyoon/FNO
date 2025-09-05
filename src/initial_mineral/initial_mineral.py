@@ -41,12 +41,9 @@ def generate_gaussian_field_fft_anisotropic(X, Y, nX, nY, x_corr, y_corr, mean, 
 
     return xx, yy, field
 
-def generate_calcite_map(Z, m, s, output_dir, i):
-    
-    sigma2 = np.log(1 + (s / m)**2)
-    sigma = np.sqrt(sigma2)
-    mu = np.log(m) - sigma2 / 2
-    Z = np.exp(mu + sigma * Z)
+def generate_calcite_map(Z, mu, sigma, output_dir, i):
+
+    Z = 10 ** (mu + sigma * Z)
     #Z = Z.T
     
     Z = np.clip(Z, a_max=2.00, a_min=0.0)
@@ -65,12 +62,9 @@ def generate_calcite_map(Z, m, s, output_dir, i):
         calcite_group.attrs['Origin'] = [-8.0, -4.0]
         calcite_group.attrs['Cell Centered'] = [True]
 
-def generate_clinochlore_map(Z, m, s, output_dir, n):
-    
-    sigma2 = np.log(1 + (s / m)**2)
-    sigma = np.sqrt(sigma2)
-    mu = np.log(m) - sigma2 / 2
-    Z = np.exp(mu + sigma * Z)
+def generate_clinochlore_map(Z, mu, sigma, output_dir, n):
+
+    Z = 10 ** (mu + sigma * Z)
     #Z = Z.T
 
     Z = np.clip(Z, a_max=2.00, a_min=0.0)
@@ -89,12 +83,9 @@ def generate_clinochlore_map(Z, m, s, output_dir, n):
         clinochlore_group.attrs['Origin'] = [-8.0, -4.0]
         clinochlore_group.attrs['Cell Centered'] = [True]
 
-def generate_pyrite_map(Z, m, s, output_dir, n):
-    
-    sigma2 = np.log(1 + (s / m)**2)
-    sigma = np.sqrt(sigma2)
-    mu = np.log(m) - sigma2 / 2
-    Z = np.exp(mu + sigma * Z)
+def generate_pyrite_map(Z, mu, sigma, output_dir, n):
+
+    Z = 10 ** (mu + sigma * Z)
     #Z = Z.T
 
     Z = np.clip(Z, a_max=0.05, a_min=0.0)
@@ -149,12 +140,12 @@ if __name__ == "__main__":
         output_dir2 = f"/home/geofluids/research/FNO/src/initial_mineral/output/clinochlore_{i}.h5"
         output_dir3 = f"/home/geofluids/research/FNO/src/initial_mineral/output/pyrite_{i}.h5"
 
-        mu1 = np.random.uniform(0.05, 0.15) # mean 0.107
-        mu2 = np.random.uniform(0.1, 0.3) # mean 0.216
-        mu3 = np.random.uniform(0.001, 0.003) # mean 0.002328
-        s1 = np.random.uniform(0.1, 0.3) # std 0.23
-        s2 = np.random.uniform(0.3, 0.5) # std 0.444
-        s3 = np.random.uniform(0.010, 0.015) # std 0.01162
+        mu1 = np.random.uniform(-1.77, -1.17) # mean -1.47
+        s1 = np.random.uniform(0.6, 0.8) # mean 0.7
+        mu2 = np.random.uniform(-1.23, -0.63) # mean -0.93
+        s2 = np.random.uniform(0.36, 0.56) # std 0.46
+        mu3 = np.random.uniform(-5.01, -3.71) # std -4.01
+        s3 = np.random.uniform(1.16, 1.36) # std 1.26
 
         generate_calcite_map(Z1, mu1, s1, output_dir1, i)
         generate_clinochlore_map(Z2, mu2, s2, output_dir2, i)
