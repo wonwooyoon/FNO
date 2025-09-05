@@ -1,31 +1,37 @@
 # merge_shards.py
 import torch
 from pathlib import Path
+import glob
 
 def load_cpu(path):
     return torch.load(path, map_location="cpu")
 
 if __name__ == "__main__":
-    # 실행 중 입력
-    print("병합할 .pt 파일 번호를 한 줄씩 입력하세요. (입력 종료: 빈 줄 + Enter)")
-    input_paths = []
-    while True:
-        p = input(f"파일 번호 {len(input_paths)+1}: ").strip()
-        if p == "":
-            break
-        if not Path(f"./src/preprocessing/input_output_com{p}.pt").exists():
-            print(f"[WARN] 파일 없음: {p}")
-            continue
-        input_paths.append(f"./src/preprocessing/input_output_com{p}.pt")
+    # Hardcoded paths
+    input_dir = "./src/preprocessing"
+    output_file = "./src/preprocessing/merged.pt"
+    
+    # Automatically find all input_output_com*.pt files
+    pattern = f"{input_dir}/input_output_com*.pt"
+    input_paths = glob.glob(pattern)
+    input_paths.sort()  # Sort for consistent order
+    
+    print(f"Searching for files matching: {pattern}")
+    print(f"Found {len(input_paths)} files:")
+    for path in input_paths:
+        print(f"  - {path}")
+    
+    if len(input_paths) < 1:
+        raise RuntimeError("병합할 파일이 최소 1개 필요합니다.")
+    
+    if len(input_paths) == 1:
+        print("[INFO] 파일이 1개만 있습니다. 단순 복사합니다.")
+        import shutil
+        shutil.copy2(input_paths[0], output_file)
+        print(f"[OK] 파일 복사 완료: {input_paths[0]} → {output_file}")
+        exit(0)
 
-    if len(input_paths) < 2:
-        raise RuntimeError("병합할 파일이 2개 이상 필요합니다.")
-
-    out_pt = input("저장할 .pt 파일 경로를 입력하세요. (기본값: ./src/preprocessing/merged.pt): ").strip()
-    if not out_pt:
-        out_pt = "./src/preprocessing/merged.pt"
-
-    out_path = Path(out_pt)
+    out_path = Path(output_file)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     # 파일 로드
@@ -62,4 +68,5 @@ if __name__ == "__main__":
     }
     torch.save(payload, out_path)
     print(f"[OK] 병합 완료: {len(shards)} shards → {out_path}")
-    print(f"Shapes: x{tuple(X.shape)} y{tuple(Y.shape)}")
+    print(f"Final shapes: x{tuple(X.shape)} y{tuple(Y.shape)} meta{tuple(META.shape)}")
+    print(f"Total samples: {X.shape[0]}")

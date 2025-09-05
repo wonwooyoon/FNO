@@ -6,5 +6,5 @@ servers:
     port: 22
     
   - host: "165.132.43.96"
-    user: "research" 
+    user: "geofluids" 
     port: 32125

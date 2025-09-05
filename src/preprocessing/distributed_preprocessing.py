@@ -102,6 +102,41 @@ def download_result_file(host: str, user: str, port: int, output_suffix: str):
         print(f"❌ {host}: SCP error - {e}")
         return False
 
+def execute_local_preprocessing(output_suffix: str):
+    """Execute preprocessing_revised.py locally using the same environment"""
+    
+    # Local command to run preprocessing_revised.py
+    # Use same paths and virtual environment as remote servers
+    local_command = f"python3 src/preprocessing/preprocessing_revised.py {output_suffix}"
+    
+    print(f"Executing preprocessing locally with suffix '{output_suffix}'")
+    print(f"Local command: {local_command}")
+    
+    try:
+        result = subprocess.run(local_command, shell=True, capture_output=True, text=True, timeout=3600)
+        
+        print(f"Return code: {result.returncode}")
+        
+        if result.returncode == 0:
+            print(f"✅ Local: Processing completed successfully")
+            if result.stdout.strip():
+                print(f"Output:\n{result.stdout}")
+        else:
+            print(f"❌ Local: Processing failed (return code: {result.returncode})")
+            if result.stdout.strip():
+                print(f"Stdout:\n{result.stdout}")
+            if result.stderr.strip():
+                print(f"Stderr:\n{result.stderr}")
+            
+        return result.returncode == 0
+        
+    except subprocess.TimeoutExpired:
+        print(f"❌ Local: Processing timed out")
+        return False
+    except Exception as e:
+        print(f"❌ Local: Execution error - {e}")
+        return False
+
 def main():
     """Main function"""
     if len(sys.argv) != 2:
@@ -117,13 +152,30 @@ def main():
         print(f"Error loading config: {e}")
         sys.exit(1)
     
-    # Process each server
+    # First, execute preprocessing locally
+    local_output_suffix = "localhost"
+    print("=" * 60)
+    print("PROCESSING LOCALLY")
+    print("=" * 60)
+    
+    local_success = execute_local_preprocessing(local_output_suffix)
+    if not local_success:
+        print(f"Failed to process locally")
+        sys.exit(1)
+    
+    # Then process each remote server
+    print("\n" + "=" * 60)
+    print("PROCESSING REMOTE SERVERS")
+    print("=" * 60)
+    
     for server in config['servers']:
         host = server['host']
         user = server['user'] 
         port = server.get('port', 22)
         # Create output suffix from server info (no longer need ID range)
         output_suffix = f"{host}"
+        
+        print(f"\n--- Processing {host} ---")
         
         # Execute preprocessing on remote server
         preprocessing_success = execute_remote_preprocessing(host, user, port, output_suffix)
@@ -139,13 +191,19 @@ def main():
             print(f"Failed to download result from server {host}")
             sys.exit(1)
     
-    print("🎉 All servers processed and files downloaded successfully!")
-    print("\nDownloaded files:")
+    print("🎉 All processing completed successfully!")
+    print("\nGenerated files:")
+    
+    # Show local file
+    local_file = f"./src/preprocessing/input_output_comlocalhost.pt"
+    print(f"  - {local_file} (local)")
+    
+    # Show remote files
     for server in config['servers']:
         host = server['host']
         output_suffix = f"{host}"
-        local_file = f"./src/preprocessing/input_output_com{output_suffix}.pt"
-        print(f"  - {local_file}")
+        remote_file = f"./src/preprocessing/input_output_com{output_suffix}.pt"
+        print(f"  - {remote_file} (from {host})")
 
 if __name__ == "__main__":
     main()

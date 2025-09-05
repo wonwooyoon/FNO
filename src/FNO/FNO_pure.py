@@ -42,7 +42,7 @@ from neuraloperator.neuralop.training import AdamW
 CONFIG = {
     'MERGED_PT_PATH': './src/preprocessing/merged.pt',
     'OUTPUT_DIR': './src/FNO/output_pure',
-    'N_EPOCHS': 3,  # Reduced for testing
+    'N_EPOCHS': 50,  # Reduced for testing
     'EVAL_INTERVAL': 1,
     'VAL_SIZE': 0.1,  # Validation set size
     'TEST_SIZE': 0.1,  # Test set size
