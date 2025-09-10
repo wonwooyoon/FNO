@@ -42,7 +42,7 @@ from neuraloperator.neuralop.training import AdamW
 CONFIG = {
     'MERGED_PT_PATH': './src/preprocessing/merged.pt',
     'OUTPUT_DIR': './src/FNO/output_pure',
-    'N_EPOCHS': 50,  # Reduced for testing
+    'N_EPOCHS': 10000,  # Reduced for testing
     'EVAL_INTERVAL': 1,
     'VAL_SIZE': 0.1,  # Validation set size
     'TEST_SIZE': 0.1,  # Test set size
@@ -94,10 +94,10 @@ CONFIG = {
     },
     'SINGLE_PARAMS': {
         "n_modes": (16, 8, 4), 
-        "hidden_channels": 8, 
-        "n_layers": 2, 
+        "hidden_channels": 12, 
+        "n_layers": 3, 
         "domain_padding": (0.1,0.1,0.1), 
-        "train_batch_size": 32, 
+        "train_batch_size": 16, 
         "l2_weight": 1e-5, 
         "initial_lr": 1e-2
     }
@@ -1012,12 +1012,12 @@ def visualization(config: Dict, processor, device: str, trained_model, train_dat
     input_phys = torch.cat(all_input, dim=0)
     
     # Apply masking as per the original problem description
-    pred_phys[:, :, 14:18, 14:18, :] = 0
-    gt_phys[:, :, 14:18, 14:18, :] = 0
+    # pred_phys[:, :, 14:18, 14:18, :] = 0
+    # gt_phys[:, :, 14:18, 14:18, :] = 0
     
     # --- Data Extraction for Visualization ---
     # Select a sample index to visualize
-    sample_idx = min(config['VISUALIZATION']['SAMPLE_NUM'], len(pred_phys) - 1)
+    sample_idx = min(config['VISUALIZATION']['SAMPLE_NUM'], len(pred_phys) - 1) 
     
     # Extract the corresponding data slices and move to NumPy
     pred_sample = pred_phys[sample_idx, 0].detach().numpy()  # Shape: (nx, ny, nt) -> (64, 32, nt)
