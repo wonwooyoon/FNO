@@ -8,3 +8,7 @@ servers:
   - host: "165.132.43.96"
     user: "geofluids" 
     port: 32125
+
+  - host: "165.132.32.168"
+    user: "geofluids" 
+    port: 7777

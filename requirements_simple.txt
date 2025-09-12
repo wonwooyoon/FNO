@@ -1,0 +1,21 @@
+# Requirements for src/ folder (excluding FNO)
+# Core scientific computing
+numpy
+pandas
+scipy
+
+# File I/O and data formats
+h5py
+netcdf4
+pillow
+
+# Deep learning
+torch
+
+# Visualization
+matplotlib
+
+# YAML configuration support
+pyyaml
+
+# Note: pathlib is included in Python 3.4+ standard library

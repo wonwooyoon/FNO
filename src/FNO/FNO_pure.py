@@ -66,7 +66,7 @@ CONFIG = {
         'gamma': 0.8
     },
     'VISUALIZATION': {
-        'SAMPLE_NUM': 8,
+        'SAMPLE_NUM': 15,
         'TIME_INDICES': (4, 9, 14, 19),
         'DPI': 200,
         'SAVEASCSV': True  # Save visualization data as CSV format
@@ -77,7 +77,7 @@ CONFIG = {
         'l2_p': 2   # Power for L2 loss
     },
     'TRAINING_CONFIG': {
-        'mode': 'single',  # Options: 'single', 'optuna', 'eval'
+        'mode': 'eval',  # Options: 'single', 'optuna', 'eval'
         'optuna_n_trials': 100,
         'optuna_seed': 42,
         'optuna_n_startup_trials': 10,
@@ -93,8 +93,8 @@ CONFIG = {
         'initial_lr_range': [1e-4, 1e-2]  # [min, max] for log uniform
     },
     'SINGLE_PARAMS': {
-        "n_modes": (16, 8, 4), 
-        "hidden_channels": 12, 
+        "n_modes": (16, 8, 4),
+        "hidden_channels": 12,
         "n_layers": 3, 
         "domain_padding": (0.1,0.1,0.1), 
         "train_batch_size": 16, 
