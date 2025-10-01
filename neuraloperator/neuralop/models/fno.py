@@ -16,6 +16,8 @@ from ..layers.complex import ComplexValued
 from ..layers.film import FiLMLayer
 from .base_model import BaseModel
 
+from torch.utils.checkpoint import checkpoint
+
 class FNO(BaseModel, name='FNO'):
     """N-Dimensional Fourier Neural Operator. The FNO learns a mapping between
     spaces of functions discretized over regular grids using Fourier convolutions,
@@ -179,7 +181,7 @@ class FNO(BaseModel, name='FNO'):
         channel_mlp_dropout: float=0,
         channel_mlp_expansion: float=0.5,
         channel_mlp_skip: Literal['linear', 'identity', 'soft-gating']="soft-gating",
-        fno_skip: Literal['linear', 'identity', 'soft-gating']="linear",
+        fno_skip: Literal['linear', 'identity', 'soft-gating', 'attention']="linear",
         resolution_scaling_factor: Union[Number, List[Number]]=None,
         domain_padding: Union[Number, List[Number]]=None,
         domain_padding_mode: Literal['symmetric', 'one-sided']="symmetric",
@@ -398,6 +400,7 @@ class FNO(BaseModel, name='FNO'):
             x = self.domain_padding.pad(x)
 
         for layer_idx in range(self.n_layers):
+            # x = checkpoint(lambda x, layer_idx, output_shape: self.fno_blocks(x, layer_idx, output_shape=output_shape[layer_idx]), x, layer_idx, output_shape)
             x = self.fno_blocks(x, layer_idx, output_shape=output_shape[layer_idx])
 
         if self.domain_padding is not None:

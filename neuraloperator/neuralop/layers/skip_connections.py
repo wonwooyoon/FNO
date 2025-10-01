@@ -19,7 +19,7 @@ def skip_connection(
         ``n_dim=2`` corresponds to having Module2D.
     bias : bool, optional
         whether to use a bias, by default False
-    skip_type : {'identity', 'linear', soft-gating'}
+    skip_type : {'identity', 'linear', 'soft-gating', 'attention'}
         kind of skip connection to use, by default "soft-gating"
 
     Returns
@@ -41,10 +41,17 @@ def skip_connection(
                                bias=bias,)
     elif skip_type.lower() == "identity":
         return nn.Identity()
+    elif skip_type.lower() == "attention":
+        return SelfAttentionSkip(
+            in_features=in_features,
+            out_features=out_features,
+            bias=bias,
+            n_dim=n_dim,
+        )
     else:
         raise ValueError(
             f"Got skip-connection type={skip_type}, expected one of"
-            f" {'soft-gating', 'linear', 'id'}."
+            f" {'soft-gating', 'linear', 'identity', 'attention'}."
         )
 
 
@@ -120,4 +127,110 @@ class Flattened1dConv(nn.Module):
         # reshape x into an Nd tensor b, c, x1, x2, ...
         x = x.view(size[0], self.conv.out_channels, *size[2:])
         return x
-        
+
+
+class SelfAttentionSkip(nn.Module):
+    """Galerkin attention based skip connection
+
+    Applies Galerkin self-attention mechanism where K and V are layer normalized
+    before computing their interaction, followed by interaction with Q.
+    This follows the Galerkin attention approach: Q(K^T V)/n instead of (QK^T)V/n.
+
+    Parameters
+    ----------
+    in_features : int
+        number of input features (channels)
+    out_features : int, optional
+        number of output features, by default None (same as in_features)
+    n_dim : int, default is 2
+        Dimensionality of the input (excluding batch-size and channels).
+    bias : bool, default is False
+        whether to use bias in linear projections
+    dropout : float, default is 0.1
+        dropout probability
+    """
+
+    def __init__(self, in_features, out_features=None, n_dim=2, bias=False, dropout=0.1):
+        super().__init__()
+        self.in_features = in_features
+        self.out_features = out_features if out_features is not None else in_features
+        self.n_dim = n_dim
+
+        # Query, Key, Value projections
+        self.q_proj = nn.Linear(in_features, self.out_features, bias=bias)
+        self.k_proj = nn.Linear(in_features, in_features, bias=bias)
+        self.v_proj = nn.Linear(in_features, in_features, bias=bias)
+
+        # Layer normalization for K and V (pre-dot-product)
+        self.k_norm = nn.LayerNorm(in_features)
+        self.v_norm = nn.LayerNorm(in_features)
+
+        # Dropout
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x):
+        """
+        Apply Galerkin attention on spatial dimensions
+
+        Parameters
+        ----------
+        x : torch.Tensor
+            Input tensor of shape (batch, channels, dim1, dim2, ..., dimN)
+            where N = n_dim
+
+        Returns
+        -------
+        torch.Tensor
+            Output tensor of shape (batch, out_features, dim1, dim2, ..., dimN)
+        """
+        original_shape = x.shape
+        batch_size = original_shape[0]
+        channels = original_shape[1]
+        spatial_dims = original_shape[2:]
+
+        # Flatten spatial dimensions: (B, C, D1*D2*...*DN)
+        total_spatial = 1
+        for dim in spatial_dims:
+            total_spatial *= dim
+
+        # Reshape to (B, spatial_sequence, channels)
+        x_reshaped = x.view(batch_size, channels, total_spatial)
+        x_reshaped = x_reshaped.transpose(1, 2)  # (B, spatial_sequence, channels)
+
+        # Compute Q, K, V projections
+        Q = self.q_proj(x_reshaped)  # (B, spatial_sequence, out_features)
+        K = self.k_proj(x_reshaped)  # (B, spatial_sequence, in_features)
+        V = self.v_proj(x_reshaped)  # (B, spatial_sequence, in_features)
+
+        # Apply layer normalization to K and V
+        K = self.k_norm(K)
+        V = self.v_norm(V)
+
+        # Galerkin attention: Q(K^T V) / n
+        # K^T: (B, in_features, spatial_sequence)
+        # V: (B, spatial_sequence, in_features)
+        # K^T V: (B, in_features, in_features)
+        KT_V = torch.bmm(K.transpose(1, 2), V)  # (B, in_features, in_features)
+
+        # Q: (B, spatial_sequence, out_features)
+        # Q(K^T V): (B, spatial_sequence, in_features)
+        attn_output = torch.bmm(Q, KT_V.transpose(1, 2))  # (B, spatial_sequence, in_features)
+
+        # Scale by sequence length
+        attn_output = attn_output / total_spatial
+
+        # Apply dropout
+        attn_output = self.dropout(attn_output)
+
+        # If out_features != in_features, we need to project to correct size
+        if self.out_features != self.in_features:
+            # Take only the first out_features dimensions
+            attn_output = attn_output[:, :, :self.out_features]
+
+        # Reshape back to original spatial dimensions
+        attn_output = attn_output.transpose(1, 2)  # (B, out_features, spatial_sequence)
+        output_shape = (batch_size, self.out_features) + spatial_dims
+        attn_output = attn_output.view(output_shape)
+
+        return attn_output
+

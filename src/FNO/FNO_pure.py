@@ -57,16 +57,16 @@ CONFIG = {
     },
     'SCHEDULER_CONFIG': {
         'scheduler_type': 'step',  # Options: 'cosine', 'step'
-        'early_stopping': 80,
+        'early_stopping': 40,
         'T_0': 10,
-        'T_max': 80,
+        'T_max': 40,
         'T_mult': 2,
         'eta_min': 1e-5,
-        'step_size': 30,
-        'gamma': 0.8
+        'step_size': 20,
+        'gamma': 0.5
     },
     'VISUALIZATION': {
-        'SAMPLE_NUM': 15,
+        'SAMPLE_NUM': [100, 150],  # Can be single int or list: e.g., [121, 122, 123]
         'TIME_INDICES': (4, 9, 14, 19),
         'DPI': 200,
         'SAVEASCSV': True  # Save visualization data as CSV format
@@ -93,12 +93,12 @@ CONFIG = {
         'initial_lr_range': [1e-4, 1e-2]  # [min, max] for log uniform
     },
     'SINGLE_PARAMS': {
-        "n_modes": (16, 8, 4),
-        "hidden_channels": 12,
-        "n_layers": 3, 
+        "n_modes": (8, 8, 5),
+        "hidden_channels": 36,
+        "n_layers": 6, 
         "domain_padding": (0.1,0.1,0.1), 
-        "train_batch_size": 16, 
-        "l2_weight": 1e-5, 
+        "train_batch_size": 32, 
+        "l2_weight": 0.0, 
         "initial_lr": 1e-2
     }
 }
@@ -193,7 +193,7 @@ def preprocessing(config: Dict, verbose: bool = True) -> Tuple:
             print("Step 2: Expanding meta channels and combining with input...")
             
         # Apply output masking as in original code
-        out_data[:, :, 14:18, 14:18, :] = 0
+        # out_data[:, :, 12:20, 12:20, :] = 0
         
         # Expand meta data to uniform spatial channels and combine with input
         N, original_channels, nx, ny, nt = in_data.shape
@@ -371,11 +371,12 @@ class CappedCosineAnnealingWarmRestarts(torch.optim.lr_scheduler._LRScheduler):
             return self.base_lrs
         
         epoch_in_cycle = (self.last_epoch - self.last_restart) % self.T_i
+        cycle_num = self.last_epoch // self.T_i + 1
         progress = epoch_in_cycle / self.T_i
         
         lrs = []
         for base_lr in self.base_lrs:
-            lr = self.eta_min + (base_lr - self.eta_min) * (1 + math.cos(math.pi * progress)) / 2
+            lr = self.eta_min + ((base_lr - self.eta_min) * (1 + math.cos(math.pi * progress)) / 2) / cycle_num
             lrs.append(lr)
         
         # Check for restart
@@ -465,7 +466,8 @@ def create_model(config: Dict, train_dataset, val_dataset, test_dataset, device:
         positional_embedding=config['MODEL_CONFIG']['positional_embedding'],
         domain_padding=domain_padding,
         domain_padding_mode=config['DOMAIN_PADDING_MODE'],
-        use_channel_mlp=True
+        use_channel_mlp=True,
+        fno_skip='linear'
     ).to(device)
     
     # 4. Create optimizer
@@ -949,84 +951,36 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.colors as colors
 
-def visualization(config: Dict, processor, device: str, trained_model, train_dataset, 
-                 test_dataset, verbose: bool = True):
+def visualize_single_sample(config: Dict, processor, device: str, trained_model,
+                           pred_phys: torch.Tensor, gt_phys: torch.Tensor,
+                           input_phys: torch.Tensor, sample_idx: int,
+                           verbose: bool = True) -> Dict:
     """
-    Generate visualizations:
-    1. A separate plot for permeability and pyrite maps.
-    2. A 3x4 grid comparing ground truth, predictions, and their error over time.
-    
+    Generate visualization for a single sample.
+
     Args:
         config: Configuration dictionary.
         processor: Data processor for normalization.
         device: Device to use (e.g., 'cuda' or 'cpu').
         trained_model: The trained FNO model.
-        train_dataset: The training dataset.
-        test_dataset: The test dataset for generating predictions.
+        pred_phys: Physical scale predictions tensor.
+        gt_phys: Ground truth tensor.
+        input_phys: Input tensor.
+        sample_idx: Index of the sample to visualize.
         verbose: If True, prints progress information.
+
+    Returns:
+        Dict containing CSV data for this sample.
     """
-    
-    if verbose:
-        print(f"\nGenerating visualization...")
-    
-    # Ensure the model is in evaluation mode
-    trained_model.eval()
-    
-    # Create a DataLoader to handle the test data
-    test_loader = DataLoader(
-        test_dataset, 
-        batch_size=len(test_dataset),  # Load all test data in a single batch
-        shuffle=False, 
-        num_workers=0, 
-        pin_memory=False
-    )
-    
-    # Store predictions, ground truth, and input data
-    all_pred = []
-    all_gt = []
-    all_input = []
-    
-    # Generate predictions without computing gradients
-    with torch.no_grad():
-        for batch in test_loader:
-            x, y = batch['x'].to(device), batch['y'].to(device)
-            
-            # Store original input for visualizing permeability and pyrite
-            all_input.append(x.cpu())
-            
-            # Normalize input for the model
-            x_norm = processor.in_normalizer.transform(x)
-            
-            # Get model prediction
-            pred = trained_model(x_norm)
-            
-            # Inverse transform the prediction to its physical scale
-            pred_phys = processor.out_normalizer.inverse_transform(pred)
-            
-            all_pred.append(pred_phys.cpu())
-            all_gt.append(y.cpu())
-    
-    # Concatenate results from all batches
-    pred_phys = torch.cat(all_pred, dim=0)
-    gt_phys = torch.cat(all_gt, dim=0)
-    input_phys = torch.cat(all_input, dim=0)
-    
-    # Apply masking as per the original problem description
-    # pred_phys[:, :, 14:18, 14:18, :] = 0
-    # gt_phys[:, :, 14:18, 14:18, :] = 0
-    
-    # --- Data Extraction for Visualization ---
-    # Select a sample index to visualize
-    sample_idx = min(config['VISUALIZATION']['SAMPLE_NUM'], len(pred_phys) - 1) 
-    
+
     # Extract the corresponding data slices and move to NumPy
     pred_sample = pred_phys[sample_idx, 0].detach().numpy()  # Shape: (nx, ny, nt) -> (64, 32, nt)
     gt_sample = gt_phys[sample_idx, 0].detach().numpy()      # Shape: (nx, ny, nt) -> (64, 32, nt)
-    
+
     # Extract permeability (channel 0) and convert from log10 scale
     perm_sample = input_phys[sample_idx, 0, :, :, 0].detach().numpy() # Shape: (nx, ny)
     perm_sample = 10**perm_sample
-    
+
     # Extract pyrite (channel 3)
     pyr_sample = input_phys[sample_idx, 3, :, :, 0].detach().numpy() # Shape: (nx, ny)
 
@@ -1036,41 +990,41 @@ def visualization(config: Dict, processor, device: str, trained_model, train_dat
     # Plot Permeability
     ax = axes_inputs[0]
     im_perm = ax.imshow(perm_sample.T, cmap='viridis', norm=colors.LogNorm())
-    ax.set_title("Permeability")
+    ax.set_title(f"Permeability (Sample {sample_idx})")
     ax.axis('off')
     fig_inputs.colorbar(im_perm, ax=ax, orientation='horizontal', pad=0.1)
 
     # Plot Pyrite
     ax = axes_inputs[1]
     im_pyr = ax.imshow(pyr_sample.T, cmap='cividis')
-    ax.set_title("Pyrite")
+    ax.set_title(f"Pyrite (Sample {sample_idx})")
     ax.axis('off')
     fig_inputs.colorbar(im_pyr, ax=ax, orientation='horizontal', pad=0.1)
-    
+
     fig_inputs.tight_layout(rect=[0, 0.03, 1, 0.95])
-    
+
     # Save the input data figure
-    output_path_inputs = Path(config['OUTPUT_DIR']) / 'FNO_input_visualization.png'
+    output_path_inputs = Path(config['OUTPUT_DIR']) / f'FNO_input_visualization_sample_{sample_idx}.png'
     output_path_inputs.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(output_path_inputs, dpi=config['VISUALIZATION']['DPI'], bbox_inches='tight')
     plt.close(fig_inputs)
     if verbose:
-        print(f"Input visualization saved to: {output_path_inputs}")
+        print(f"Input visualization for sample {sample_idx} saved to: {output_path_inputs}")
 
     # --- Plot 2: GT, Prediction, and Error Grid ---
     t_indices = config['VISUALIZATION']['TIME_INDICES']
-    
+
     # Create a 3x4 grid for GT, Prediction, and Error
     fig, axes = plt.subplots(3, 4, figsize=(16, 8))
 
     # Determine shared color scale for GT and Prediction
     vmin_gt_pred = min(gt_sample[:, :, t_indices].min(), pred_sample[:, :, t_indices].min())
     vmax_gt_pred = max(gt_sample[:, :, t_indices].max(), pred_sample[:, :, t_indices].max())
-    
+
     # Calculate error and determine its symmetric color scale
     error_sample = gt_sample - pred_sample
     error_max_abs = np.abs(error_sample[:, :, t_indices]).max()
-    
+
     im_pred, im_err = None, None # Initialize for colorbar
     for i, t_idx in enumerate(t_indices):
         # Plot Ground Truth (Row 1)
@@ -1084,7 +1038,7 @@ def visualization(config: Dict, processor, device: str, trained_model, train_dat
         im_pred = ax_pred.imshow(pred_sample[:, :, t_idx].T, cmap='jet', vmin=vmin_gt_pred, vmax=vmax_gt_pred)
         ax_pred.set_title(f"Prediction (t={t_idx})")
         ax_pred.axis('off')
-        
+
         # Plot Error (Row 3)
         ax_err = axes[2, i]
         im_err = ax_err.imshow(error_sample[:, :, t_idx].T, cmap='coolwarm', vmin=-error_max_abs, vmax=error_max_abs)
@@ -1098,63 +1052,213 @@ def visualization(config: Dict, processor, device: str, trained_model, train_dat
         fig.colorbar(im_err, ax=axes[2, :].ravel().tolist(), orientation='horizontal', pad=0.05, aspect=40)
 
     # Save the main comparison figure
-    output_path_grid = Path(config['OUTPUT_DIR']) / 'FNO_comparison_grid.png'
+    output_path_grid = Path(config['OUTPUT_DIR']) / f'FNO_comparison_grid_sample_{sample_idx}.png'
     plt.savefig(output_path_grid, dpi=config['VISUALIZATION']['DPI'], bbox_inches='tight')
     plt.close(fig)
-    
+
     if verbose:
-        print(f"Comparison grid saved to: {output_path_grid}")
-    
-    # --- CSV Export Feature ---
+        print(f"Comparison grid for sample {sample_idx} saved to: {output_path_grid}")
+
+    # --- Prepare CSV Data ---
+    csv_data = {}
     if config['VISUALIZATION']['SAVEASCSV']:
-        if verbose:
-            print(f"Saving visualization data as CSV...")
-        
         # Create coordinate grids
         nx, ny = gt_sample.shape[:2]  # (64, 32)
         x_coords = np.arange(nx)
         y_coords = np.arange(ny)
         X, Y = np.meshgrid(x_coords, y_coords, indexing='ij')
-        
+
         # Flatten coordinate arrays
         x_flat = X.flatten()
         y_flat = Y.flatten()
-        
-        # Initialize CSV data dictionary with coordinates
+
+        # Initialize CSV data dictionary with coordinates (only for first sample)
         csv_data = {
             'x_coord': x_flat,
             'y_coord': y_flat
         }
-        
+
         # Process each time index
-        t_indices = config['VISUALIZATION']['TIME_INDICES']
-        sample_num = config['VISUALIZATION']['SAMPLE_NUM']
-        
         for t_idx in t_indices:
             # Extract 2D slices for this time index
             gt_slice = gt_sample[:, :, t_idx]          # (nx, ny)
             pred_slice = pred_sample[:, :, t_idx]      # (nx, ny)
             error_slice = error_sample[:, :, t_idx]    # (nx, ny)
-            
+
             # Flatten the 2D data to 1D arrays
             gt_flat = gt_slice.flatten()
             pred_flat = pred_slice.flatten()
             error_flat = error_slice.flatten()
-            
+
             # Add columns with naming pattern: sample_time_type
-            csv_data[f'{sample_num}_{t_idx}_gt'] = gt_flat
-            csv_data[f'{sample_num}_{t_idx}_pred'] = pred_flat
-            csv_data[f'{sample_num}_{t_idx}_error'] = error_flat
-        
-        # Create DataFrame and save to CSV
-        df = pd.DataFrame(csv_data)
-        csv_output_path = Path(config['OUTPUT_DIR']) / 'FNO_visualization_data.csv'
-        df.to_csv(csv_output_path, index=False)
-        
+            csv_data[f'{sample_idx}_{t_idx}_gt'] = gt_flat
+            csv_data[f'{sample_idx}_{t_idx}_pred'] = pred_flat
+            csv_data[f'{sample_idx}_{t_idx}_error'] = error_flat
+
+    return csv_data
+
+
+def visualization(config: Dict, processor, device: str, trained_model, train_dataset,
+                 test_dataset, verbose: bool = True):
+    """
+    Generate visualizations for multiple samples:
+    1. A separate plot for permeability and pyrite maps.
+    2. A 3x4 grid comparing ground truth, predictions, and their error over time.
+    3. Unified CSV output for all samples (Option B).
+
+    Args:
+        config: Configuration dictionary.
+        processor: Data processor for normalization.
+        device: Device to use (e.g., 'cuda' or 'cpu').
+        trained_model: The trained FNO model.
+        train_dataset: The training dataset.
+        test_dataset: The test dataset for generating predictions.
+        verbose: If True, prints progress information.
+    """
+
+    if verbose:
+        print(f"\nGenerating multi-sample visualization...")
+
+    # Ensure the model is in evaluation mode
+    trained_model.eval()
+
+    # Use smaller batch size to avoid VRAM issues
+    batch_size = min(8, len(test_dataset))  # Process in smaller batches
+    test_loader = DataLoader(
+        test_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=0,
+        pin_memory=False
+    )
+
+    # Store predictions, ground truth, and input data
+    all_pred = []
+    all_gt = []
+    all_input = []
+
+    # Generate predictions without computing gradients
+    with torch.no_grad():
+        for batch_idx, batch in enumerate(test_loader):
+            if verbose and batch_idx % 2 == 0:
+                print(f"  Processing batch {batch_idx + 1}/{len(test_loader)}...")
+
+            x, y = batch['x'].to(device), batch['y'].to(device)
+
+            # Store original input immediately moved to CPU to free GPU memory
+            all_input.append(x.cpu())
+
+            # Normalize input for the model
+            x_norm = processor.in_normalizer.transform(x)
+
+            # Get model prediction
+            pred = trained_model(x_norm)
+
+            # Inverse transform the prediction to its physical scale
+            pred_phys = processor.out_normalizer.inverse_transform(pred)
+
+            # Move to CPU immediately and clear GPU memory
+            all_pred.append(pred_phys.cpu())
+            all_gt.append(y.cpu())
+
+            # Clear intermediate GPU tensors
+            del x, y, x_norm, pred, pred_phys
+            if device == 'cuda':
+                torch.cuda.empty_cache()
+
+    # Concatenate results from all batches (this happens on CPU)
+    if verbose:
+        print("  Concatenating results...")
+    pred_phys = torch.cat(all_pred, dim=0)
+    gt_phys = torch.cat(all_gt, dim=0)
+    input_phys = torch.cat(all_input, dim=0)
+
+    # Clear intermediate lists to free memory
+    del all_pred, all_gt, all_input
+
+    # Apply masking as per the original problem description
+    pred_phys[:, :, 14:18, 14:18, :] = 0
+    gt_phys[:, :, 14:18, 14:18, :] = 0
+
+    # --- Multi-Sample Processing ---
+    # Handle both single integer and list inputs for SAMPLE_NUM
+    sample_config = config['VISUALIZATION']['SAMPLE_NUM']
+    if isinstance(sample_config, int):
+        sample_nums = [sample_config]  # Convert single int to list for consistency
+    else:
+        sample_nums = sample_config  # Assume it's already a list
+
+    # Validate sample indices
+    max_available_samples = len(pred_phys) - 1
+    valid_sample_nums = []
+    for sample_num in sample_nums:
+        if sample_num <= max_available_samples:
+            valid_sample_nums.append(sample_num)
+        else:
+            if verbose:
+                print(f"Warning: Sample {sample_num} exceeds available samples ({max_available_samples}). Skipping.")
+
+    if not valid_sample_nums:
         if verbose:
-            print(f"CSV data saved to: {csv_output_path}")
-            print(f"CSV shape: {df.shape}")
-            print(f"CSV columns: {list(df.columns)}")
+            print("Error: No valid sample indices found. Using sample 0 as fallback.")
+        valid_sample_nums = [0]
+
+    if verbose:
+        print(f"Processing samples: {valid_sample_nums}")
+
+    # --- Process Each Sample ---
+    all_csv_data = []
+    for i, sample_idx in enumerate(valid_sample_nums):
+        if verbose:
+            print(f"Processing sample {sample_idx} ({i+1}/{len(valid_sample_nums)})...")
+
+        # Generate visualization for single sample
+        csv_data = visualize_single_sample(
+            config=config,
+            processor=processor,
+            device=device,
+            trained_model=trained_model,
+            pred_phys=pred_phys,
+            gt_phys=gt_phys,
+            input_phys=input_phys,
+            sample_idx=sample_idx,
+            verbose=verbose
+        )
+
+        # Store CSV data for unified output
+        if csv_data:
+            all_csv_data.append(csv_data)
+
+    # --- Unified CSV Export (Option B) ---
+    if config['VISUALIZATION']['SAVEASCSV'] and all_csv_data:
+        if verbose:
+            print(f"Creating unified CSV output for all samples...")
+
+        # Start with coordinates from the first sample
+        unified_csv_data = {
+            'x_coord': all_csv_data[0]['x_coord'],
+            'y_coord': all_csv_data[0]['y_coord']
+        }
+
+        # Merge data columns from all samples
+        for csv_data in all_csv_data:
+            for key, value in csv_data.items():
+                if key not in ['x_coord', 'y_coord']:  # Skip coordinate columns
+                    unified_csv_data[key] = value
+
+        # Create unified DataFrame and save to CSV
+        df_unified = pd.DataFrame(unified_csv_data)
+        csv_output_path = Path(config['OUTPUT_DIR']) / 'FNO_visualization_data.csv'
+        df_unified.to_csv(csv_output_path, index=False)
+
+        if verbose:
+            print(f"Unified CSV data saved to: {csv_output_path}")
+            print(f"CSV shape: {df_unified.shape}")
+            print(f"CSV columns: {list(df_unified.columns)}")
+            print(f"Processed {len(valid_sample_nums)} samples: {valid_sample_nums}")
+
+    if verbose:
+        print(f"Multi-sample visualization completed!")
 
 # ==============================================================================
 # Utility Functions
