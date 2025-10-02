@@ -1,5 +1,4 @@
 # preprocess_pflotran.py
-import argparse
 from pathlib import Path
 import h5py
 import numpy as np
@@ -131,8 +130,21 @@ if __name__ == "__main__":
     
     # Process data
     others = pd.read_csv(others_csv)
-    meta = others.to_numpy(dtype=np.float32)[min_id:max_id+1, 2]
-    print(f"Meta shape: {meta.shape}")
+
+    # Extract meta data only for available IDs to handle non-sequential simulation runs
+    others_data = others.to_numpy(dtype=np.float32)
+    max_csv_rows = len(others_data)
+
+    # Validate that all available_ids exist in CSV
+    missing_ids = [id for id in available_ids if id >= max_csv_rows]
+    if missing_ids:
+        print(f"[ERROR] Missing meta data for IDs: {missing_ids}")
+        print(f"CSV has {max_csv_rows} rows, but need data for IDs up to {max(available_ids)}")
+        sys.exit(1)
+
+    # Extract meta values only for available simulation IDs
+    meta = others_data[available_ids, 2]
+    print(f"Meta shape: {meta.shape} (for {len(available_ids)} available simulations)")
 
     xs, ys = [], []
     coords_saved, times_saved = None, None

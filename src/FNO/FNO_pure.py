@@ -77,20 +77,20 @@ CONFIG = {
         'l2_p': 2   # Power for L2 loss
     },
     'TRAINING_CONFIG': {
-        'mode': 'eval',  # Options: 'single', 'optuna', 'eval'
+        'mode': 'single',  # Options: 'single', 'optuna', 'eval'
         'optuna_n_trials': 100,
         'optuna_seed': 42,
         'optuna_n_startup_trials': 10,
         'eval_model_path': './src/FNO/output_pure/final/best_model_state_dict.pt'
     },
     'OPTUNA_SEARCH_SPACE': {
-        'n_modes_options': [(24, 12, 4), (16, 8, 4), (12, 6, 4), (8, 4, 4), (24, 12, 2), (16, 8, 2), (12, 6, 2), (8, 4, 2)],
-        'hidden_channels_range': [8, 24],  # [min, max] for suggest_int
-        'n_layers_range': [2, 4],  # [min, max] for suggest_int
+        'n_modes_options': [(8, 8, 5), (8, 8, 10), (16, 16, 5), (16, 16, 10), (32, 16, 10)],
+        'hidden_channels_range': [12, 36],  # [min, max] for suggest_int
+        'n_layers_range': [2, 8],  # [min, max] for suggest_int
         'domain_padding_options': [(0.1,0.1,0.1)],
-        'train_batch_size_options': [16, 32, 64],
-        'l2_weight_range': [1e-8, 1e-4],  # [min, max] for log uniform
-        'initial_lr_range': [1e-4, 1e-2]  # [min, max] for log uniform
+        'train_batch_size_options': [16, 32],
+        'l2_weight_range': [1e-9, 1e-4],  # [min, max] for log uniform
+        'initial_lr_range': [1e-3, 1e-2]  # [min, max] for log uniform
     },
     'SINGLE_PARAMS': {
         "n_modes": (8, 8, 5),
