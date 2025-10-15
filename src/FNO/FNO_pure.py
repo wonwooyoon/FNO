@@ -94,8 +94,8 @@ CONFIG = {
     },
     'SINGLE_PARAMS': {
         "n_modes": (8, 8, 5),
-        "hidden_channels": 36,
-        "n_layers": 6, 
+        "hidden_channels": 16,
+        "n_layers": 4, 
         "domain_padding": (0.1,0.1,0.1), 
         "train_batch_size": 32, 
         "l2_weight": 0.0, 
@@ -171,15 +171,16 @@ def preprocessing(config: Dict, verbose: bool = True) -> Tuple:
             raise FileNotFoundError(f"Merged file not found: {config['MERGED_PT_PATH']}")
             
         bundle = torch.load(config['MERGED_PT_PATH'], map_location="cpu", weights_only=False)
-        
+
         required_keys = ["x", "y", "meta"]
         missing_keys = [key for key in required_keys if key not in bundle]
         if missing_keys:
             raise KeyError(f"Missing required keys in data: {missing_keys}")
-            
-        in_data = bundle["x"].float().to(device)
-        out_data = bundle["y"].float().to(device) 
-        meta_data = bundle["meta"].float().to(device)
+
+        # Keep data on CPU to avoid VRAM issues during preprocessing
+        in_data = bundle["x"].float()
+        out_data = bundle["y"].float()
+        meta_data = bundle["meta"].float()
         
         if verbose:
             print(f"   Loaded tensors - Input: {tuple(in_data.shape)}, Output: {tuple(out_data.shape)}, Meta: {tuple(meta_data.shape)}")
@@ -225,20 +226,20 @@ def preprocessing(config: Dict, verbose: bool = True) -> Tuple:
         # Step 3: Create normalizers and processor
         if verbose:
             print("Step 3: Creating normalizers and data processor...")
-            
-        # Create normalizers for combined input and output
+
+        # Create normalizers for combined input and output (on CPU)
         in_normalizer = UnitGaussianNormalizer(
             mean=combined_input, std=combined_input, dim=[0,2,3,4], eps=1e-6
         )
         out_normalizer = UnitGaussianNormalizer(
             mean=out_data, std=out_data, dim=[0,2,3,4], eps=1e-6
         )
-        
-        # Fit normalizers
+
+        # Fit normalizers on CPU data
         in_normalizer.fit(combined_input)
         out_normalizer.fit(out_data)
-        
-        # Create processor
+
+        # Create processor and move only the processor to device
         processor = DefaultDataProcessor(in_normalizer, out_normalizer).to(device)
         
         if verbose:
@@ -417,29 +418,29 @@ def create_model(config: Dict, train_dataset, val_dataset, test_dataset, device:
         Tuple containing (model, train_loader, val_loader, test_loader, optimizer, scheduler, loss_fn)
     """
     
-    # 1. Create DataLoaders
+    # 1. Create DataLoaders with pin_memory for efficient CPU-to-GPU transfer
     train_loader = DataLoader(
-        train_dataset, 
-        batch_size=train_batch_size, 
-        shuffle=True, 
-        num_workers=0, 
-        pin_memory=False
+        train_dataset,
+        batch_size=train_batch_size,
+        shuffle=True,
+        num_workers=0,
+        pin_memory=True
     )
-    
+
     val_loader = DataLoader(
-        val_dataset, 
-        batch_size=train_batch_size, 
-        shuffle=False, 
-        num_workers=0, 
-        pin_memory=False
+        val_dataset,
+        batch_size=train_batch_size,
+        shuffle=False,
+        num_workers=0,
+        pin_memory=True
     )
-    
+
     test_loader = DataLoader(
-        test_dataset, 
-        batch_size=train_batch_size, 
-        shuffle=False, 
-        num_workers=0, 
-        pin_memory=False
+        test_dataset,
+        batch_size=train_batch_size,
+        shuffle=False,
+        num_workers=0,
+        pin_memory=True
     )
     
     # 2. Create loss function based on config
