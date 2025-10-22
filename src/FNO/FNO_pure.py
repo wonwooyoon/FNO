@@ -63,7 +63,8 @@ CONFIG = {
         'T_mult': 2,
         'eta_min': 1e-5,
         'step_size': 20,
-        'gamma': 0.5
+        'gamma': 0.5,
+        'initial_lr': 1e-2,
     },
     'VISUALIZATION': {
         'SAMPLE_NUM': [100, 150],  # Can be single int or list: e.g., [121, 122, 123]
@@ -84,22 +85,28 @@ CONFIG = {
         'eval_model_path': './src/FNO/output_pure/final/best_model_state_dict.pt'
     },
     'OPTUNA_SEARCH_SPACE': {
-        'n_modes_options': [(8, 8, 5), (8, 8, 10), (16, 16, 5), (16, 16, 10), (32, 16, 10)],
+        'n_modes_dim1_range': [4, 16],  # [min, max] for first dimension
+        'n_modes_dim2_range': [4, 16],  # [min, max] for second dimension
+        'n_modes_dim3_range': [2, 10],  # [min, max] for third dimension
         'hidden_channels_range': [12, 36],  # [min, max] for suggest_int
         'n_layers_range': [2, 8],  # [min, max] for suggest_int
-        'domain_padding_options': [(0.1,0.1,0.1)],
-        'train_batch_size_options': [16, 32],
+        'domain_padding_options': [(0.1,0.1,0.1), (0.2,0.1,0.1)],
+        'train_batch_size_options': [32, 64],
         'l2_weight_range': [1e-9, 1e-4],  # [min, max] for log uniform
-        'initial_lr_range': [1e-3, 1e-2]  # [min, max] for log uniform
+        'channel_mlp_expansion_options': [0.5, 1.0, 2.0],  # categorical options
+        'channel_mlp_skip_options': ['linear', 'soft-gating']  # categorical options
     },
     'SINGLE_PARAMS': {
-        "n_modes": (8, 8, 5),
+        "n_modes_1": 8,
+        "n_modes_2": 8,
+        "n_modes_3": 5,
         "hidden_channels": 16,
-        "n_layers": 4, 
-        "domain_padding": (0.1,0.1,0.1), 
-        "train_batch_size": 32, 
-        "l2_weight": 0.0, 
-        "initial_lr": 1e-2
+        "n_layers": 4,
+        "domain_padding": (0.1,0.1,0.1),
+        "train_batch_size": 32,
+        "l2_weight": 0.0,
+        "channel_mlp_expansion": 0.5,
+        "channel_mlp_skip": 'linear'
     }
 }
 
@@ -392,10 +399,11 @@ class CappedCosineAnnealingWarmRestarts(torch.optim.lr_scheduler._LRScheduler):
 # Model Building Functions
 # ==============================================================================
 
-def create_model(config: Dict, train_dataset, val_dataset, test_dataset, device: str, 
-                n_modes: Tuple[int, ...], hidden_channels: int, n_layers: int, 
-                domain_padding: List[float], train_batch_size: int, 
-                initial_lr: float, l2_weight: float):
+def create_model(config: Dict, train_dataset, val_dataset, test_dataset, device: str,
+                n_modes: Tuple[int, ...], hidden_channels: int, n_layers: int,
+                domain_padding: List[float], train_batch_size: int,
+                l2_weight: float, channel_mlp_expansion: float,
+                channel_mlp_skip: str):
     """
     Create complete model setup including DataLoaders, loss function, optimizer, 
     scheduler, and model architecture.
@@ -413,7 +421,9 @@ def create_model(config: Dict, train_dataset, val_dataset, test_dataset, device:
         train_batch_size: Training batch size
         initial_lr: Initial learning rate
         l2_weight: L2 weight regularization
-        
+        channel_mlp_expansion: Expansion parameter for channel MLP
+        channel_mlp_skip: Skip connection type for channel MLP
+
     Returns:
         Tuple containing (model, train_loader, val_loader, test_loader, optimizer, scheduler, loss_fn)
     """
@@ -468,11 +478,13 @@ def create_model(config: Dict, train_dataset, val_dataset, test_dataset, device:
         domain_padding=domain_padding,
         domain_padding_mode=config['DOMAIN_PADDING_MODE'],
         use_channel_mlp=True,
+        channel_mlp_expansion=channel_mlp_expansion,
+        channel_mlp_skip=channel_mlp_skip,
         fno_skip='linear'
     ).to(device)
     
     # 4. Create optimizer
-    optimizer = AdamW(model.parameters(), lr=initial_lr, weight_decay=l2_weight)
+    optimizer = AdamW(model.parameters(), lr=config['SCHEDULER_CONFIG']['initial_lr'], weight_decay=l2_weight)
     
     # 5. Create scheduler based on config
     scheduler_type = config['SCHEDULER_CONFIG']['scheduler_type']
@@ -751,11 +763,19 @@ def optuna_optimization(config: Dict, processor, train_dataset, val_dataset, tes
         
         # Sample hyperparameters from search space
         search_space = config['OPTUNA_SEARCH_SPACE']
-        
-        # Sample categorical parameters using indices to avoid tuple serialization issues
-        n_modes_idx = trial.suggest_categorical('n_modes_idx', list(range(len(search_space['n_modes_options']))))
-        n_modes = search_space['n_modes_options'][n_modes_idx]
-        
+
+        # Sample n_modes for each dimension independently
+        n_modes_1 = trial.suggest_int('n_modes_1',
+                                     search_space['n_modes_dim1_range'][0],
+                                     search_space['n_modes_dim1_range'][1])
+        n_modes_2 = trial.suggest_int('n_modes_2',
+                                     search_space['n_modes_dim2_range'][0],
+                                     search_space['n_modes_dim2_range'][1])
+        n_modes_3 = trial.suggest_int('n_modes_3',
+                                     search_space['n_modes_dim3_range'][0],
+                                     search_space['n_modes_dim3_range'][1])
+        n_modes = (n_modes_1, n_modes_2, n_modes_3)
+
         domain_padding_idx = trial.suggest_categorical('domain_padding_idx', list(range(len(search_space['domain_padding_options']))))
         domain_padding = search_space['domain_padding_options'][domain_padding_idx]
         
@@ -770,14 +790,16 @@ def optuna_optimization(config: Dict, processor, train_dataset, val_dataset, tes
                                     search_space['n_layers_range'][1])
         
         # Sample continuous parameters with log uniform distribution
-        l2_weight = trial.suggest_float('l2_weight', 
-                                       search_space['l2_weight_range'][0], 
-                                       search_space['l2_weight_range'][1], 
+        l2_weight = trial.suggest_float('l2_weight',
+                                       search_space['l2_weight_range'][0],
+                                       search_space['l2_weight_range'][1],
                                        log=True)
-        initial_lr = trial.suggest_float('initial_lr', 
-                                        search_space['initial_lr_range'][0], 
-                                        search_space['initial_lr_range'][1], 
-                                        log=True)
+
+        # Sample channel MLP parameters
+        channel_mlp_expansion = trial.suggest_categorical('channel_mlp_expansion',
+                                                          search_space['channel_mlp_expansion_options'])
+        channel_mlp_skip = trial.suggest_categorical('channel_mlp_skip',
+                                                     search_space['channel_mlp_skip_options'])
         
         try:
             # Create model with sampled parameters
@@ -792,8 +814,10 @@ def optuna_optimization(config: Dict, processor, train_dataset, val_dataset, tes
                 n_layers=n_layers,
                 domain_padding=domain_padding,
                 train_batch_size=train_batch_size,
-                initial_lr=initial_lr,
-                l2_weight=l2_weight
+                initial_lr=config['SCHEDULER_CONFIG']['initial_lr'],
+                l2_weight=l2_weight,
+                channel_mlp_expansion=channel_mlp_expansion,
+                channel_mlp_skip=channel_mlp_skip
             )
             
             # Train model and get best validation loss
@@ -1291,21 +1315,26 @@ def main() -> None:
         if training_mode == 'single':
             # Single training mode - use predefined parameters
             print("\nExecuting single training mode...")
-            
+
             params = CONFIG['SINGLE_PARAMS']
+
+            # Reconstruct n_modes from individual dimension parameters
+            n_modes = (params['n_modes_1'], params['n_modes_2'], params['n_modes_3'])
+
             model, train_loader, val_loader, test_loader, optimizer, scheduler, loss_fn = create_model(
                 config=CONFIG,
                 train_dataset=train_dataset,
                 val_dataset=val_dataset,
                 test_dataset=test_dataset,
                 device=device,
-                n_modes=params['n_modes'],
+                n_modes=n_modes,
                 hidden_channels=params['hidden_channels'],
                 n_layers=params['n_layers'],
                 domain_padding=params['domain_padding'],
                 train_batch_size=params['train_batch_size'],
-                initial_lr=params['initial_lr'],
-                l2_weight=params['l2_weight']
+                l2_weight=params['l2_weight'],
+                channel_mlp_expansion=params['channel_mlp_expansion'],
+                channel_mlp_skip=params['channel_mlp_skip']
             )
             
             # Count trainable parameters
@@ -1365,12 +1394,14 @@ def main() -> None:
             # Train final model with best parameters
             print(f"\nTraining final model with best parameters...")
             best_params = optimization_results['best_params']
-            
+
+            # Reconstruct n_modes from individual dimension parameters
+            n_modes = (best_params['n_modes_1'], best_params['n_modes_2'], best_params['n_modes_3'])
+
             # Convert index-based parameters back to actual values
             search_space = CONFIG['OPTUNA_SEARCH_SPACE']
-            n_modes = search_space['n_modes_options'][best_params['n_modes_idx']]
             domain_padding = search_space['domain_padding_options'][best_params['domain_padding_idx']]
-            
+
             model, train_loader, val_loader, test_loader, optimizer, scheduler, loss_fn = create_model(
                 config=CONFIG,
                 train_dataset=train_dataset,
@@ -1382,8 +1413,9 @@ def main() -> None:
                 n_layers=best_params['n_layers'],
                 domain_padding=domain_padding,
                 train_batch_size=best_params['train_batch_size'],
-                initial_lr=best_params['initial_lr'],
-                l2_weight=best_params['l2_weight']
+                l2_weight=best_params['l2_weight'],
+                channel_mlp_expansion=best_params['channel_mlp_expansion'],
+                channel_mlp_skip=best_params['channel_mlp_skip']
             )
             
             # Count trainable parameters
@@ -1423,26 +1455,31 @@ def main() -> None:
         elif training_mode == 'eval':
             # Evaluation mode - load pretrained model
             print("\nExecuting evaluation mode...")
-            
+
             eval_model_path = CONFIG['TRAINING_CONFIG']['eval_model_path']
             if not Path(eval_model_path).exists():
                 raise FileNotFoundError(f"Model file not found: {eval_model_path}")
-            
+
             # Create model with single params for evaluation
             params = CONFIG['SINGLE_PARAMS']
+
+            # Reconstruct n_modes from individual dimension parameters
+            n_modes = (params['n_modes_1'], params['n_modes_2'], params['n_modes_3'])
+
             model, train_loader, val_loader, test_loader, optimizer, scheduler, loss_fn = create_model(
                 config=CONFIG,
                 train_dataset=train_dataset,
                 val_dataset=val_dataset,
                 test_dataset=test_dataset,
                 device=device,
-                n_modes=params['n_modes'],
+                n_modes=n_modes,
                 hidden_channels=params['hidden_channels'],
                 n_layers=params['n_layers'],
                 domain_padding=params['domain_padding'],
                 train_batch_size=params['train_batch_size'],
-                initial_lr=params['initial_lr'],
-                l2_weight=params['l2_weight']
+                l2_weight=params['l2_weight'],
+                channel_mlp_expansion=params['channel_mlp_expansion'],
+                channel_mlp_skip=params['channel_mlp_skip']
             )
             
             # Load pretrained model

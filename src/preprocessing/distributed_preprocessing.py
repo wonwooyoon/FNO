@@ -13,9 +13,50 @@ def load_config(config_path: str):
     with open(config_path, 'r') as f:
         return yaml.safe_load(f)
 
+def sync_preprocessing_script(host: str, user: str, port: int):
+    """Sync preprocessing_revised.py from git repository on remote server"""
+
+    # Git command to fetch and checkout only the preprocessing_revised.py file
+    sync_command = (
+        "cd research/FNO && "
+        "git fetch origin && "
+        "git checkout origin/master -- src/preprocessing/preprocessing_revised.py"
+    )
+
+    # Build SSH command
+    ssh_cmd = [
+        'ssh',
+        '-p', str(port),
+        '-o', 'StrictHostKeyChecking=no',
+        f'{user}@{host}',
+        sync_command
+    ]
+
+    print(f"Syncing preprocessing_revised.py on {host}:{port} from git...")
+
+    try:
+        result = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=60)
+
+        if result.returncode == 0:
+            print(f"✅ {host}: Script synced successfully")
+            return True
+        else:
+            print(f"⚠️  {host}: Sync warning (return code: {result.returncode})")
+            if result.stderr.strip():
+                print(f"Stderr:\n{result.stderr}")
+            # Return True even with warnings - file might already be up-to-date
+            return True
+
+    except subprocess.TimeoutExpired:
+        print(f"❌ {host}: Sync timed out")
+        return False
+    except Exception as e:
+        print(f"❌ {host}: Sync error - {e}")
+        return False
+
 def execute_remote_preprocessing(host: str, user: str, port: int, output_suffix: str):
     """Execute preprocessing_revised.py on remote server via SSH"""
-    
+
     # SSH command to run preprocessing_revised.py with simplified input
     # Use single line command with && separators
     remote_command = f"cd research/FNO && source .venv_FNO/bin/activate && python3 src/preprocessing/preprocessing_revised.py {output_suffix}"
@@ -102,13 +143,53 @@ def download_result_file(host: str, user: str, port: int, output_suffix: str):
         print(f"❌ {host}: SCP error - {e}")
         return False
 
+def sync_local_preprocessing_script():
+    """Sync preprocessing_revised.py from git repository locally"""
+
+    # Git command to fetch and checkout only the preprocessing_revised.py file
+    sync_command = [
+        'git', 'fetch', 'origin'
+    ]
+    checkout_command = [
+        'git', 'checkout', 'origin/master', '--', 'src/preprocessing/preprocessing_revised.py'
+    ]
+
+    print(f"Syncing preprocessing_revised.py locally from git...")
+
+    try:
+        # First, fetch from origin
+        result_fetch = subprocess.run(sync_command, capture_output=True, text=True, timeout=60, cwd='.')
+        if result_fetch.returncode != 0:
+            print(f"⚠️  Local: Git fetch warning")
+            if result_fetch.stderr.strip():
+                print(f"Stderr:\n{result_fetch.stderr}")
+
+        # Then, checkout the specific file
+        result_checkout = subprocess.run(checkout_command, capture_output=True, text=True, timeout=60, cwd='.')
+        if result_checkout.returncode == 0:
+            print(f"✅ Local: Script synced successfully")
+            return True
+        else:
+            print(f"⚠️  Local: Checkout warning (return code: {result_checkout.returncode})")
+            if result_checkout.stderr.strip():
+                print(f"Stderr:\n{result_checkout.stderr}")
+            # Return True even with warnings - file might already be up-to-date
+            return True
+
+    except subprocess.TimeoutExpired:
+        print(f"❌ Local: Sync timed out")
+        return False
+    except Exception as e:
+        print(f"❌ Local: Sync error - {e}")
+        return False
+
 def execute_local_preprocessing(output_suffix: str):
     """Execute preprocessing_revised.py locally using the same environment"""
-    
+
     # Local command to run preprocessing_revised.py
     # Use same paths and virtual environment as remote servers
     local_command = f"python3 src/preprocessing/preprocessing_revised.py {output_suffix}"
-    
+
     print(f"Executing preprocessing locally with suffix '{output_suffix}'")
     print(f"Local command: {local_command}")
     
@@ -157,7 +238,12 @@ def main():
     print("=" * 60)
     print("PROCESSING LOCALLY")
     print("=" * 60)
-    
+
+    # Sync local preprocessing script from git
+    local_sync_success = sync_local_preprocessing_script()
+    if not local_sync_success:
+        print(f"Warning: Failed to sync script locally, continuing anyway...")
+
     local_success = execute_local_preprocessing(local_output_suffix)
     if not local_success:
         print(f"Failed to process locally")
@@ -170,14 +256,19 @@ def main():
     
     for server in config['servers']:
         host = server['host']
-        user = server['user'] 
+        user = server['user']
         port = server.get('port', 22)
         # Create output suffix from server info (no longer need ID range)
         output_suffix = f"{host}"
-        
+
         print(f"\n--- Processing {host} ---")
-        
-        # Execute preprocessing on remote server
+
+        # Step 1: Sync preprocessing script from git
+        sync_success = sync_preprocessing_script(host, user, port)
+        if not sync_success:
+            print(f"Warning: Failed to sync script on {host}, continuing anyway...")
+
+        # Step 2: Execute preprocessing on remote server
         preprocessing_success = execute_remote_preprocessing(host, user, port, output_suffix)
         
         if not preprocessing_success:
