@@ -49,7 +49,7 @@ CONFIG = {
     'RANDOM_STATE': 42,
     'DOMAIN_PADDING_MODE': 'symmetric',
     'MODEL_CONFIG': {
-        'in_channels': 8,  # 7 original channels + 1 uniform meta channel
+        'in_channels': 9,  # 7 original channels + 1 uniform meta channel
         'out_channels': 1,
         'lifting_channel_ratio': 2,
         'projection_channel_ratio': 2,
@@ -97,14 +97,14 @@ CONFIG = {
         'channel_mlp_skip_options': ['linear', 'soft-gating']  # categorical options
     },
     'SINGLE_PARAMS': {
-        "n_modes_1": 8,
-        "n_modes_2": 8,
-        "n_modes_3": 5,
-        "hidden_channels": 16,
-        "n_layers": 4,
+        "n_modes_1": 4,
+        "n_modes_2": 4,
+        "n_modes_3": 2,
+        "hidden_channels": 36,
+        "n_layers": 6,
         "domain_padding": (0.1,0.1,0.1),
         "train_batch_size": 32,
-        "l2_weight": 0.0,
+        "l2_weight": 1e-8,
         "channel_mlp_expansion": 0.5,
         "channel_mlp_skip": 'linear'
     }
