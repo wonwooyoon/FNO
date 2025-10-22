@@ -16,6 +16,8 @@ import sys
 sys.path.append('./')
 
 import math
+import shutil
+import json
 from pathlib import Path
 from typing import Dict, List, Tuple, Any, Optional
 
@@ -861,12 +863,47 @@ def optuna_optimization(config: Dict, processor, train_dataset, val_dataset, tes
         )
     )
     
-    # Define callback for progress reporting
+    # Define callback for progress reporting and best model saving
     def progress_callback(study, trial):
         if verbose:
             current_best = study.best_value
             print(f"Trial {trial.number:3d} completed. "
                   f"Value: {trial.value:.6f}, Best: {current_best:.6f}")
+
+        # Check if this trial is the new best
+        if trial.value is not None and trial.value == study.best_value:
+            print(f"New best trial found: Trial {trial.number} with loss {trial.value:.6f}")
+
+            # Define paths
+            source_model_path = Path(config['OUTPUT_DIR']) / 'final' / 'best_model_state_dict.pt'
+            source_loss_path = Path(config['OUTPUT_DIR']) / 'final' / 'loss_history.pt'
+
+            best_trial_dir = Path(config['OUTPUT_DIR']) / 'optuna' / 'best_trial_model'
+            best_trial_dir.mkdir(parents=True, exist_ok=True)
+
+            # Copy model file
+            if source_model_path.exists():
+                dest_model_path = best_trial_dir / 'best_model_state_dict.pt'
+                shutil.copy2(source_model_path, dest_model_path)
+                print(f"   Best model saved to: {dest_model_path}")
+            else:
+                print(f"   Warning: Source model not found at {source_model_path}")
+
+            # Copy loss history
+            if source_loss_path.exists():
+                dest_loss_path = best_trial_dir / 'loss_history.pt'
+                shutil.copy2(source_loss_path, dest_loss_path)
+
+            # Save trial information as JSON
+            trial_info = {
+                'trial_number': trial.number,
+                'best_value': trial.value,
+                'params': trial.params,
+                'datetime': trial.datetime_complete.isoformat() if trial.datetime_complete else None
+            }
+            trial_info_path = best_trial_dir / 'trial_info.json'
+            with open(trial_info_path, 'w') as f:
+                json.dump(trial_info, f, indent=2)
     
     # Run optimization with progress callback
     study.optimize(
@@ -885,6 +922,20 @@ def optuna_optimization(config: Dict, processor, train_dataset, val_dataset, tes
         print(f"Best parameters:")
         for param_name, param_value in best_params.items():
             print(f"  {param_name}: {param_value}")
+
+        # Check if best model was saved during optimization
+        best_model_path = optuna_output_dir / 'best_trial_model' / 'best_model_state_dict.pt'
+        if best_model_path.exists():
+            print(f"\nBest model from optimization saved at:")
+            print(f"   {best_model_path}")
+            trial_info_path = optuna_output_dir / 'best_trial_model' / 'trial_info.json'
+            if trial_info_path.exists():
+                with open(trial_info_path, 'r') as f:
+                    trial_info = json.load(f)
+                print(f"   Trial number: {trial_info['trial_number']}")
+                print(f"   Validation loss: {trial_info['best_value']:.6f}")
+        else:
+            print(f"\nWarning: Best model was not saved during optimization")
     
     # Save optimization results
     optimization_results = {

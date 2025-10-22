@@ -38,20 +38,20 @@ def sync_preprocessing_script(host: str, user: str, port: int):
         result = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=60)
 
         if result.returncode == 0:
-            print(f"✅ {host}: Script synced successfully")
+            print(f"{host}: Script synced successfully")
             return True
         else:
-            print(f"⚠️  {host}: Sync warning (return code: {result.returncode})")
+            print(f"{host}: Sync warning (return code: {result.returncode})")
             if result.stderr.strip():
                 print(f"Stderr:\n{result.stderr}")
             # Return True even with warnings - file might already be up-to-date
             return True
 
     except subprocess.TimeoutExpired:
-        print(f"❌ {host}: Sync timed out")
+        print(f"{host}: Sync timed out")
         return False
     except Exception as e:
-        print(f"❌ {host}: Sync error - {e}")
+        print(f"{host}: Sync error - {e}")
         return False
 
 def execute_remote_preprocessing(host: str, user: str, port: int, output_suffix: str):
@@ -79,23 +79,23 @@ def execute_remote_preprocessing(host: str, user: str, port: int, output_suffix:
         print(f"Return code: {result.returncode}")  # Debug info
         
         if result.returncode == 0:
-            print(f"✅ {host}: Processing completed successfully")
+            print(f"{host}: Processing completed successfully")
             if result.stdout.strip():
                 print(f"Output:\n{result.stdout}")
         else:
-            print(f"❌ {host}: Processing failed (return code: {result.returncode})")
+            print(f"{host}: Processing failed (return code: {result.returncode})")
             if result.stdout.strip():
                 print(f"Stdout:\n{result.stdout}")
             if result.stderr.strip():
                 print(f"Stderr:\n{result.stderr}")
-            
+
         return result.returncode == 0
-        
+
     except subprocess.TimeoutExpired:
-        print(f"❌ {host}: Processing timed out")
+        print(f"{host}: Processing timed out")
         return False
     except Exception as e:
-        print(f"❌ {host}: SSH error - {e}")
+        print(f"{host}: SSH error - {e}")
         return False
 
 def download_result_file(host: str, user: str, port: int, output_suffix: str):
@@ -126,21 +126,21 @@ def download_result_file(host: str, user: str, port: int, output_suffix: str):
         print(f"SCP return code: {result.returncode}")  # Debug info
         
         if result.returncode == 0:
-            print(f"✅ {host}: File downloaded successfully to {local_file}")
+            print(f"{host}: File downloaded successfully to {local_file}")
             return True
         else:
-            print(f"❌ {host}: Download failed (return code: {result.returncode})")
+            print(f"{host}: Download failed (return code: {result.returncode})")
             if result.stdout.strip():
                 print(f"SCP Stdout:\n{result.stdout}")
             if result.stderr.strip():
                 print(f"SCP Stderr:\n{result.stderr}")
             return False
-            
+
     except subprocess.TimeoutExpired:
-        print(f"❌ {host}: Download timed out")
+        print(f"{host}: Download timed out")
         return False
     except Exception as e:
-        print(f"❌ {host}: SCP error - {e}")
+        print(f"{host}: SCP error - {e}")
         return False
 
 def sync_local_preprocessing_script():
@@ -160,27 +160,27 @@ def sync_local_preprocessing_script():
         # First, fetch from origin
         result_fetch = subprocess.run(sync_command, capture_output=True, text=True, timeout=60, cwd='.')
         if result_fetch.returncode != 0:
-            print(f"⚠️  Local: Git fetch warning")
+            print(f"Local: Git fetch warning")
             if result_fetch.stderr.strip():
                 print(f"Stderr:\n{result_fetch.stderr}")
 
         # Then, checkout the specific file
         result_checkout = subprocess.run(checkout_command, capture_output=True, text=True, timeout=60, cwd='.')
         if result_checkout.returncode == 0:
-            print(f"✅ Local: Script synced successfully")
+            print(f"Local: Script synced successfully")
             return True
         else:
-            print(f"⚠️  Local: Checkout warning (return code: {result_checkout.returncode})")
+            print(f"Local: Checkout warning (return code: {result_checkout.returncode})")
             if result_checkout.stderr.strip():
                 print(f"Stderr:\n{result_checkout.stderr}")
             # Return True even with warnings - file might already be up-to-date
             return True
 
     except subprocess.TimeoutExpired:
-        print(f"❌ Local: Sync timed out")
+        print(f"Local: Sync timed out")
         return False
     except Exception as e:
-        print(f"❌ Local: Sync error - {e}")
+        print(f"Local: Sync error - {e}")
         return False
 
 def execute_local_preprocessing(output_suffix: str):
@@ -199,23 +199,23 @@ def execute_local_preprocessing(output_suffix: str):
         print(f"Return code: {result.returncode}")
         
         if result.returncode == 0:
-            print(f"✅ Local: Processing completed successfully")
+            print(f"Local: Processing completed successfully")
             if result.stdout.strip():
                 print(f"Output:\n{result.stdout}")
         else:
-            print(f"❌ Local: Processing failed (return code: {result.returncode})")
+            print(f"Local: Processing failed (return code: {result.returncode})")
             if result.stdout.strip():
                 print(f"Stdout:\n{result.stdout}")
             if result.stderr.strip():
                 print(f"Stderr:\n{result.stderr}")
-            
+
         return result.returncode == 0
-        
+
     except subprocess.TimeoutExpired:
-        print(f"❌ Local: Processing timed out")
+        print(f"Local: Processing timed out")
         return False
     except Exception as e:
-        print(f"❌ Local: Execution error - {e}")
+        print(f"Local: Execution error - {e}")
         return False
 
 def main():
@@ -282,7 +282,7 @@ def main():
             print(f"Failed to download result from server {host}")
             sys.exit(1)
     
-    print("🎉 All processing completed successfully!")
+    print("All processing completed successfully!")
     print("\nGenerated files:")
     
     # Show local file
