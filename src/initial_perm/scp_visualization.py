@@ -1,244 +1,307 @@
 import numpy as np
-import matplotlib.pyplot as plt
 import random
+import matplotlib.pyplot as plt
+import matplotlib.patches as patches
+import os
 
-def visualize_scp_method():
-    """Stratified Continuum Percolation 방법의 사각형 생성 과정 시각화"""
-    
-    # 파라미터 설정
-    N = 3  # 각 레벨에서 생성할 사각형 수
-    b = 2  # 분할 비율
-    size = 10  # 전체 도메인 크기
-    level_max = 3  # 최대 레벨
-    
-    # 시각화 설정
-    fig, axes = plt.subplots(1, level_max, figsize=(15, 5))
-    colors = ['red', 'blue', 'green', 'orange', 'purple']
-    
-    def draw_rectangles_visual(level, parent_coords, ax):
-        """각 레벨의 사각형들을 시각화"""
-        side_length = size / (b ** level)
+
+def generate_scp_visualization_data(N, b, size_x, size_y, level_max, density_map_ratio):
+    """
+    Generate SCP field data while tracking all levels for visualization.
+
+    Args:
+        N: Number of squares per parent square
+        b: Subdivision factor
+        size_x: Width of rectangular domain
+        size_y: Height of rectangular domain
+        level_max: Maximum recursion level
+        density_map_ratio: Ratio for density map resolution
+
+    Returns:
+        level_coords: Dictionary mapping level -> list of (x, y, side_length) tuples
+        density_map: Final density map array
+    """
+    # Calculate density map dimensions based on ratio
+    density_map_size_x = int(size_x * density_map_ratio)
+    density_map_size_y = int(size_y * density_map_ratio)
+    density_map = np.ones((density_map_size_x, density_map_size_y))
+
+    # Store coordinates for each level
+    level_coords = {level: [] for level in range(1, level_max + 1)}
+
+    def draw_squares(N, b, size_x, size_y, level=1, parent_coords=[(0, 0)]):
+        """Recursively draw squares and track coordinates at each level."""
+
+        if level > level_max:
+            return
+
+        # Calculate side_length as average of dimensions divided by b^level
+        side_length = (size_x + size_y) / 2 / (b ** level)
         new_coords = []
-        
-        for i, (px, py) in enumerate(parent_coords):
-            # 부모 영역 표시 (점선)
-            parent_size = size / (b ** (level-1)) if level > 1 else size
-            parent_rect = plt.Rectangle((px, py), parent_size, parent_size, 
-                                      fill=False, edgecolor='gray', linestyle='--', alpha=0.5)
-            ax.add_patch(parent_rect)
-            
-            # N개의 사각형 생성
-            for _ in range(N):
-                # 부모 영역 내에서 무작위 위치 선택
-                x = px + random.uniform(0, side_length * b)
-                y = py + random.uniform(0, side_length * b)
-                
-                # 경계 조건 (wrapping)
-                if x >= size:
-                    x = x - size
-                if y >= size:
-                    y = y - size
-                
-                new_coords.append((x, y))
-                
-                # 사각형 그리기
-                rect = plt.Rectangle((x, y), side_length, side_length, 
-                                   fill=True, facecolor=colors[level-1], 
-                                   alpha=0.7, edgecolor='black', linewidth=1)
-                ax.add_patch(rect)
-        
-        return new_coords
-    
-    # 각 레벨별로 시각화
-    current_coords = [(0, 0)]  # 초기 좌표
-    
-    for level in range(1, level_max + 1):
-        ax = axes[level - 1]
-        ax.set_xlim(0, size)
-        ax.set_ylim(0, size)
-        ax.set_aspect('equal')
-        ax.grid(True, alpha=0.3)
-        ax.set_title(f'Level {level}', fontsize=12)
-        
-        # 이전 레벨까지의 모든 사각형들을 다시 그리기
-        temp_coords = [(0, 0)]
-        for prev_level in range(1, level + 1):
-            side_length = size / (b ** prev_level)
-            temp_coords = draw_rectangles_visual(prev_level, temp_coords, ax)
-    
-    plt.tight_layout()
-    plt.savefig('/home/geofluids/research/FNO/src/initial_perm/scp_visualization.png', 
-                dpi=300, bbox_inches='tight')
-    plt.show()
 
-def visualize_stepwise_scp():
-    """단계별 SCP 시각화 - 각 레벨을 누적으로 보여줌 + 밀도 맵"""
-    
-    N = 5  # 각 부모로부터 5개 박스 생성
-    b = 2.64  # 크기 감소 비율
-    size = 64  # 크기 증가 (마지막 레벨 박스 크기 확보)
-    level_max = 3  # 3레벨 유지
-    density_map_size = 32  # 밀도 맵 해상도
-    
-    # 색상 설정 (3레벨용)
-    colors = ['#FF6B6B', '#4ECDC4', '#45B7D1']  # 빨강, 청록, 파랑
-    alphas = [0.4, 0.6, 0.8]  # 레벨별 투명도
-    
-    def draw_wrapped_rectangle(ax, x, y, width, height, color, alpha, linewidth):
-        """래핑을 고려한 사각형 그리기"""
-        rectangles = []
-        
-        # 기본 사각형
-        if x + width <= size and y + height <= size:
-            # 완전히 도메인 내부
-            rect = plt.Rectangle((x, y), width, height, 
-                               fill=True, facecolor=color, alpha=alpha, 
-                               edgecolor='black', linewidth=linewidth)
-            rectangles.append(rect)
-        else:
-            # 래핑 필요
-            # 우하단 부분 (기본)
-            w1 = min(width, size - x)
-            h1 = min(height, size - y)
-            if w1 > 0 and h1 > 0:
-                rect = plt.Rectangle((x, y), w1, h1, 
-                                   fill=True, facecolor=color, alpha=alpha, 
-                                   edgecolor='black', linewidth=linewidth)
-                rectangles.append(rect)
-            
-            # 우상단 부분 (y 래핑)
-            if y + height > size and w1 > 0:
-                h2 = (y + height) - size
-                rect = plt.Rectangle((x, 0), w1, h2, 
-                                   fill=True, facecolor=color, alpha=alpha, 
-                                   edgecolor='black', linewidth=linewidth)
-                rectangles.append(rect)
-            
-            # 좌하단 부분 (x 래핑)
-            if x + width > size and h1 > 0:
-                w2 = (x + width) - size
-                rect = plt.Rectangle((0, y), w2, h1, 
-                                   fill=True, facecolor=color, alpha=alpha, 
-                                   edgecolor='black', linewidth=linewidth)
-                rectangles.append(rect)
-            
-            # 좌상단 부분 (x, y 모두 래핑)
-            if x + width > size and y + height > size:
-                w2 = (x + width) - size
-                h2 = (y + height) - size
-                rect = plt.Rectangle((0, 0), w2, h2, 
-                                   fill=True, facecolor=color, alpha=alpha, 
-                                   edgecolor='black', linewidth=linewidth)
-                rectangles.append(rect)
-        
-        for rect in rectangles:
-            ax.add_patch(rect)
-    
-    def update_density_map(density_map, x, y, side_length, size, density_map_size):
-        """원본 initial_perm.py와 동일한 밀도 맵 업데이트 - 박스 내부 모든 픽셀에 1 추가"""
+        for px, py in parent_coords:
+            for _ in range(N):
+                if level == 1:  # First level: distribute across entire domain
+                    x = random.uniform(0, size_x)
+                    y = random.uniform(0, size_y)
+                else:  # Subsequent levels: fractal subdivision
+                    x = px + random.uniform(0, side_length * b)
+                    y = py + random.uniform(0, side_length * b)
+
+                # Handle wrapping for rectangular domain
+                if x >= size_x:
+                    x = x - size_x
+                if y >= size_y:
+                    y = y - size_y
+
+                new_coords.append((x, y))
+
+                # Store coordinates for visualization
+                level_coords[level].append((x, y, side_length))
+
+                if level == level_max:
+                    update_density_map(density_map, x, y, side_length, size_x, size_y,
+                                     density_map_size_x, density_map_size_y)
+
+        draw_squares(N, b, size_x, size_y, level + 1, new_coords)
+
+    def update_density_map(density_map, x, y, side_length, size_x, size_y,
+                          density_map_size_x, density_map_size_y):
+        """Update density map by incrementing cells covered by square."""
+
         for i in range(int(side_length)):
             for j in range(int(side_length)):
-                # 박스 내부의 실제 좌표 (래핑 적용)
-                actual_x = (x + i) % size
-                actual_y = (y + j) % size
-                
-                # 밀도 맵 인덱스로 변환
-                xi = int(actual_x // (size / density_map_size))
-                yj = int(actual_y // (size / density_map_size))
-                
-                # 경계 체크 (밀도 맵 크기 내에서)
-                xi = min(xi, density_map_size - 1)
-                yj = min(yj, density_map_size - 1)
-                
-                density_map[yj, xi] += 1
-    
-    # 밀도 맵 초기화
-    density_map = np.ones((density_map_size, density_map_size))
-    
-    # 모든 레벨의 좌표를 저장할 리스트
-    all_level_coords = []
-    current_coords = [(0, 0)]  # 초기 좌표
-    
-    # 각 레벨별로 좌표 생성
-    for level in range(1, level_max + 1):
-        side_length = size / (b ** level)  # 현재 레벨의 사각형 크기
-        new_coords = []
-        
-        for px, py in current_coords:
-            for _ in range(N):
-                # 부모 영역 내에서 무작위 위치 선택
-                search_range = side_length * b  # 부모 크기의 b배 범위
-                x = px + random.uniform(0, search_range)
-                y = py + random.uniform(0, search_range)
-                
-                # 래핑 처리
-                x = x % size
-                y = y % size
-                
-                new_coords.append((x, y))
-        
-        all_level_coords.append((new_coords.copy(), side_length, level))
-        current_coords = new_coords
-        
-        # 마지막 레벨에서 밀도 맵 업데이트
-        if level == level_max:
-            for x, y in new_coords:
-                update_density_map(density_map, x, y, side_length, size, density_map_size)
-    
-    # 각 단계별로 이미지 생성
-    for step in range(1, level_max + 1):
-        fig, ax = plt.subplots(1, 1, figsize=(10, 10))
-        
-        # 현재 단계까지의 모든 레벨 그리기
-        for level_idx in range(step):
-            coords, side_length, level = all_level_coords[level_idx]
-            
-            for x, y in coords:
-                draw_wrapped_rectangle(ax, x, y, side_length, side_length, 
-                                     colors[level-1], alphas[level-1], 
-                                     4-level)  # 레벨이 높을수록 얇은 선
-        
-        ax.set_xlim(0, size)
-        ax.set_ylim(0, size)
-        ax.set_aspect('equal')
-        ax.set_xticks([])
-        ax.set_yticks([])
-        ax.spines['top'].set_visible(False)
-        ax.spines['right'].set_visible(False)
-        ax.spines['bottom'].set_visible(False)
-        ax.spines['left'].set_visible(False)
-        
-        plt.tight_layout()
-        plt.savefig(f'/home/geofluids/research/FNO/src/initial_perm/scp_level_{step}.png', 
-                    dpi=300, bbox_inches='tight', pad_inches=0)
-        plt.close()
-        print(f"Generated: scp_level_{step}.png")
-    
-    # 밀도 맵 시각화
-    fig, ax = plt.subplots(1, 1, figsize=(10, 10))
-    
-    # 밀도 맵을 컬러맵으로 표시
-    im = ax.imshow(density_map, cmap='viridis', origin='lower', 
-                   extent=[0, size, 0, size], interpolation='nearest')
-    
-    ax.set_xlim(0, size)
-    ax.set_ylim(0, size)
-    ax.set_aspect('equal')
-    ax.set_xticks([])
-    ax.set_yticks([])
-    ax.spines['top'].set_visible(False)
-    ax.spines['right'].set_visible(False)
-    ax.spines['bottom'].set_visible(False)
-    ax.spines['left'].set_visible(False)
-    
-    plt.tight_layout()
-    plt.savefig('/home/geofluids/research/FNO/src/initial_perm/scp_density_map.png', 
-                dpi=300, bbox_inches='tight', pad_inches=0)
-    plt.close()
-    print("Generated: scp_density_map.png")
-    
-    print("All step-by-step images and density map generated!")
 
-if __name__ == "__main__":
-    random.seed(42)  # 재현 가능한 결과를 위해
-    visualize_stepwise_scp()
+                # Calculate grid indices for rectangular domain
+                xi = int((x + i) // (size_x / density_map_size_x))
+                yj = int((y + j) // (size_y / density_map_size_y))
+
+                # Handle wrapping for rectangular density map
+                if xi > density_map_size_x - 1:
+                    xi = xi - density_map_size_x
+                if yj > density_map_size_y - 1:
+                    yj = yj - density_map_size_y
+
+                density_map[xi, yj] += 1
+
+    # Execute SCP algorithm
+    draw_squares(N, b, size_x, size_y)
+
+    return level_coords, density_map
+
+
+def visualize_level_squares(level_coords, level, size_x, size_y, output_dir):
+    """
+    Visualize squares at a specific level with previous levels shown in different colors.
+
+    Args:
+        level_coords: Dictionary of coordinates per level
+        level: Level to visualize
+        size_x: Domain width
+        size_y: Domain height
+        output_dir: Output directory path
+    """
+    fig, ax = plt.subplots(figsize=(12, 6))
+
+    # Color map for different levels
+    colors = ["#B8474B", '#4bab72', "#5164D1BC", "#e1ff00"]
+
+    # Draw all levels up to current level
+    for lv in range(1, level + 1):
+        coords = level_coords[lv]
+        color_idx = (lv - 1) % len(colors)
+
+        for x, y, side_length in coords:
+            # Handle wrapping: if square extends beyond boundary, draw wrapped portions
+            # Check if square wraps in X direction
+            if x + side_length > size_x:
+                # Split into two parts: right part and wrapped left part
+                right_width = size_x - x
+                left_width = side_length - right_width
+
+                # Check if also wraps in Y direction
+                if y + side_length > size_y:
+                    # Wraps in both X and Y: draw 4 rectangles
+                    bottom_height = size_y - y
+                    top_height = side_length - bottom_height
+
+                    # Bottom-right
+                    rect1 = patches.Rectangle((x, y), right_width, bottom_height,
+                                             linewidth=1.0, edgecolor='black',
+                                             facecolor=colors[color_idx], alpha=0.5)
+                    ax.add_patch(rect1)
+                    # Bottom-left (wrapped X)
+                    rect2 = patches.Rectangle((0, y), left_width, bottom_height,
+                                             linewidth=1.0, edgecolor='black',
+                                             facecolor=colors[color_idx], alpha=0.5)
+                    ax.add_patch(rect2)
+                    # Top-right (wrapped Y)
+                    rect3 = patches.Rectangle((x, 0), right_width, top_height,
+                                             linewidth=1.0, edgecolor='black',
+                                             facecolor=colors[color_idx], alpha=0.5)
+                    ax.add_patch(rect3)
+                    # Top-left (wrapped both)
+                    rect4 = patches.Rectangle((0, 0), left_width, top_height,
+                                             linewidth=1.0, edgecolor='black',
+                                             facecolor=colors[color_idx], alpha=0.5)
+                    ax.add_patch(rect4)
+                else:
+                    # Wraps only in X: draw 2 rectangles
+                    # Right part
+                    rect1 = patches.Rectangle((x, y), right_width, side_length,
+                                             linewidth=1.0, edgecolor='black',
+                                             facecolor=colors[color_idx], alpha=0.5)
+                    ax.add_patch(rect1)
+                    # Left part (wrapped)
+                    rect2 = patches.Rectangle((0, y), left_width, side_length,
+                                             linewidth=1.0, edgecolor='black',
+                                             facecolor=colors[color_idx], alpha=0.5)
+                    ax.add_patch(rect2)
+            elif y + side_length > size_y:
+                # Wraps only in Y: draw 2 rectangles
+                bottom_height = size_y - y
+                top_height = side_length - bottom_height
+
+                # Bottom part
+                rect1 = patches.Rectangle((x, y), side_length, bottom_height,
+                                         linewidth=1.0, edgecolor='black',
+                                         facecolor=colors[color_idx], alpha=0.5)
+                ax.add_patch(rect1)
+                # Top part (wrapped)
+                rect2 = patches.Rectangle((x, 0), side_length, top_height,
+                                         linewidth=1.0, edgecolor='black',
+                                         facecolor=colors[color_idx], alpha=0.5)
+                ax.add_patch(rect2)
+            else:
+                # No wrapping: draw single rectangle
+                rect = patches.Rectangle((x, y), side_length, side_length,
+                                         linewidth=1.0, edgecolor='black',
+                                         facecolor=colors[color_idx], alpha=0.5)
+                ax.add_patch(rect)
+
+    ax.set_xlim(0, size_x)
+    ax.set_ylim(0, size_y)
+    ax.set_aspect('equal')
+    ax.axis('off')  # Remove axes, labels, ticks
+
+    output_path = os.path.join(output_dir, f'level_{level}_squares.png')
+    plt.savefig(output_path, dpi=150, bbox_inches='tight', pad_inches=0)
+    plt.close()
+    print(f"Saved: {output_path}")
+
+
+def visualize_density_map(density_map, density_map_ratio, output_dir):
+    """
+    Visualize density map as heatmap with correct dimensions.
+
+    Args:
+        density_map: Density map array
+        density_map_ratio: Ratio for density map resolution
+        output_dir: Output directory path
+    """
+    fig, ax = plt.subplots(figsize=(12, 6))
+
+    # Get actual density map dimensions
+    density_map_size_x, density_map_size_y = density_map.shape
+
+    ax.imshow(density_map.T, origin='lower', cmap='hot',
+              extent=[0, density_map_size_x, 0, density_map_size_y], aspect='auto')
+    ax.axis('off')  # Remove axes, labels, ticks
+
+    output_path = os.path.join(output_dir, 'density_map.png')
+    plt.savefig(output_path, dpi=150, bbox_inches='tight', pad_inches=0)
+    plt.close()
+    print(f"Saved: {output_path}")
+
+
+def visualize_perm_map(density_map, output_dir):
+    """
+    Generate and visualize permeability map in log10 scale.
+
+    Args:
+        density_map: Density map array
+        output_dir: Output directory path
+    """
+    # Generate permeability map (same logic as initial_perm.py)
+    average_aperature = np.random.uniform(0.00001, 0.0001)
+
+    domain_size = density_map.shape[0] * density_map.shape[1]
+    total_density = np.sum(density_map)
+    aperature_ratio = average_aperature * domain_size / total_density
+    aperature_map = np.minimum(0.005, aperature_ratio * density_map)
+
+    perm_map = aperature_map ** 3 / 12.0 / 100.0 / 0.005
+
+    # Apply log10 transform for visualization
+    perm_map_log = np.log10(perm_map + 1e-20)  # Add small value to avoid log(0)
+
+    # Get density map dimensions
+    density_map_size_x, density_map_size_y = density_map.shape
+
+    # Visualize permeability map in log10 scale
+    fig, ax = plt.subplots(figsize=(12, 6))
+    ax.imshow(perm_map_log.T, origin='lower', cmap='viridis',
+              extent=[0, density_map_size_x, 0, density_map_size_y], aspect='auto')
+    ax.axis('off')  # Remove axes, labels, ticks
+
+    output_path = os.path.join(output_dir, 'permeability_map.png')
+    plt.savefig(output_path, dpi=150, bbox_inches='tight', pad_inches=0)
+    plt.close()
+    print(f"Saved: {output_path}")
+
+
+def main():
+    """
+    Main workflow:
+    1. Set SCP parameters
+    2. Generate SCP data with level tracking
+    3. Visualize each level's squares (cumulative with different colors)
+    4. Visualize density map
+    5. Visualize permeability map (log10 scale)
+    """
+    # SCP parameters
+    CONFIG = {
+        'N': 9,
+        'b': 2.64,
+        'size_x': 256,
+        'size_y': 128,
+        'level_max': 4,
+        'density_map_ratio': 0.25,
+        'output_dir': '/home/geofluids/research/FNO/src/initial_perm/output_visualization'
+    }
+
+    # Create output directory
+    os.makedirs(CONFIG['output_dir'], exist_ok=True)
+    print(f"Output directory: {CONFIG['output_dir']}")
+
+    # Set random seed for reproducibility
+    random.seed(72)
+    np.random.seed(72)
+
+    # Generate SCP data
+    print("\nGenerating SCP field data...")
+    level_coords, density_map = generate_scp_visualization_data(
+        CONFIG['N'], CONFIG['b'], CONFIG['size_x'], CONFIG['size_y'],
+        CONFIG['level_max'], CONFIG['density_map_ratio']
+    )
+
+    # Visualize each level's squares (cumulative)
+    print("\nVisualizing level-by-level squares...")
+    for level in range(1, CONFIG['level_max'] + 1):
+        visualize_level_squares(level_coords, level, CONFIG['size_x'],
+                               CONFIG['size_y'], CONFIG['output_dir'])
+
+    # Visualize density map
+    print("\nVisualizing density map...")
+    visualize_density_map(density_map, CONFIG['density_map_ratio'],
+                         CONFIG['output_dir'])
+
+    # Visualize permeability map
+    print("\nVisualizing permeability map...")
+    visualize_perm_map(density_map, CONFIG['output_dir'])
+
+    print("\n✓ All visualizations completed!")
+
+
+if __name__ == '__main__':
+    main()

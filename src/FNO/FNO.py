@@ -69,7 +69,7 @@ CONFIG = {
         'initial_lr': 1e-2,
     },
     'VISUALIZATION': {
-        'SAMPLE_NUM': [100, 150],  # Can be single int or list: e.g., [121, 122, 123]
+        'SAMPLE_NUM': [1, 50, 70, 90, 111],  # Can be single int or list: e.g., [121, 122, 123]
         'TIME_INDICES': (4, 9, 14, 19),
         'DPI': 200,
         'SAVEASCSV': True  # Save visualization data as CSV format
@@ -80,7 +80,7 @@ CONFIG = {
         'l2_p': 2   # Power for L2 loss
     },
     'TRAINING_CONFIG': {
-        'mode': 'single',  # Options: 'single', 'optuna', 'eval'
+        'mode': 'eval',  # Options: 'single', 'optuna', 'eval'
         'optuna_n_trials': 100,
         'optuna_seed': 42,
         'optuna_n_startup_trials': 10,
@@ -99,16 +99,16 @@ CONFIG = {
         'channel_mlp_skip_options': ['linear', 'soft-gating']  # categorical options
     },
     'SINGLE_PARAMS': {
-        "n_modes_1": 4,
-        "n_modes_2": 4,
-        "n_modes_3": 2,
-        "hidden_channels": 36,
-        "n_layers": 6,
+        "n_modes_1": 11,
+        "n_modes_2": 10,
+        "n_modes_3": 5,
+        "hidden_channels": 47,
+        "n_layers": 8,
         "domain_padding": (0.1,0.1,0.1),
         "train_batch_size": 32,
-        "l2_weight": 1e-8,
+        "l2_weight": 3.4896738256925045e-06,
         "channel_mlp_expansion": 0.5,
-        "channel_mlp_skip": 'linear'
+        "channel_mlp_skip": 'soft-gating'
     }
 }
 
@@ -907,7 +907,7 @@ def optuna_optimization(config: Dict, processor, train_dataset, val_dataset, tes
     
     # Run optimization with progress callback
     study.optimize(
-        objective, 
+        objective,
         n_trials=config['TRAINING_CONFIG']['optuna_n_trials'],
         callbacks=[progress_callback] if verbose else None
     )
@@ -945,11 +945,11 @@ def optuna_optimization(config: Dict, processor, train_dataset, val_dataset, tes
         'n_trials': len(study.trials),
         'config': config
     }
-    
+
     # Save results to file
     results_path = optuna_output_dir / 'optimization_results.pt'
     torch.save(optimization_results, results_path)
-    
+
     # Save study as pickle for later analysis
     study_path = optuna_output_dir / 'optuna_study.pkl'
     import pickle
