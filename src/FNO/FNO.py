@@ -821,7 +821,7 @@ def optuna_optimization(config: Dict, processor, train_dataset, val_dataset, tes
                 channel_mlp_expansion=channel_mlp_expansion,
                 channel_mlp_skip=channel_mlp_skip
             )
-            
+
             # Train model and get best validation loss
             trained_model = train_model(
                 config=config,
@@ -836,21 +836,43 @@ def optuna_optimization(config: Dict, processor, train_dataset, val_dataset, tes
                 loss_fn=loss_fn,
                 verbose=False  # Reduce verbosity during optimization
             )
-            
+
             # Get best validation loss from training history
             loss_history_path = Path(config['OUTPUT_DIR']) / 'final' / 'loss_history.pt'
             if loss_history_path.exists():
                 loss_history = torch.load(loss_history_path, map_location='cpu', weights_only=False)
                 best_val_loss = min(loss_history['val_losses'])
+                del loss_history  # Free memory
             else:
                 # Fallback: return a high loss value if history not found
                 best_val_loss = float('inf')
-            
+
+            # Explicitly delete all GPU objects before returning
+            del model, trained_model, optimizer, scheduler, loss_fn
+            del train_loader, val_loader, test_loader
+
+            # Clear GPU cache
+            if device == 'cuda':
+                torch.cuda.empty_cache()
+
             return best_val_loss
-            
+
         except Exception as e:
             if verbose:
                 print(f"Trial {trial.number} failed with error: {e}")
+
+            # Clean up GPU memory even on failure
+            if 'model' in locals():
+                del model
+            if 'trained_model' in locals():
+                del trained_model
+            if 'optimizer' in locals():
+                del optimizer
+            if 'scheduler' in locals():
+                del scheduler
+            if device == 'cuda':
+                torch.cuda.empty_cache()
+
             # Return high loss for failed trials
             return float('inf')
     
