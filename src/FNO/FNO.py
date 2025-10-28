@@ -816,7 +816,6 @@ def optuna_optimization(config: Dict, processor, train_dataset, val_dataset, tes
                 n_layers=n_layers,
                 domain_padding=domain_padding,
                 train_batch_size=train_batch_size,
-                initial_lr=config['SCHEDULER_CONFIG']['initial_lr'],
                 l2_weight=l2_weight,
                 channel_mlp_expansion=channel_mlp_expansion,
                 channel_mlp_skip=channel_mlp_skip
