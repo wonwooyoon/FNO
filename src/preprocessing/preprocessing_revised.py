@@ -69,7 +69,7 @@ def read_one_h5(h5_path: Path):
 
         for tnum in times_sorted:
             key = available[tnum]
-            total_uo2 = np.array(f[key]["Total CO3-- [M]"][:])[zc_mask]
+            total_uo2 = np.array(f[key]["Total Ca++ [M]"][:])[zc_mask]
             out_grid = to_grid(total_uo2)
             out_slices.append(out_grid[np.newaxis, :, :, np.newaxis])  # (1,nx,ny,1)
             in_slices.append(input_base)                                # (9,nx,ny,1)

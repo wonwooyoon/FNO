@@ -38,10 +38,8 @@ from neuraloperator.neuralop.utils import count_model_params
 from neuraloperator.neuralop.models import TFNO
 from neuraloperator.neuralop.training import AdamW
 
-# Import visualization utilities
-from util_gify import create_gifs_for_samples
-from util_detail_eval import detailed_evaluation
-from util_integrated_gradients import integrated_gradients_analysis
+# Import unified output utility
+from util_output import generate_all_outputs
 
 # ==============================================================================
 # Configuration
@@ -73,20 +71,42 @@ CONFIG = {
         'gamma': 0.5,
         'initial_lr': 1e-2,
     },
-    'VISUALIZATION': {
-        'SAMPLE_NUM': [3, 5, 52, 98, 121, 230],  # Can be single int or list: e.g., [121, 122, 123]
-        'TIME_INDICES': (4, 9, 14, 19),
-        'DPI': 200,
-        'SAVEASCSV': True,  # Save visualization data as CSV format
-        'GIF_GEN': False,  # Generate animated GIFs showing temporal evolution
-        'GIF_FPS': 2,  # Frames per second for GIF animation
-        'GIF_ALL_TIMES': True  # If True, use all time indices; if False, use only TIME_INDICES
-    },
-    'DETAIL_EVAL': False,  # Compute MSE and SSIM per time index for all test samples in eval mode
-    'IG_ANALYSIS': {
-        'ENABLED': True,  # Set to True to enable IG analysis in eval mode
-        'SAMPLE_IDX': 98,   # Test sample index to analyze
-        'TIME_INDICES': [5, 10, 15, 19],  # Target time indices for attribution
+    'OUTPUT': {
+        'ENABLED': True,  # Master switch for all output generation
+        'OUTPUT_DIR': './src/FNO/output_pure',  # Base output directory
+        'SAMPLE_INDICES': [3, 5, 52, 98, 121, 230],  # Samples to visualize
+        'TIME_INDICES': [4, 9, 14, 19],  # Time indices to visualize
+        'DPI': 200,  # Resolution for all images
+
+        # Image output configuration
+        'IMAGE_OUTPUT': {
+            'ENABLED': True,  # Generate static images
+            'COMBINED_IMG': True,  # 3×4 grid (GT/Pred/Error)
+            'SEPARATED_IMG': False,  # Individual images per time/type
+        },
+
+        # GIF generation configuration
+        'GIF_OUTPUT': {
+            'ENABLED': False,  # Generate animated GIFs
+            'FPS': 2,  # Frames per second
+            # Always uses all time steps (GIF_ALL_TIMES removed)
+        },
+
+        # Detailed evaluation configuration
+        'DETAIL_EVAL': {
+            'ENABLED': False,  # Compute RMSE/SSIM per time
+            'METRICS': ['RMSE', 'SSIM'],  # Metrics to compute
+            'PARITY_PLOT': True,  # Generate parity plot CSV
+            'ADD_MEAN_COLUMN': True,  # Add mean column to CSV
+        },
+
+        # Integrated Gradients configuration
+        'IG_ANALYSIS': {
+            'ENABLED': False,  # Perform IG analysis
+            'SAMPLE_IDX': 98,  # Sample to analyze
+            'TIME_INDICES': [5, 10, 15, 19],  # Target times
+            'N_STEPS': 50,  # Integration steps
+        },
     },
     'LOSS_CONFIG': {
         'loss_type': 'l2',  # Options: 'l2', 'mse'
