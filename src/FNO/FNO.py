@@ -38,6 +38,11 @@ from neuraloperator.neuralop.utils import count_model_params
 from neuraloperator.neuralop.models import TFNO
 from neuraloperator.neuralop.training import AdamW
 
+# Import visualization utilities
+from util_gify import create_gifs_for_samples
+from util_detail_eval import detailed_evaluation
+from util_integrated_gradients import integrated_gradients_analysis
+
 # ==============================================================================
 # Configuration
 # ==============================================================================
@@ -51,7 +56,7 @@ CONFIG = {
     'RANDOM_STATE': 42,
     'DOMAIN_PADDING_MODE': 'symmetric',
     'MODEL_CONFIG': {
-        'in_channels': 9,  # 7 original channels + 1 uniform meta channel
+        'in_channels': 9,  # 8 original channels + 1 uniform meta channel
         'out_channels': 1,
         'lifting_channel_ratio': 2,
         'projection_channel_ratio': 2,
@@ -69,10 +74,19 @@ CONFIG = {
         'initial_lr': 1e-2,
     },
     'VISUALIZATION': {
-        'SAMPLE_NUM': [1, 50, 70, 90, 111],  # Can be single int or list: e.g., [121, 122, 123]
+        'SAMPLE_NUM': [3, 5, 52, 98, 121, 230],  # Can be single int or list: e.g., [121, 122, 123]
         'TIME_INDICES': (4, 9, 14, 19),
         'DPI': 200,
-        'SAVEASCSV': True  # Save visualization data as CSV format
+        'SAVEASCSV': True,  # Save visualization data as CSV format
+        'GIF_GEN': False,  # Generate animated GIFs showing temporal evolution
+        'GIF_FPS': 2,  # Frames per second for GIF animation
+        'GIF_ALL_TIMES': True  # If True, use all time indices; if False, use only TIME_INDICES
+    },
+    'DETAIL_EVAL': False,  # Compute MSE and SSIM per time index for all test samples in eval mode
+    'IG_ANALYSIS': {
+        'ENABLED': True,  # Set to True to enable IG analysis in eval mode
+        'SAMPLE_IDX': 98,   # Test sample index to analyze
+        'TIME_INDICES': [5, 10, 15, 19],  # Target time indices for attribution
     },
     'LOSS_CONFIG': {
         'loss_type': 'l2',  # Options: 'l2', 'mse'
@@ -99,15 +113,15 @@ CONFIG = {
         'channel_mlp_skip_options': ['linear', 'soft-gating']  # categorical options
     },
     'SINGLE_PARAMS': {
-        "n_modes_1": 11,
-        "n_modes_2": 10,
-        "n_modes_3": 5,
-        "hidden_channels": 47,
-        "n_layers": 8,
-        "domain_padding": (0.1,0.1,0.1),
+        "n_modes_1": 16,
+        "n_modes_2": 5,
+        "n_modes_3": 2,
+        "hidden_channels": 41,
+        "n_layers": 6,
+        "domain_padding": (0.2,0.1,0.1),
         "train_batch_size": 32,
-        "l2_weight": 3.4896738256925045e-06,
-        "channel_mlp_expansion": 0.5,
+        "l2_weight": 2.5863778861716804e-06,
+        "channel_mlp_expansion": 2.0,
         "channel_mlp_skip": 'soft-gating'
     }
 }
@@ -727,7 +741,26 @@ def model_evaluation(config: Dict, processor, device: str, model, test_loader, l
         else:
             print(f"  Test Loss: {final_test_loss:.6f}")
         print(f"Evaluation results saved to: {eval_results_path}")
-    
+
+    # Perform detailed evaluation if enabled
+    if config.get('DETAIL_EVAL', False):
+        if verbose:
+            print(f"\nDetailed evaluation enabled - computing MSE and SSIM per time index...")
+
+        detail_results = detailed_evaluation(
+            config=config,
+            processor=processor,
+            device=device,
+            model=model,
+            test_loader=test_loader,
+            verbose=verbose
+        )
+
+        # Add detailed results to eval_results
+        eval_results['detail_mse_df'] = detail_results['mse_df']
+        eval_results['detail_ssim_df'] = detail_results['ssim_df']
+        eval_results['detail_parity_file_paths'] = detail_results['parity_file_paths']
+
     return eval_results
 
 # ==============================================================================
@@ -1196,7 +1229,7 @@ def visualize_single_sample(config: Dict, processor, device: str, trained_model,
 
 
 def visualization(config: Dict, processor, device: str, trained_model, train_dataset,
-                 test_dataset, verbose: bool = True):
+                 val_dataset, test_dataset, verbose: bool = True):
     """
     Generate visualizations for multiple samples:
     1. A separate plot for permeability and pyrite maps.
@@ -1209,6 +1242,7 @@ def visualization(config: Dict, processor, device: str, trained_model, train_dat
         device: Device to use (e.g., 'cuda' or 'cpu').
         trained_model: The trained FNO model.
         train_dataset: The training dataset.
+        val_dataset: The validation dataset.
         test_dataset: The test dataset for generating predictions.
         verbose: If True, prints progress information.
     """
@@ -1353,6 +1387,44 @@ def visualization(config: Dict, processor, device: str, trained_model, train_dat
             print(f"CSV shape: {df_unified.shape}")
             print(f"CSV columns: {list(df_unified.columns)}")
             print(f"Processed {len(valid_sample_nums)} samples: {valid_sample_nums}")
+
+    # --- GIF Generation ---
+    if config['VISUALIZATION']['GIF_GEN']:
+        if verbose:
+            print(f"\nGenerating animated GIFs...")
+
+        output_dir = Path(config['OUTPUT_DIR'])
+        all_gif_outputs = create_gifs_for_samples(
+            gt_phys=gt_phys,
+            pred_phys=pred_phys,
+            sample_indices=valid_sample_nums,
+            config=config,
+            output_dir=output_dir,
+            verbose=verbose
+        )
+
+        if verbose:
+            total_gifs = len(all_gif_outputs) * 3
+            total_colorbars = len(all_gif_outputs) * 2
+            print(f"GIF generation summary:")
+            print(f"  - {total_gifs} GIF files (GT, Pred, Error)")
+            print(f"  - {total_colorbars} colorbar PNG files")
+
+    # --- Integrated Gradients Analysis ---
+    if config.get('IG_ANALYSIS', {}).get('ENABLED', False):
+        if verbose:
+            print(f"\nIntegrated Gradients analysis enabled...")
+
+        integrated_gradients_analysis(
+            config=config,
+            processor=processor,
+            device=device,
+            model=trained_model,
+            train_dataset=train_dataset,
+            val_dataset=val_dataset,
+            test_dataset=test_dataset,
+            verbose=verbose
+        )
 
     if verbose:
         print(f"Multi-sample visualization completed!")
@@ -1582,6 +1654,7 @@ def main() -> None:
             device=device,
             trained_model=trained_model,
             train_dataset=train_dataset,
+            val_dataset=val_dataset,
             test_dataset=test_dataset,
             verbose=True
         )

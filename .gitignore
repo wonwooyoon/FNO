@@ -4,8 +4,8 @@
 /neuraloperator/*
 !/neuraloperator/neuralop
 !/nerualoperator/neuralop/**
-/src/FNO/output/**
-/src/CNN/output/**
+/src/FNO/output_pure/**
+/src/CNN/output_pure/**
 /src/pflotran_run/output/**
 /src/pflotran_code/output/*.h5
 /src/pflotran_code/output/*.xmf
