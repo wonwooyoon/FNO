@@ -45,7 +45,7 @@ from util_output import generate_all_outputs
 # Configuration
 # ==============================================================================
 CONFIG = {
-    'MERGED_PT_PATH': './src/preprocessing/merged.pt',
+    'MERGED_PT_PATH': './src/preprocessing/merged_U.pt',
     'OUTPUT_DIR': './src/FNO/output_pure',
     'N_EPOCHS': 10000,  # Reduced for testing
     'EVAL_INTERVAL': 1,
@@ -82,7 +82,7 @@ CONFIG = {
         'IMAGE_OUTPUT': {
             'ENABLED': True,  # Generate static images
             'COMBINED_IMG': True,  # 3×4 grid (GT/Pred/Error)
-            'SEPARATED_IMG': False,  # Individual images per time/type
+            'SEPARATED_IMG': True,  # Individual images per time/type
         },
 
         # GIF generation configuration
@@ -94,7 +94,7 @@ CONFIG = {
 
         # Detailed evaluation configuration
         'DETAIL_EVAL': {
-            'ENABLED': False,  # Compute RMSE/SSIM per time
+            'ENABLED': True,  # Compute RMSE/SSIM per time
             'METRICS': ['RMSE', 'SSIM'],  # Metrics to compute
             'PARITY_PLOT': True,  # Generate parity plot CSV
             'ADD_MEAN_COLUMN': True,  # Add mean column to CSV
@@ -104,7 +104,7 @@ CONFIG = {
         'IG_ANALYSIS': {
             'ENABLED': False,  # Perform IG analysis
             'SAMPLE_IDX': 98,  # Sample to analyze
-            'TIME_INDICES': [5, 10, 15, 19],  # Target times
+            'TIME_INDICES': [4, 9, 14, 19],  # Target times
             'N_STEPS': 50,  # Integration steps
         },
     },
@@ -762,24 +762,8 @@ def model_evaluation(config: Dict, processor, device: str, model, test_loader, l
             print(f"  Test Loss: {final_test_loss:.6f}")
         print(f"Evaluation results saved to: {eval_results_path}")
 
-    # Perform detailed evaluation if enabled
-    if config.get('DETAIL_EVAL', False):
-        if verbose:
-            print(f"\nDetailed evaluation enabled - computing MSE and SSIM per time index...")
-
-        detail_results = detailed_evaluation(
-            config=config,
-            processor=processor,
-            device=device,
-            model=model,
-            test_loader=test_loader,
-            verbose=verbose
-        )
-
-        # Add detailed results to eval_results
-        eval_results['detail_mse_df'] = detail_results['mse_df']
-        eval_results['detail_ssim_df'] = detail_results['ssim_df']
-        eval_results['detail_parity_file_paths'] = detail_results['parity_file_paths']
+    # Note: Detailed evaluation (RMSE/SSIM) is now handled by
+    # visualization() function via generate_all_outputs()
 
     return eval_results
 
@@ -1090,191 +1074,35 @@ def optuna_optimization(config: Dict, processor, train_dataset, val_dataset, tes
     return optimization_results
 
 # ==============================================================================
-# Visualization Functions
+# Visualization Functions (Simplified - delegates to util_output.py)
 # ==============================================================================
-
-import torch
-from torch.utils.data import DataLoader
-from pathlib import Path
-from typing import Dict
-import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.colors as colors
-
-def visualize_single_sample(config: Dict, processor, device: str, trained_model,
-                           pred_phys: torch.Tensor, gt_phys: torch.Tensor,
-                           input_phys: torch.Tensor, sample_idx: int,
-                           verbose: bool = True) -> Dict:
-    """
-    Generate visualization for a single sample.
-
-    Args:
-        config: Configuration dictionary.
-        processor: Data processor for normalization.
-        device: Device to use (e.g., 'cuda' or 'cpu').
-        trained_model: The trained FNO model.
-        pred_phys: Physical scale predictions tensor.
-        gt_phys: Ground truth tensor.
-        input_phys: Input tensor.
-        sample_idx: Index of the sample to visualize.
-        verbose: If True, prints progress information.
-
-    Returns:
-        Dict containing CSV data for this sample.
-    """
-
-    # Extract the corresponding data slices and move to NumPy
-    pred_sample = pred_phys[sample_idx, 0].detach().numpy()  # Shape: (nx, ny, nt) -> (64, 32, nt)
-    gt_sample = gt_phys[sample_idx, 0].detach().numpy()      # Shape: (nx, ny, nt) -> (64, 32, nt)
-
-    # Extract permeability (channel 0) and convert from log10 scale
-    perm_sample = input_phys[sample_idx, 0, :, :, 0].detach().numpy() # Shape: (nx, ny)
-    perm_sample = 10**perm_sample
-
-    # Extract pyrite (channel 3)
-    pyr_sample = input_phys[sample_idx, 3, :, :, 0].detach().numpy() # Shape: (nx, ny)
-
-    # --- Plot 1: Permeability and Pyrite ---
-    fig_inputs, axes_inputs = plt.subplots(1, 2, figsize=(10, 5))
-
-    # Plot Permeability
-    ax = axes_inputs[0]
-    im_perm = ax.imshow(perm_sample.T, cmap='viridis', norm=colors.LogNorm())
-    ax.set_title(f"Permeability (Sample {sample_idx})")
-    ax.axis('off')
-    fig_inputs.colorbar(im_perm, ax=ax, orientation='horizontal', pad=0.1)
-
-    # Plot Pyrite
-    ax = axes_inputs[1]
-    im_pyr = ax.imshow(pyr_sample.T, cmap='cividis')
-    ax.set_title(f"Pyrite (Sample {sample_idx})")
-    ax.axis('off')
-    fig_inputs.colorbar(im_pyr, ax=ax, orientation='horizontal', pad=0.1)
-
-    fig_inputs.tight_layout(rect=[0, 0.03, 1, 0.95])
-
-    # Save the input data figure
-    output_path_inputs = Path(config['OUTPUT_DIR']) / f'FNO_input_visualization_sample_{sample_idx}.png'
-    output_path_inputs.parent.mkdir(parents=True, exist_ok=True)
-    plt.savefig(output_path_inputs, dpi=config['VISUALIZATION']['DPI'], bbox_inches='tight')
-    plt.close(fig_inputs)
-    if verbose:
-        print(f"Input visualization for sample {sample_idx} saved to: {output_path_inputs}")
-
-    # --- Plot 2: GT, Prediction, and Error Grid ---
-    t_indices = config['VISUALIZATION']['TIME_INDICES']
-
-    # Create a 3x4 grid for GT, Prediction, and Error
-    fig, axes = plt.subplots(3, 4, figsize=(16, 8))
-
-    # Determine shared color scale for GT and Prediction
-    vmin_gt_pred = min(gt_sample[:, :, t_indices].min(), pred_sample[:, :, t_indices].min())
-    vmax_gt_pred = max(gt_sample[:, :, t_indices].max(), pred_sample[:, :, t_indices].max())
-
-    # Calculate error and determine its symmetric color scale
-    error_sample = gt_sample - pred_sample
-    error_max_abs = np.abs(error_sample[:, :, t_indices]).max()
-
-    im_pred, im_err = None, None # Initialize for colorbar
-    for i, t_idx in enumerate(t_indices):
-        # Plot Ground Truth (Row 1)
-        ax_gt = axes[0, i]
-        im_gt = ax_gt.imshow(gt_sample[:, :, t_idx].T, cmap='jet', vmin=vmin_gt_pred, vmax=vmax_gt_pred)
-        ax_gt.set_title(f"Ground Truth (t={t_idx})")
-        ax_gt.axis('off')
-
-        # Plot Prediction (Row 2)
-        ax_pred = axes[1, i]
-        im_pred = ax_pred.imshow(pred_sample[:, :, t_idx].T, cmap='jet', vmin=vmin_gt_pred, vmax=vmax_gt_pred)
-        ax_pred.set_title(f"Prediction (t={t_idx})")
-        ax_pred.axis('off')
-
-        # Plot Error (Row 3)
-        ax_err = axes[2, i]
-        im_err = ax_err.imshow(error_sample[:, :, t_idx].T, cmap='coolwarm', vmin=-error_max_abs, vmax=error_max_abs)
-        ax_err.set_title(f"Error (t={t_idx})")
-        ax_err.axis('off')
-
-    # Add shared colorbars
-    if im_pred:
-        fig.colorbar(im_pred, ax=axes[0:2, :].ravel().tolist(), orientation='horizontal', pad=0.05, aspect=40)
-    if im_err:
-        fig.colorbar(im_err, ax=axes[2, :].ravel().tolist(), orientation='horizontal', pad=0.05, aspect=40)
-
-    # Save the main comparison figure
-    output_path_grid = Path(config['OUTPUT_DIR']) / f'FNO_comparison_grid_sample_{sample_idx}.png'
-    plt.savefig(output_path_grid, dpi=config['VISUALIZATION']['DPI'], bbox_inches='tight')
-    plt.close(fig)
-
-    if verbose:
-        print(f"Comparison grid for sample {sample_idx} saved to: {output_path_grid}")
-
-    # --- Prepare CSV Data ---
-    csv_data = {}
-    if config['VISUALIZATION']['SAVEASCSV']:
-        # Create coordinate grids
-        nx, ny = gt_sample.shape[:2]  # (64, 32)
-        x_coords = np.arange(nx)
-        y_coords = np.arange(ny)
-        X, Y = np.meshgrid(x_coords, y_coords, indexing='ij')
-
-        # Flatten coordinate arrays
-        x_flat = X.flatten()
-        y_flat = Y.flatten()
-
-        # Initialize CSV data dictionary with coordinates (only for first sample)
-        csv_data = {
-            'x_coord': x_flat,
-            'y_coord': y_flat
-        }
-
-        # Process each time index
-        for t_idx in t_indices:
-            # Extract 2D slices for this time index
-            gt_slice = gt_sample[:, :, t_idx]          # (nx, ny)
-            pred_slice = pred_sample[:, :, t_idx]      # (nx, ny)
-            error_slice = error_sample[:, :, t_idx]    # (nx, ny)
-
-            # Flatten the 2D data to 1D arrays
-            gt_flat = gt_slice.flatten()
-            pred_flat = pred_slice.flatten()
-            error_flat = error_slice.flatten()
-
-            # Add columns with naming pattern: sample_time_type
-            csv_data[f'{sample_idx}_{t_idx}_gt'] = gt_flat
-            csv_data[f'{sample_idx}_{t_idx}_pred'] = pred_flat
-            csv_data[f'{sample_idx}_{t_idx}_error'] = error_flat
-
-    return csv_data
-
 
 def visualization(config: Dict, processor, device: str, trained_model, train_dataset,
                  val_dataset, test_dataset, verbose: bool = True):
     """
-    Generate visualizations for multiple samples:
-    1. A separate plot for permeability and pyrite maps.
-    2. A 3x4 grid comparing ground truth, predictions, and their error over time.
-    3. Unified CSV output for all samples (Option B).
+    Generate all outputs using the unified output system.
+
+    This function is now a simple wrapper that delegates to generate_all_outputs()
+    from util_output.py, which handles:
+    - Image generation (combined grids and/or separated images)
+    - GIF generation for temporal evolution
+    - Detailed evaluation metrics (RMSE, SSIM, parity plots)
+    - Integrated Gradients analysis
+
+    All outputs are organized into subdirectories based on configuration.
 
     Args:
-        config: Configuration dictionary.
-        processor: Data processor for normalization.
-        device: Device to use (e.g., 'cuda' or 'cpu').
-        trained_model: The trained FNO model.
-        train_dataset: The training dataset.
-        val_dataset: The validation dataset.
-        test_dataset: The test dataset for generating predictions.
-        verbose: If True, prints progress information.
+        config: Configuration dictionary containing OUTPUT settings
+        processor: Data processor for normalization
+        device: Device to use (e.g., 'cuda' or 'cpu')
+        trained_model: The trained FNO model
+        train_dataset: Training dataset
+        val_dataset: Validation dataset
+        test_dataset: Test dataset for generating predictions
+        verbose: If True, prints progress information
     """
-
-    if verbose:
-        print(f"\nGenerating multi-sample visualization...")
-
-    # Ensure the model is in evaluation mode
-    trained_model.eval()
-
-    # Use smaller batch size to avoid VRAM issues
-    batch_size = min(8, len(test_dataset))  # Process in smaller batches
+    # Create test loader
+    batch_size = min(8, len(test_dataset))
     test_loader = DataLoader(
         test_dataset,
         batch_size=batch_size,
@@ -1283,171 +1111,20 @@ def visualization(config: Dict, processor, device: str, trained_model, train_dat
         pin_memory=False
     )
 
-    # Store predictions, ground truth, and input data
-    all_pred = []
-    all_gt = []
-    all_input = []
+    # Call unified output generation
+    results = generate_all_outputs(
+        config=config,
+        processor=processor,
+        device=device,
+        trained_model=trained_model,
+        train_dataset=train_dataset,
+        val_dataset=val_dataset,
+        test_dataset=test_dataset,
+        test_loader=test_loader,
+        verbose=verbose
+    )
 
-    # Generate predictions without computing gradients
-    with torch.no_grad():
-        for batch_idx, batch in enumerate(test_loader):
-            if verbose and batch_idx % 2 == 0:
-                print(f"  Processing batch {batch_idx + 1}/{len(test_loader)}...")
-
-            x, y = batch['x'].to(device), batch['y'].to(device)
-
-            # Store original input immediately moved to CPU to free GPU memory
-            all_input.append(x.cpu())
-
-            # Normalize input for the model
-            x_norm = processor.in_normalizer.transform(x)
-
-            # Get model prediction
-            pred = trained_model(x_norm)
-
-            # Inverse transform the prediction to its physical scale
-            pred_phys = processor.out_normalizer.inverse_transform(pred)
-
-            # Move to CPU immediately and clear GPU memory
-            all_pred.append(pred_phys.cpu())
-            all_gt.append(y.cpu())
-
-            # Clear intermediate GPU tensors
-            del x, y, x_norm, pred, pred_phys
-            if device == 'cuda':
-                torch.cuda.empty_cache()
-
-    # Concatenate results from all batches (this happens on CPU)
-    if verbose:
-        print("  Concatenating results...")
-    pred_phys = torch.cat(all_pred, dim=0)
-    gt_phys = torch.cat(all_gt, dim=0)
-    input_phys = torch.cat(all_input, dim=0)
-
-    # Clear intermediate lists to free memory
-    del all_pred, all_gt, all_input
-
-    # Apply masking as per the original problem description
-    pred_phys[:, :, 14:18, 14:18, :] = 0
-    gt_phys[:, :, 14:18, 14:18, :] = 0
-
-    # --- Multi-Sample Processing ---
-    # Handle both single integer and list inputs for SAMPLE_NUM
-    sample_config = config['VISUALIZATION']['SAMPLE_NUM']
-    if isinstance(sample_config, int):
-        sample_nums = [sample_config]  # Convert single int to list for consistency
-    else:
-        sample_nums = sample_config  # Assume it's already a list
-
-    # Validate sample indices
-    max_available_samples = len(pred_phys) - 1
-    valid_sample_nums = []
-    for sample_num in sample_nums:
-        if sample_num <= max_available_samples:
-            valid_sample_nums.append(sample_num)
-        else:
-            if verbose:
-                print(f"Warning: Sample {sample_num} exceeds available samples ({max_available_samples}). Skipping.")
-
-    if not valid_sample_nums:
-        if verbose:
-            print("Error: No valid sample indices found. Using sample 0 as fallback.")
-        valid_sample_nums = [0]
-
-    if verbose:
-        print(f"Processing samples: {valid_sample_nums}")
-
-    # --- Process Each Sample ---
-    all_csv_data = []
-    for i, sample_idx in enumerate(valid_sample_nums):
-        if verbose:
-            print(f"Processing sample {sample_idx} ({i+1}/{len(valid_sample_nums)})...")
-
-        # Generate visualization for single sample
-        csv_data = visualize_single_sample(
-            config=config,
-            processor=processor,
-            device=device,
-            trained_model=trained_model,
-            pred_phys=pred_phys,
-            gt_phys=gt_phys,
-            input_phys=input_phys,
-            sample_idx=sample_idx,
-            verbose=verbose
-        )
-
-        # Store CSV data for unified output
-        if csv_data:
-            all_csv_data.append(csv_data)
-
-    # --- Unified CSV Export (Option B) ---
-    if config['VISUALIZATION']['SAVEASCSV'] and all_csv_data:
-        if verbose:
-            print(f"Creating unified CSV output for all samples...")
-
-        # Start with coordinates from the first sample
-        unified_csv_data = {
-            'x_coord': all_csv_data[0]['x_coord'],
-            'y_coord': all_csv_data[0]['y_coord']
-        }
-
-        # Merge data columns from all samples
-        for csv_data in all_csv_data:
-            for key, value in csv_data.items():
-                if key not in ['x_coord', 'y_coord']:  # Skip coordinate columns
-                    unified_csv_data[key] = value
-
-        # Create unified DataFrame and save to CSV
-        df_unified = pd.DataFrame(unified_csv_data)
-        csv_output_path = Path(config['OUTPUT_DIR']) / 'FNO_visualization_data.csv'
-        df_unified.to_csv(csv_output_path, index=False)
-
-        if verbose:
-            print(f"Unified CSV data saved to: {csv_output_path}")
-            print(f"CSV shape: {df_unified.shape}")
-            print(f"CSV columns: {list(df_unified.columns)}")
-            print(f"Processed {len(valid_sample_nums)} samples: {valid_sample_nums}")
-
-    # --- GIF Generation ---
-    if config['VISUALIZATION']['GIF_GEN']:
-        if verbose:
-            print(f"\nGenerating animated GIFs...")
-
-        output_dir = Path(config['OUTPUT_DIR'])
-        all_gif_outputs = create_gifs_for_samples(
-            gt_phys=gt_phys,
-            pred_phys=pred_phys,
-            sample_indices=valid_sample_nums,
-            config=config,
-            output_dir=output_dir,
-            verbose=verbose
-        )
-
-        if verbose:
-            total_gifs = len(all_gif_outputs) * 3
-            total_colorbars = len(all_gif_outputs) * 2
-            print(f"GIF generation summary:")
-            print(f"  - {total_gifs} GIF files (GT, Pred, Error)")
-            print(f"  - {total_colorbars} colorbar PNG files")
-
-    # --- Integrated Gradients Analysis ---
-    if config.get('IG_ANALYSIS', {}).get('ENABLED', False):
-        if verbose:
-            print(f"\nIntegrated Gradients analysis enabled...")
-
-        integrated_gradients_analysis(
-            config=config,
-            processor=processor,
-            device=device,
-            model=trained_model,
-            train_dataset=train_dataset,
-            val_dataset=val_dataset,
-            test_dataset=test_dataset,
-            verbose=verbose
-        )
-
-    if verbose:
-        print(f"Multi-sample visualization completed!")
+    return results
 
 # ==============================================================================
 # Utility Functions
