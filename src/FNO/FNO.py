@@ -45,9 +45,9 @@ from util_output import generate_all_outputs
 # Configuration
 # ==============================================================================
 CONFIG = {
-    'MERGED_PT_PATH': './src/preprocessing/merged_U.pt',
+    'MERGED_PT_PATH': './src/preprocessing/merged_C.pt',
     'OUTPUT_DIR': './src/FNO/output_pure',
-    'N_EPOCHS': 10000,  # Reduced for testing
+    'N_EPOCHS': 50,  # Reduced for testing
     'EVAL_INTERVAL': 1,
     'VAL_SIZE': 0.1,  # Validation set size
     'TEST_SIZE': 0.1,  # Test set size
@@ -67,7 +67,7 @@ CONFIG = {
         'T_max': 40,
         'T_mult': 2,
         'eta_min': 1e-5,
-        'step_size': 20,
+        'step_size': 10,
         'gamma': 0.5,
         'initial_lr': 1e-2,
     },
@@ -80,7 +80,7 @@ CONFIG = {
 
         # Image output configuration
         'IMAGE_OUTPUT': {
-            'ENABLED': False,  # Generate static images
+            'ENABLED': True,  # Generate static images
             'COMBINED_IMG': True,  # 3×4 grid (GT/Pred/Error)
             'SEPARATED_IMG': True,  # Individual images per time/type
         },
@@ -97,7 +97,7 @@ CONFIG = {
             'ENABLED': True,  # Compute RMSE/SSIM per time
             'METRICS': ['RMSE', 'SSIM'],  # Metrics to compute
             'COMPUTE_NRMSE': True,  # Compute normalized RMSE (MinMax-based)
-            'PARITY_PLOT': True,  # Generate parity plot CSV
+            'PARITY_PLOT': False,  # Generate parity plot CSV
             'ADD_MEAN_COLUMN': True,  # Add mean column to CSV
         },
 
@@ -119,7 +119,7 @@ CONFIG = {
         'optuna_n_trials': 100,
         'optuna_seed': 42,
         'optuna_n_startup_trials': 10,
-        'eval_model_path': './src/FNO/output_pure/final/best_model_state_dict.pt'
+        'eval_model_path': './src/FNO/output_pure/final/best_model_state_dict_C.pt'
     },
     'OPTUNA_SEARCH_SPACE': {
         'n_modes_dim1_range': [4, 16],  # [min, max] for first dimension
@@ -134,16 +134,16 @@ CONFIG = {
         'channel_mlp_skip_options': ['linear', 'soft-gating']  # categorical options
     },
     'SINGLE_PARAMS': {
-        "n_modes_1": 16,
-        "n_modes_2": 5,
-        "n_modes_3": 2,
-        "hidden_channels": 41,
-        "n_layers": 6,
-        "domain_padding": (0.2,0.1,0.1),
+        "n_modes_1": 6,
+        "n_modes_2": 7,
+        "n_modes_3": 6,
+        "hidden_channels": 22,
+        "n_layers": 4,
+        "domain_padding": (0.1,0.1,0.1),
         "train_batch_size": 32,
-        "l2_weight": 2.5863778861716804e-06,
-        "channel_mlp_expansion": 2.0,
-        "channel_mlp_skip": 'soft-gating'
+        "l2_weight": 1e-07,
+        "channel_mlp_expansion": 0.5,
+        "channel_mlp_skip": 'linear'
     }
 }
 

@@ -59,9 +59,9 @@ def read_one_h5(h5_path: Path):
              material_grid, x_velo_grid, y_velo_grid], axis=0
         )[:, :, :, np.newaxis]  # (9, nx, ny, 1)
 
-        # 시간 키 수집(100~2000y, 100 간격)
+        # 시간 키 수집(0~2000y, 100 간격) - t=0 포함!
         available = {}
-        for X in range(100, 2001, 100):
+        for X in range(0, 2001, 100):
             token = f"{int(X/50)} Time"
             match = next((k for k in keys_list if token in k), None)
             if match is not None:
@@ -71,6 +71,7 @@ def read_one_h5(h5_path: Path):
         t_labels = []
         in_slices, out_slices = [], []
 
+        # Step 1: Collect all timesteps including t=0
         for tnum in times_sorted:
             key = available[tnum]
             total_uo2 = np.array(f[key]["Total CO3-- [M]"][:])[zc_mask]
@@ -81,7 +82,17 @@ def read_one_h5(h5_path: Path):
 
         x = np.concatenate(in_slices, axis=3).astype(np.float32)   # (9,nx,ny,nt)
         y = np.concatenate(out_slices, axis=3).astype(np.float32)  # (1,nx,ny,nt)
-        return x, y, (xc_unique.astype(np.float32), yc_unique.astype(np.float32)), t_labels
+
+        # Step 2: Convert to delta (change from initial state at t=0)
+        # y[:, :, :, 0] is the initial state
+        # Subtract it from all timesteps to get delta
+        y_initial = y[:, :, :, 0:1]  # (1, nx, ny, 1) - keep dimension for broadcasting
+        y_delta = y - y_initial       # (1, nx, ny, nt) - delta from initial state
+
+        # Now y_delta[:,:,:,0] = 0 (no change at t=0)
+        # y_delta[:,:,:,t] = concentration change from t=0 to t
+
+        return x, y_delta, (xc_unique.astype(np.float32), yc_unique.astype(np.float32)), t_labels
 
 def get_available_ids(base_dir: str):
     """Automatically detect available pflotran IDs from output directory"""

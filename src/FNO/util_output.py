@@ -692,6 +692,9 @@ def detailed_evaluation(
     pred_phys = torch.cat(all_pred, dim=0)
     gt_phys = torch.cat(all_gt, dim=0)
 
+    # pred_phys[:, :, 14:18, 14:18, :] = 0
+    # gt_phys[:, :, 14:18, 14:18, :] = 0
+
     n_samples = pred_phys.shape[0]
     n_time = pred_phys.shape[-1]
 
@@ -1473,8 +1476,8 @@ def generate_all_outputs(
     del all_pred, all_gt, all_input
 
     # Apply masking (if needed)
-    pred_phys[:, :, 14:18, 14:18, :] = 0
-    gt_phys[:, :, 14:18, 14:18, :] = 0
+    # pred_phys[:, :, 14:18, 14:18, :] = 0
+    # gt_phys[:, :, 14:18, 14:18, :] = 0
 
     results = {}
 
