@@ -48,7 +48,6 @@ def setup_output_directories(base_dir: Path, config: Dict) -> Dict[str, Path]:
         dirs['images'] = base_dir / 'images'
         dirs['images_combined'] = base_dir / 'images' / 'combined'
         dirs['images_separated'] = base_dir / 'images' / 'separated'
-        dirs['images_inputs'] = base_dir / 'images' / 'inputs'
 
     # GIF output directory
     if output_config.get('GIF_OUTPUT', {}).get('ENABLED', False):
@@ -74,64 +73,6 @@ def setup_output_directories(base_dir: Path, config: Dict) -> Dict[str, Path]:
 # ==============================================================================
 # Section 1: Image Output Functions
 # ==============================================================================
-
-def save_input_visualization(
-    input_phys: torch.Tensor,
-    sample_idx: int,
-    output_dir: Path,
-    config: Dict,
-    verbose: bool = True
-) -> Path:
-    """
-    Visualize input channels (Permeability and Pyrite).
-
-    Args:
-        input_phys: Input tensor (1, C, nx, ny, nt)
-        sample_idx: Sample index
-        output_dir: Directory to save the image (images/inputs/)
-        config: Configuration dictionary
-        verbose: Whether to print progress
-
-    Returns:
-        Path to saved image
-    """
-    # Extract permeability (channel 0) and convert from log10 scale
-    perm_sample = input_phys[0, 0, :, :, 0].detach().cpu().numpy()
-    perm_sample = 10**perm_sample
-
-    # Extract pyrite (channel 3)
-    pyr_sample = input_phys[0, 3, :, :, 0].detach().cpu().numpy()
-
-    # Create figure
-    fig, axes = plt.subplots(1, 2, figsize=(10, 5))
-
-    # Plot Permeability
-    ax = axes[0]
-    im_perm = ax.imshow(perm_sample.T, cmap='viridis', norm=mcolors.LogNorm())
-    ax.set_title(f"Permeability (Sample {sample_idx})")
-    ax.axis('off')
-    fig.colorbar(im_perm, ax=ax, orientation='horizontal', pad=0.1)
-
-    # Plot Pyrite
-    ax = axes[1]
-    im_pyr = ax.imshow(pyr_sample.T, cmap='cividis')
-    ax.set_title(f"Pyrite (Sample {sample_idx})")
-    ax.axis('off')
-    fig.colorbar(im_pyr, ax=ax, orientation='horizontal', pad=0.1)
-
-    fig.tight_layout(rect=[0, 0.03, 1, 0.95])
-
-    # Save
-    output_path = output_dir / f'sample_{sample_idx}_inputs.png'
-    dpi = config.get('OUTPUT', {}).get('DPI', 200)
-    plt.savefig(output_path, dpi=dpi, bbox_inches='tight')
-    plt.close(fig)
-
-    if verbose:
-        print(f"  Saved input visualization: {output_path.name}")
-
-    return output_path
-
 
 def visualize_combined_grid(
     pred_sample: np.ndarray,
@@ -548,16 +489,27 @@ def create_all_gifs(
 # Section 3: Detailed Evaluation (Metrics) Functions
 # ==============================================================================
 
-def compute_rmse_per_time(pred: np.ndarray, gt: np.ndarray) -> np.ndarray:
+def compute_rmse_per_time(
+    pred: np.ndarray,
+    gt: np.ndarray,
+    normalize: bool = False,
+    min_per_time: Optional[np.ndarray] = None,
+    max_per_time: Optional[np.ndarray] = None
+) -> np.ndarray:
     """
     Compute RMSE for each time index of a single sample.
 
     Args:
         pred: Prediction array of shape (nx, ny, nt)
         gt: Ground truth array of shape (nx, ny, nt)
+        normalize: If True, apply MinMax normalization before computing RMSE
+        min_per_time: Min values across all samples for each time (nt,).
+                      Required if normalize=True.
+        max_per_time: Max values across all samples for each time (nt,).
+                      Required if normalize=True.
 
     Returns:
-        Array of RMSE values of shape (nt,)
+        Array of RMSE (or NRMSE if normalized) values of shape (nt,)
     """
     nx, ny, nt = pred.shape
     rmse_values = np.zeros(nt)
@@ -565,7 +517,24 @@ def compute_rmse_per_time(pred: np.ndarray, gt: np.ndarray) -> np.ndarray:
     for t in range(nt):
         pred_t = pred[:, :, t]
         gt_t = gt[:, :, t]
-        rmse_values[t] = np.sqrt(np.mean((pred_t - gt_t) ** 2))
+
+        if normalize:
+            if min_per_time is None or max_per_time is None:
+                raise ValueError("min_per_time and max_per_time must be provided when normalize=True")
+
+            # MinMax normalization
+            min_t = min_per_time[t]
+            max_t = max_per_time[t]
+            range_t = max_t - min_t
+
+            pred_t_norm = (pred_t - min_t) / range_t
+            gt_t_norm = (gt_t - min_t) / range_t
+
+            # RMSE on normalized values
+            rmse_values[t] = np.sqrt(np.mean((pred_t_norm - gt_t_norm) ** 2))
+        else:
+            # Absolute RMSE
+            rmse_values[t] = np.sqrt(np.mean((pred_t - gt_t) ** 2))
 
     return rmse_values
 
@@ -683,7 +652,7 @@ def detailed_evaluation(
     verbose: bool = True
 ) -> Dict:
     """
-    Perform detailed evaluation computing RMSE and SSIM per time index.
+    Perform detailed evaluation computing RMSE, NRMSE, and SSIM per time index.
 
     Args:
         config: Configuration dictionary
@@ -726,28 +695,58 @@ def detailed_evaluation(
     n_samples = pred_phys.shape[0]
     n_time = pred_phys.shape[-1]
 
-    # Compute RMSE per time for each sample
+    # Check if NRMSE computation is enabled
+    compute_nrmse = config.get('OUTPUT', {}).get('DETAIL_EVAL', {}).get('COMPUTE_NRMSE', False)
+
+    # Compute min/max values if NRMSE is enabled
+    min_per_time = None
+    max_per_time = None
+    if compute_nrmse:
+        gt_np = gt_phys[:, 0].numpy()  # (N, nx, ny, nt)
+        min_per_time = np.zeros(n_time)
+        max_per_time = np.zeros(n_time)
+        for t in range(n_time):
+            min_per_time[t] = gt_np[:, :, :, t].min()
+            max_per_time[t] = gt_np[:, :, :, t].max()
+
+    # Compute RMSE and optionally NRMSE per time for each sample
     rmse_data = {'time': list(range(n_time))}
+    nrmse_data = {'time': list(range(n_time))} if compute_nrmse else None
     ssim_data = {'time': list(range(n_time))}
 
     for sample_idx in range(n_samples):
         pred_sample = pred_phys[sample_idx, 0].numpy()  # (nx, ny, nt)
         gt_sample = gt_phys[sample_idx, 0].numpy()
 
-        # Compute metrics
-        rmse_values = compute_rmse_per_time(pred_sample, gt_sample)
-        ssim_values = compute_ssim_per_time(pred_sample, gt_sample)
-
+        # Compute absolute RMSE
+        rmse_values = compute_rmse_per_time(pred_sample, gt_sample, normalize=False)
         rmse_data[f'sample_{sample_idx}'] = rmse_values
+
+        # Compute normalized RMSE (NRMSE) if enabled
+        if compute_nrmse:
+            nrmse_values = compute_rmse_per_time(
+                pred_sample, gt_sample,
+                normalize=True,
+                min_per_time=min_per_time,
+                max_per_time=max_per_time
+            )
+            nrmse_data[f'sample_{sample_idx}'] = nrmse_values
+
+        # Compute SSIM
+        ssim_values = compute_ssim_per_time(pred_sample, gt_sample)
         ssim_data[f'sample_{sample_idx}'] = ssim_values
 
     # Create DataFrames
     rmse_df = pd.DataFrame(rmse_data)
+    nrmse_df = pd.DataFrame(nrmse_data) if compute_nrmse else None
     ssim_df = pd.DataFrame(ssim_data)
 
     # Add mean columns
-    if config.get('OUTPUT', {}).get('DETAIL_EVAL', {}).get('ADD_MEAN_COLUMN', True):
+    add_mean = config.get('OUTPUT', {}).get('DETAIL_EVAL', {}).get('ADD_MEAN_COLUMN', True)
+    if add_mean:
         rmse_df = add_mean_column(rmse_df, exclude_col='time')
+        if compute_nrmse and nrmse_df is not None:
+            nrmse_df = add_mean_column(nrmse_df, exclude_col='time')
         ssim_df = add_mean_column(ssim_df, exclude_col='time')
 
     # Save RMSE and SSIM
@@ -761,6 +760,14 @@ def detailed_evaluation(
         print(f"  RMSE evolution saved: {rmse_path.name}")
         print(f"  SSIM evolution saved: {ssim_path.name}")
 
+    # Save NRMSE if enabled
+    nrmse_path = None
+    if compute_nrmse and nrmse_df is not None:
+        nrmse_path = output_dir / 'nrmse_evolution.csv'
+        nrmse_df.to_csv(nrmse_path, index=False)
+        if verbose:
+            print(f"  NRMSE evolution saved: {nrmse_path.name}")
+
     # Generate parity plot data if enabled
     parity_paths = []
     if config.get('OUTPUT', {}).get('DETAIL_EVAL', {}).get('PARITY_PLOT', True):
@@ -768,8 +775,10 @@ def detailed_evaluation(
 
     return {
         'rmse_df': rmse_df,
+        'nrmse_df': nrmse_df,
         'ssim_df': ssim_df,
         'rmse_path': rmse_path,
+        'nrmse_path': nrmse_path,
         'ssim_path': ssim_path,
         'parity_paths': parity_paths
     }
@@ -979,8 +988,7 @@ def compute_global_ranges(
     return ig_ranges, input_ranges
 
 
-def visualize_ig_separated(
-    ig_results: Dict[int, np.ndarray],
+def visualize_ig_input_channels(
     input_data: np.ndarray,
     sample_idx: int,
     output_dir: Path,
@@ -988,11 +996,10 @@ def visualize_ig_separated(
     verbose: bool = True
 ) -> List[Path]:
     """
-    Visualize IG results as separated 2-subplot images.
-    Left: Input channel, Right: IG attribution.
+    Visualize input channels for IG analysis.
+    Creates one image per channel (time-invariant).
 
     Args:
-        ig_results: Dictionary mapping time indices to IG arrays
         input_data: Input data array (C, nx, ny, nt)
         sample_idx: Sample index
         output_dir: Output directory (integrated_gradients/sample_{idx}/)
@@ -1012,50 +1019,138 @@ def visualize_ig_separated(
         'Smectite', 'MatID', 'Vx', 'Vy', 'Meta'
     ]
 
-    # Compute global ranges
-    ig_ranges, input_ranges = compute_global_ranges(ig_results, input_data)
+    saved_paths = []
+    dpi = config.get('OUTPUT', {}).get('DPI', 200)
+
+    # Input channels are time-invariant, use t=0
+    for ch in range(9):
+        # Create single subplot
+        fig, ax = plt.subplots(1, 1, figsize=(8, 6))
+
+        # Input channel at t=0 (time-invariant)
+        input_slice = input_data[ch, :, :, 0]
+        input_vmin = np.percentile(input_slice, 2)
+        input_vmax = np.percentile(input_slice, 98)
+
+        im = ax.imshow(input_slice.T, cmap='viridis',
+                      vmin=input_vmin, vmax=input_vmax, aspect='auto')
+        ax.set_title(f'{channel_names[ch]} Input (Sample {sample_idx})', fontweight='bold')
+        ax.set_xlabel('X')
+        ax.set_ylabel('Y')
+        cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+        cbar.formatter.set_powerlimits((-2, 2))
+        cbar.formatter.set_useMathText(True)
+        cbar.update_ticks()
+
+        plt.tight_layout()
+
+        # Save
+        save_path = output_dir / f'ch{ch}_{channel_short[ch]}_input.png'
+        plt.savefig(save_path, dpi=dpi, bbox_inches='tight')
+        plt.close(fig)
+
+        saved_paths.append(save_path)
+
+        if verbose:
+            print(f"  Saved: {save_path.name}")
+
+    return saved_paths
+
+
+def visualize_ig_attributions(
+    ig_results: Dict[int, np.ndarray],
+    sample_idx: int,
+    output_dir: Path,
+    config: Dict,
+    verbose: bool = True
+) -> List[Path]:
+    """
+    Visualize IG attribution maps for each channel and time index.
+    Creates separate images for each (channel, time) combination.
+
+    Args:
+        ig_results: Dictionary mapping time indices to IG arrays (C, nx, ny)
+        sample_idx: Sample index
+        output_dir: Output directory (integrated_gradients/sample_{idx}/)
+        config: Configuration dictionary
+        verbose: Whether to print progress
+
+    Returns:
+        List of paths to saved images
+    """
+    channel_names = [
+        'Permeability', 'Calcite', 'Clinochlore', 'Pyrite',
+        'Smectite', 'Material_ID', 'X-velocity', 'Y-velocity', 'Meta'
+    ]
+
+    channel_short = [
+        'Perm', 'Calcite', 'Clino', 'Pyrite',
+        'Smectite', 'MatID', 'Vx', 'Vy', 'Meta'
+    ]
+
+    # Compute global ranges for each channel (across all time indices)
+    n_channels = ig_results[list(ig_results.keys())[0]].shape[0]
+    ig_ranges = {}
+
+    for ch in range(n_channels):
+        all_ig_values = []
+        for t_idx, ig_spatial in ig_results.items():
+            all_ig_values.append(ig_spatial[ch].flatten())
+        combined_ig = np.concatenate(all_ig_values)
+
+        ig_pos = combined_ig[combined_ig > 0]
+        ig_neg = combined_ig[combined_ig < 0]
+
+        if len(ig_pos) > 0:
+            ig_vmax = np.percentile(ig_pos, 99)
+        else:
+            ig_vmax = combined_ig.max()
+
+        if len(ig_neg) > 0:
+            ig_vmin = np.percentile(ig_neg, 1)
+        else:
+            ig_vmin = combined_ig.min()
+
+        # Handle edge case
+        if abs(ig_vmax - ig_vmin) < 1e-20:
+            if abs(ig_vmax) < 1e-20:
+                ig_vmax = 1e-20
+                ig_vmin = -1e-20
+            else:
+                max_abs = max(abs(ig_vmax), abs(ig_vmin))
+                ig_vmax = max_abs
+                ig_vmin = -max_abs
+
+        ig_ranges[ch] = (ig_vmin, ig_vmax)
 
     saved_paths = []
     dpi = config.get('OUTPUT', {}).get('DPI', 200)
 
     for t_idx, ig_spatial in ig_results.items():
         for ch in range(9):
-            # Create 1x2 subplot
-            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+            # Create single subplot for IG attribution
+            fig, ax = plt.subplots(1, 1, figsize=(8, 6))
 
-            # Left: Input channel
-            input_slice = input_data[ch, :, :, t_idx]
-            input_vmin, input_vmax = input_ranges[ch]
-
-            im1 = ax1.imshow(input_slice.T, cmap='viridis',
-                            vmin=input_vmin, vmax=input_vmax, aspect='auto')
-            ax1.set_title(f'{channel_names[ch]} Input (t={t_idx})', fontweight='bold')
-            ax1.set_xlabel('X')
-            ax1.set_ylabel('Y')
-            cbar1 = plt.colorbar(im1, ax=ax1, fraction=0.046, pad=0.04)
-            cbar1.formatter.set_powerlimits((-2, 2))
-            cbar1.formatter.set_useMathText(True)
-            cbar1.update_ticks()
-
-            # Right: IG attribution
+            # IG attribution
             ig_map = ig_spatial[ch]
             ig_vmin, ig_vmax = ig_ranges[ch]
             ig_sum = ig_map.sum()
 
-            im2 = ax2.imshow(ig_map.T, cmap='RdBu_r',
-                            vmin=ig_vmin, vmax=ig_vmax, aspect='auto')
-            ax2.set_title(f'IG Attribution (∑IG={ig_sum:.4e})', fontweight='bold')
-            ax2.set_xlabel('X')
-            ax2.set_ylabel('Y')
-            cbar2 = plt.colorbar(im2, ax=ax2, fraction=0.046, pad=0.04)
-            cbar2.formatter.set_powerlimits((-2, 2))
-            cbar2.formatter.set_useMathText(True)
-            cbar2.update_ticks()
+            im = ax.imshow(ig_map.T, cmap='RdBu_r',
+                          vmin=ig_vmin, vmax=ig_vmax, aspect='auto')
+            ax.set_title(f'{channel_names[ch]} IG Attribution (t={t_idx}, ∑IG={ig_sum:.4e})',
+                        fontweight='bold')
+            ax.set_xlabel('X')
+            ax.set_ylabel('Y')
+            cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+            cbar.formatter.set_powerlimits((-2, 2))
+            cbar.formatter.set_useMathText(True)
+            cbar.update_ticks()
 
             plt.tight_layout()
 
             # Save
-            save_path = output_dir / f'ch{ch}_{channel_short[ch]}_t{t_idx:02d}.png'
+            save_path = output_dir / f'ch{ch}_{channel_short[ch]}_t{t_idx:02d}_ig.png'
             plt.savefig(save_path, dpi=dpi, bbox_inches='tight')
             plt.close(fig)
 
@@ -1249,9 +1344,17 @@ def integrated_gradients_analysis(
     # Generate outputs
     print("\nGenerating outputs...")
 
-    # Visualizations
-    viz_paths = visualize_ig_separated(
-        ig_results, input_data, sample_idx,
+    # Input channel visualizations (time-invariant, 9 images total)
+    print("\n  Generating input channel images...")
+    input_viz_paths = visualize_ig_input_channels(
+        input_data, sample_idx,
+        output_dirs['ig_sample'], config, verbose
+    )
+
+    # IG attribution visualizations (9 channels × N time indices)
+    print("\n  Generating IG attribution images...")
+    ig_viz_paths = visualize_ig_attributions(
+        ig_results, sample_idx,
         output_dirs['ig_sample'], config, verbose
     )
 
@@ -1269,7 +1372,8 @@ def integrated_gradients_analysis(
 
     return {
         'ig_results': ig_results,
-        'viz_paths': viz_paths,
+        'input_viz_paths': input_viz_paths,
+        'ig_viz_paths': ig_viz_paths,
         'csv_paths': csv_paths,
         'importance_csv': importance_csv,
         'importance_plot': importance_plot
@@ -1397,16 +1501,6 @@ def generate_all_outputs(
             # Extract sample data
             pred_sample = pred_phys[sample_idx, 0].detach().cpu().numpy()
             gt_sample = gt_phys[sample_idx, 0].detach().cpu().numpy()
-
-            # Input visualization
-            input_path = save_input_visualization(
-                input_phys[sample_idx:sample_idx+1],
-                sample_idx,
-                output_dirs['images_inputs'],
-                config,
-                verbose
-            )
-            results['images'][f'sample_{sample_idx}_input'] = input_path
 
             # Combined grid
             if combined_enabled:

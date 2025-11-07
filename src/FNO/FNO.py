@@ -80,7 +80,7 @@ CONFIG = {
 
         # Image output configuration
         'IMAGE_OUTPUT': {
-            'ENABLED': True,  # Generate static images
+            'ENABLED': False,  # Generate static images
             'COMBINED_IMG': True,  # 3×4 grid (GT/Pred/Error)
             'SEPARATED_IMG': True,  # Individual images per time/type
         },
@@ -96,6 +96,7 @@ CONFIG = {
         'DETAIL_EVAL': {
             'ENABLED': True,  # Compute RMSE/SSIM per time
             'METRICS': ['RMSE', 'SSIM'],  # Metrics to compute
+            'COMPUTE_NRMSE': True,  # Compute normalized RMSE (MinMax-based)
             'PARITY_PLOT': True,  # Generate parity plot CSV
             'ADD_MEAN_COLUMN': True,  # Add mean column to CSV
         },

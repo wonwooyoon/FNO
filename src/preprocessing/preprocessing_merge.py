@@ -9,7 +9,7 @@ def load_cpu(path):
 if __name__ == "__main__":
     # Hardcoded paths
     input_dir = "./src/preprocessing"
-    output_file = "./src/preprocessing/merged_U.pt"
+    output_file = "./src/preprocessing/merged_C.pt"
     
     # Automatically find all input_output_com*.pt files
     pattern = f"{input_dir}/input_output_com*.pt"
