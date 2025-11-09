@@ -1476,8 +1476,8 @@ def generate_all_outputs(
     del all_pred, all_gt, all_input
 
     # Apply masking (if needed)
-    # pred_phys[:, :, 14:18, 14:18, :] = 0
-    # gt_phys[:, :, 14:18, 14:18, :] = 0
+    pred_phys[:, :, 14:18, 14:18, :] = 0
+    gt_phys[:, :, 14:18, 14:18, :] = 0
 
     results = {}
 

@@ -45,7 +45,7 @@ from util_output import generate_all_outputs
 # Configuration
 # ==============================================================================
 CONFIG = {
-    'MERGED_PT_PATH': './src/preprocessing/merged_C.pt',
+    'MERGED_PT_PATH': './src/preprocessing/merged_U.pt',
     'OUTPUT_DIR': './src/FNO/output_pure',
     'N_EPOCHS': 50,  # Reduced for testing
     'EVAL_INTERVAL': 1,
@@ -97,13 +97,13 @@ CONFIG = {
             'ENABLED': True,  # Compute RMSE/SSIM per time
             'METRICS': ['RMSE', 'SSIM'],  # Metrics to compute
             'COMPUTE_NRMSE': True,  # Compute normalized RMSE (MinMax-based)
-            'PARITY_PLOT': False,  # Generate parity plot CSV
+            'PARITY_PLOT': True,  # Generate parity plot CSV
             'ADD_MEAN_COLUMN': True,  # Add mean column to CSV
         },
 
         # Integrated Gradients configuration
         'IG_ANALYSIS': {
-            'ENABLED': False,  # Perform IG analysis
+            'ENABLED': True,  # Perform IG analysis
             'SAMPLE_IDX': 98,  # Sample to analyze
             'TIME_INDICES': [4, 9, 14, 19],  # Target times
             'N_STEPS': 50,  # Integration steps
@@ -115,11 +115,11 @@ CONFIG = {
         'l2_p': 2   # Power for L2 loss
     },
     'TRAINING_CONFIG': {
-        'mode': 'single',  # Options: 'single', 'optuna', 'eval'
+        'mode': 'eval',  # Options: 'single', 'optuna', 'eval'
         'optuna_n_trials': 100,
         'optuna_seed': 42,
         'optuna_n_startup_trials': 10,
-        'eval_model_path': './src/FNO/output_pure/final/best_model_state_dict_C.pt'
+        'eval_model_path': './src/FNO/output_pure/final/best_model_state_dict.pt'
     },
     'OPTUNA_SEARCH_SPACE': {
         'n_modes_dim1_range': [4, 16],  # [min, max] for first dimension
@@ -134,15 +134,15 @@ CONFIG = {
         'channel_mlp_skip_options': ['linear', 'soft-gating']  # categorical options
     },
     'SINGLE_PARAMS': {
-        "n_modes_1": 12,
-        "n_modes_2": 6,
-        "n_modes_3": 3,
-        "hidden_channels": 16,
-        "n_layers": 5,
+        "n_modes_1": 4,
+        "n_modes_2": 16,
+        "n_modes_3": 10,
+        "hidden_channels": 37,
+        "n_layers": 6,
         "domain_padding": (0.1,0.1,0.1),
         "train_batch_size": 32,
         "l2_weight": 1e-06,
-        "channel_mlp_expansion": 0.5,
+        "channel_mlp_expansion": 2.0,
         "channel_mlp_skip": 'soft-gating'
     }
 }
