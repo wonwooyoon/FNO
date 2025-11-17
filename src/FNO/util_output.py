@@ -599,16 +599,18 @@ def generate_parity_csv(
     pred_phys: torch.Tensor,
     gt_phys: torch.Tensor,
     output_dir: Path,
+    config: Dict,
     verbose: bool = True
 ) -> List[Path]:
     """
     Generate parity plot data (GT vs Prediction) for each time index.
-    Saves separate CSV files per time index.
+    Saves separate CSV files per time index and a combined parity plot image.
 
     Args:
         pred_phys: Predictions (N, C, nx, ny, nt)
         gt_phys: Ground truth (N, C, nx, ny, nt)
         output_dir: Directory to save CSV files (metrics/)
+        config: Configuration dictionary containing DPI settings
         verbose: Whether to print progress
 
     Returns:
@@ -638,6 +640,64 @@ def generate_parity_csv(
 
     if verbose:
         print(f"  Saved {len(saved_paths)} parity plot CSV files")
+
+    # Generate combined parity plot for selected time indices
+    # Plot in reverse order so t=0 appears in front
+    selected_times = [19, 14, 9, 4, 0]
+    # Continuous color gradient from dark to light
+    colors = ['#08519c', '#3182bd', '#6baed6', '#9ecae1', '#c6dbef']
+
+    fig, ax = plt.subplots(figsize=(8, 8), facecolor='white')
+    ax.set_facecolor('white')
+
+    # Collect all data points to determine axis limits
+    all_gt = []
+    all_pred = []
+
+    for i, t_idx in enumerate(selected_times):
+        if t_idx < n_time:
+            gt_t = gt_np[:, :, :, t_idx].flatten()
+            pred_t = pred_np[:, :, :, t_idx].flatten()
+            all_gt.extend(gt_t)
+            all_pred.extend(pred_t)
+
+            # Scatter plot for this time index
+            ax.scatter(gt_t, pred_t, c=colors[i], alpha=0.3, s=10,
+                      label=f't={t_idx}', edgecolors='none')
+
+    # Plot 1:1 line
+    ax.plot([0, 1e-6], [0, 1e-6], 'y--', linewidth=2, label='1:1 line')
+
+    # Set axis range and ticks
+    ax.set_xlim(0, 1e-6)
+    ax.set_ylim(0, 1e-6)
+    ax.set_xticks(np.arange(0, 1.2e-6, 0.2e-6))
+    ax.set_yticks(np.arange(0, 1.2e-6, 0.2e-6))
+
+    # Set labels with larger font (no Arial specification)
+    ax.set_xlabel('Ground Truth', fontweight='bold', fontsize=16)
+    ax.set_ylabel('Prediction', fontweight='bold', fontsize=16)
+
+    # Set tick parameters with thicker axes
+    ax.tick_params(direction='in', labelsize=14, width=2, length=6)
+    for spine in ax.spines.values():
+        spine.set_linewidth(2)
+
+    # Add legend with larger font
+    ax.legend(loc='best', fontsize=12, frameon=True, shadow=True)
+
+    # Set equal aspect ratio
+    ax.set_aspect('equal', adjustable='box')
+
+    plt.tight_layout()
+
+    # Save the plot
+    parity_plot_path = output_dir / 'parity_plot_combined.png'
+    plt.savefig(parity_plot_path, dpi=200, bbox_inches='tight')
+    plt.close(fig)
+
+    if verbose:
+        print(f"  Saved combined parity plot: {parity_plot_path.name}")
 
     return saved_paths
 
@@ -692,8 +752,8 @@ def detailed_evaluation(
     pred_phys = torch.cat(all_pred, dim=0)
     gt_phys = torch.cat(all_gt, dim=0)
 
-    # pred_phys[:, :, 14:18, 14:18, :] = 0
-    # gt_phys[:, :, 14:18, 14:18, :] = 0
+    pred_phys[:, :, 14:18, 14:18, :] = 0
+    gt_phys[:, :, 14:18, 14:18, :] = 0
 
     n_samples = pred_phys.shape[0]
     n_time = pred_phys.shape[-1]
@@ -774,7 +834,7 @@ def detailed_evaluation(
     # Generate parity plot data if enabled
     parity_paths = []
     if config.get('OUTPUT', {}).get('DETAIL_EVAL', {}).get('PARITY_PLOT', True):
-        parity_paths = generate_parity_csv(pred_phys, gt_phys, output_dir, verbose)
+        parity_paths = generate_parity_csv(pred_phys, gt_phys, output_dir, config, verbose)
 
     return {
         'rmse_df': rmse_df,
