@@ -80,14 +80,14 @@ CONFIG = {
 
         # Image output configuration
         'IMAGE_OUTPUT': {
-            'ENABLED': True,  # Generate static images
+            'ENABLED': False,  # Generate static images
             'COMBINED_IMG': True,  # 3×4 grid (GT/Pred/Error)
             'SEPARATED_IMG': True,  # Individual images per time/type
         },
 
         # GIF generation configuration
         'GIF_OUTPUT': {
-            'ENABLED': True,  # Generate animated GIFs
+            'ENABLED': False,  # Generate animated GIFs
             'FPS': 2,  # Frames per second
             # Always uses all time steps (GIF_ALL_TIMES removed)
         },
@@ -96,14 +96,14 @@ CONFIG = {
         'DETAIL_EVAL': {
             'ENABLED': True,  # Compute RMSE/SSIM per time
             'METRICS': ['RMSE', 'SSIM'],  # Metrics to compute
-            'COMPUTE_NRMSE': True,  # Compute normalized RMSE (MinMax-based)
+            'COMPUTE_NRMSE': False,  # Compute normalized RMSE (MinMax-based)
             'PARITY_PLOT': True,  # Generate parity plot CSV
             'ADD_MEAN_COLUMN': True,  # Add mean column to CSV
         },
 
         # Integrated Gradients configuration
         'IG_ANALYSIS': {
-            'ENABLED': True,  # Perform IG analysis
+            'ENABLED': False,  # Perform IG analysis
             'SAMPLE_IDX': 260,  # Sample to analyze
             'TIME_INDICES': [4, 9, 14, 19],  # Target times
             'N_STEPS': 50,  # Integration steps
