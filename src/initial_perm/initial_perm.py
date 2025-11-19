@@ -62,8 +62,8 @@ def generate_scp_field(N, b, size_x, size_y, level_max, density_map_ratio, itera
         
         average_aperature = np.random.uniform(0.00001, 0.0001)
 
-        perm_dir = f"/home/geofluids/research/FNO/src/initial_perm/output/perm_map_{iteration}.h5"
-        poro_dir = f"/home/geofluids/research/FNO/src/initial_perm/output/poro_map_{iteration}.h5"
+        perm_dir = f"/home/geofluids/research/FNO/src/initial_perm/output_hr/perm_map_{iteration}.h5"
+        poro_dir = f"/home/geofluids/research/FNO/src/initial_perm/output_hr/poro_map_{iteration}.h5"
         
         domain_size = density_map.shape[0] * density_map.shape[1]
         total_density = np.sum(density_map)
@@ -83,7 +83,7 @@ def generate_scp_field(N, b, size_x, size_y, level_max, density_map_ratio, itera
             data_dataset = permsX_group.create_dataset('Data', shape=data_shape, dtype=data_dtype)
             data_dataset[:, :] = perm_map
             permsX_group.attrs.create('Dimension', ['XY'], dtype=h5py.string_dtype(encoding='ascii', length=10))
-            permsX_group.attrs['Discretization'] = [0.25, 0.25]
+            permsX_group.attrs['Discretization'] = [0.125, 0.125]
             permsX_group.attrs['Origin'] = [-8, -4]
             permsX_group.attrs['Cell Centered'] = [True]
         
@@ -94,7 +94,7 @@ def generate_scp_field(N, b, size_x, size_y, level_max, density_map_ratio, itera
             data_dataset = porosX_group.create_dataset('Data', shape=data_shape, dtype=data_dtype)
             data_dataset[:, :] = poro_map
             porosX_group.attrs.create('Dimension', ['XY'], dtype=h5py.string_dtype(encoding='ascii', length=10))
-            porosX_group.attrs['Discretization'] = [0.25, 0.25]
+            porosX_group.attrs['Discretization'] = [0.125, 0.125]
             porosX_group.attrs['Origin'] = [-8, -4]
             porosX_group.attrs['Cell Centered'] = [True]
         
@@ -104,13 +104,13 @@ def generate_scp_field(N, b, size_x, size_y, level_max, density_map_ratio, itera
 
 if __name__ == '__main__':
     
-    map_num = 3000
+    map_num = 100
     N = 9
     b = 2.64
     size_x = 256  # Width of rectangular domain
     size_y = 128  # Height of rectangular domain  
     level_max = 5
-    density_map_ratio = 0.25  # Ratio for density map resolution (0.25 * 256 = 64)
+    density_map_ratio = 0.5  # Ratio for density map resolution (0.25 * 256 = 64)
 
     with Pool(30) as p:
         p.starmap(generate_scp_field, [(N, b, size_x, size_y, level_max, density_map_ratio, i) for i in range(map_num)])

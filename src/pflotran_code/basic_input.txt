@@ -325,7 +325,7 @@ CHEMISTRY
 END
 
 GRID
-  TYPE UNSTRUCTURED ../../mesh/output/mesh.h5
+  TYPE UNSTRUCTURED ../../mesh/output_hr/mesh.h5
 END
 
 FLUID_PROPERTY
@@ -432,23 +432,23 @@ REGION all
 END
 
 REGION west
-  FILE ../../mesh/output/sideset1.ss
+  FILE ../../mesh/output_hr/sideset1.ss
 END
 
 REGION east
-  FILE ../../mesh/output/sideset2.ss
+  FILE ../../mesh/output_hr/sideset2.ss
 END
 
 REGION source 
-  FILE ../../mesh/output/material_3.txt
+  FILE ../../mesh/output_hr/material_3.txt
 END
 
 REGION bentonite
-  FILE ../../mesh/output/material_2.txt
+  FILE ../../mesh/output_hr/material_2.txt
 END
 
 REGION granite_fracture
-  FILE ../../mesh/output/material_1.txt
+  FILE ../../mesh/output_hr/material_1.txt
 END
 
 FLOW_CONDITION initial_pressure
@@ -637,5 +637,5 @@ UO2++ 1.0001021489454847e-16 T
 /
   
 STRATA
-  FILE ../../mesh/output/mesh.h5
+  FILE ../../mesh/output_hr/mesh.h5
 END

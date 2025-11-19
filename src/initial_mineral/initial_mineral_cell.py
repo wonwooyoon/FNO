@@ -35,8 +35,8 @@ def precompute_coordinates(domain_cells, domain_vertices, materials_cell_ids, ma
         # 버텍스 좌표들 가져오기
         vertices = domain_vertices[cell_row[1:] - 1]
         # 평균 좌표 계산 및 변환
-        mean_x = int((np.mean(vertices[:, 0]) + 8.0) / 0.25)
-        mean_y = int((np.mean(vertices[:, 1]) + 4.0) / 0.25)
+        mean_x = int((np.mean(vertices[:, 0]) + 8.0) / 0.125)
+        mean_y = int((np.mean(vertices[:, 1]) + 4.0) / 0.125)
         coordinates[idx] = (mean_x, mean_y)
     
     print(f"Precomputed coordinates for {len(material_1_indices)} material_id=1 cells")
@@ -159,8 +159,8 @@ def process_all_data(mesh_file_path, mineral_output_dir, total_files=3000, batch
 def main():
     """메인 함수 - 전체 워크플로우"""
     # 설정
-    mesh_file_path = '/home/geofluids/research/FNO/src/mesh/output/mesh.h5'
-    mineral_output_dir = '/home/geofluids/research/FNO/src/initial_mineral/output'
+    mesh_file_path = '/home/geofluids/research/FNO/src/mesh/output_hr/mesh.h5'
+    mineral_output_dir = '/home/geofluids/research/FNO/src/initial_mineral/output_hr'
     
     # 파일 존재 확인
     if not os.path.exists(mesh_file_path):
@@ -175,7 +175,7 @@ def main():
     start_time = time.time()
     
     try:
-        process_all_data(mesh_file_path, mineral_output_dir, total_files=3000, batch_size=50)
+        process_all_data(mesh_file_path, mineral_output_dir, total_files=100, batch_size=50)
         
         end_time = time.time()
         processing_time = end_time - start_time

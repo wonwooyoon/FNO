@@ -6,16 +6,16 @@ def run_pflotran():
     shopt -s extglob
     base_dir="/home/geofluids/research/FNO"
 
-    for i in {174..299}; do
-        infile="${base_dir}/src/pflotran_code/output/pflotran_${i}.in"
+    for i in {0..99}; do
+        infile="${base_dir}/src/pflotran_code/output_hr/pflotran_${i}.in"
         mpirun -n 36 $PFLOTRAN_DIR/src/pflotran/pflotran -input_prefix "${infile%.*}"
-        output_subdir="${base_dir}/src/pflotran_run/output/$(basename ${infile%.*})"
+        output_subdir="${base_dir}/src/pflotran_run/output_hr/$(basename ${infile%.*})"
         mkdir -p "${output_subdir}"
-        mv ${base_dir}/src/pflotran_code/output/*.h5 "${output_subdir}" 
-        mv ${base_dir}/src/pflotran_code/output/*.xmf "${output_subdir}"
-        mv ${base_dir}/src/pflotran_code/output/*.pft "${output_subdir}"
-        mv ${base_dir}/src/pflotran_code/output/pflotran*.dat "${output_subdir}"
-        rm -rf ${base_dir}/src/pflotran_code/output/*.out
+        mv ${base_dir}/src/pflotran_code/output_hr/*.h5 "${output_subdir}" 
+        mv ${base_dir}/src/pflotran_code/output_hr/*.xmf "${output_subdir}"
+        mv ${base_dir}/src/pflotran_code/output_hr/*.pft "${output_subdir}"
+        mv ${base_dir}/src/pflotran_code/output_hr/pflotran*.dat "${output_subdir}"
+        rm -rf ${base_dir}/src/pflotran_code/output_hr/*.out
     done 
     """
     subprocess.run(bash_code, shell=True, executable="/bin/bash")

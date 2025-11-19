@@ -20,15 +20,15 @@ search_pressure = "LIQUID_PRESSURE 501793.22d0 ! unit: Pa"
 
 # Read sampled data
 
-sample = pd.read_csv("/home/geofluids/research/FNO/src/initial_others/output/others.csv").values
+sample = pd.read_csv("/home/geofluids/research/FNO/src/initial_others/output_hr/others.csv").values
 
 sampled_pressure = sample[:, 0]
 sampled_degra = sample[:, 1]
 
-sampled_seawater = pd.read_csv("/home/geofluids/research/FNO/src/initial_seawater/output/mixed_components.csv", header=None).values
+sampled_seawater = pd.read_csv("/home/geofluids/research/FNO/src/initial_seawater/output_hr/mixed_components.csv", header=None).values
 
 # Generate modified files
-max_files = 3000
+max_files = 100
 
 for file_index in range(max_files):
 
@@ -40,19 +40,19 @@ for file_index in range(max_files):
             new_lines[i] = line.replace(search_mont, f"Smectite_MX80 	{sampled_degra[file_index]}	8.5 	m^2/g\n")
             continue
         if search_clinochlore in line:
-            new_lines[i] = line.replace(search_clinochlore, f"FILENAME ../../initial_mineral/output/clinochlore_cell_{file_index}.h5\n")
+            new_lines[i] = line.replace(search_clinochlore, f"FILENAME ../../initial_mineral/output_hr/clinochlore_cell_{file_index}.h5\n")
             continue
         if search_calcite in line:
-            new_lines[i] = line.replace(search_calcite, f"FILENAME ../../initial_mineral/output/calcite_cell_{file_index}.h5\n")
+            new_lines[i] = line.replace(search_calcite, f"FILENAME ../../initial_mineral/output_hr/calcite_cell_{file_index}.h5\n")
             continue
         if search_pyrite in line:
-            new_lines[i] = line.replace(search_pyrite, f"FILENAME ../../initial_mineral/output/pyrite_cell_{file_index}.h5\n")
+            new_lines[i] = line.replace(search_pyrite, f"FILENAME ../../initial_mineral/output_hr/pyrite_cell_{file_index}.h5\n")
             continue
         if search_perm in line:
-            new_lines[i] = line.replace(search_perm, f"FILENAME ../../initial_perm/output/perm_map_{file_index}.h5\n")
+            new_lines[i] = line.replace(search_perm, f"FILENAME ../../initial_perm/output_hr/perm_map_{file_index}.h5\n")
             continue
         if search_poro in line:
-            new_lines[i] = line.replace(search_poro, f"FILENAME ../../initial_perm/output/poro_map_{file_index}.h5\n")
+            new_lines[i] = line.replace(search_poro, f"FILENAME ../../initial_perm/output_hr/poro_map_{file_index}.h5\n")
             continue
         if search_pressure in line:
             new_lines[i] = line.replace(search_pressure, f"LIQUID_PRESSURE {sampled_pressure[file_index]} ! unit: Pa\n")
@@ -74,7 +74,7 @@ for file_index in range(max_files):
             continue
 
     # Write the modified lines to a new file
-    output_file_path = f"/home/geofluids/research/FNO/src/pflotran_code/output/pflotran_{file_index}.in"
+    output_file_path = f"/home/geofluids/research/FNO/src/pflotran_code/output_hr/pflotran_{file_index}.in"
     with open(output_file_path, 'w') as file:
         file.writelines(new_lines)
     print(f"Generated file: {output_file_path}")

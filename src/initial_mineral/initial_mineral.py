@@ -58,7 +58,7 @@ def generate_calcite_map(Z, mu, sigma, output_dir, i):
         data_dataset[:, :] = Z
         calcite_group.attrs.create('Dimension', ['XY'], dtype=h5py.string_dtype(encoding='ascii', length=10))
         calcite_group.attrs.create('Space Interpolation Method', ['STEP'], dtype=h5py.string_dtype(encoding='ascii', length=10))
-        calcite_group.attrs['Discretization'] = [0.25, 0.25]
+        calcite_group.attrs['Discretization'] = [0.125, 0.125]
         calcite_group.attrs['Origin'] = [-8.0, -4.0]
         calcite_group.attrs['Cell Centered'] = [True]
 
@@ -79,7 +79,7 @@ def generate_clinochlore_map(Z, mu, sigma, output_dir, n):
         data_dataset[:, :] = Z
         clinochlore_group.attrs.create('Dimension', ['XY'], dtype=h5py.string_dtype(encoding='ascii', length=10))
         clinochlore_group.attrs.create('Space Interpolation Method', ['STEP'], dtype=h5py.string_dtype(encoding='ascii', length=10))
-        clinochlore_group.attrs['Discretization'] = [0.25, 0.25]
+        clinochlore_group.attrs['Discretization'] = [0.125, 0.125]
         clinochlore_group.attrs['Origin'] = [-8.0, -4.0]
         clinochlore_group.attrs['Cell Centered'] = [True]
 
@@ -100,17 +100,17 @@ def generate_pyrite_map(Z, mu, sigma, output_dir, n):
         data_dataset[:, :] = Z
         pyrite_group.attrs.create('Dimension', ['XY'], dtype=h5py.string_dtype(encoding='ascii', length=10))
         pyrite_group.attrs.create('Space Interpolation Method', ['STEP'], dtype=h5py.string_dtype(encoding='ascii', length=10))
-        pyrite_group.attrs['Discretization'] = [0.25, 0.25]
+        pyrite_group.attrs['Discretization'] = [0.125, 0.125]
         pyrite_group.attrs['Origin'] = [-8.0, -4.0]
         pyrite_group.attrs['Cell Centered'] = [True]
 
 if __name__ == "__main__":
     
-    n = 3000
-    X = 64
-    Y = 32
-    nX = 64
-    nY = 32
+    n = 100
+    X = 128
+    Y = 64
+    nX = 128
+    nY = 64
     mean = 0.0
     std = 1.0
 
@@ -136,9 +136,9 @@ if __name__ == "__main__":
             X, Y, nX, nY, x_corr3, y_corr3, mean, std
         )
 
-        output_dir1 = f"/home/geofluids/research/FNO/src/initial_mineral/output/calcite_{i}.h5"
-        output_dir2 = f"/home/geofluids/research/FNO/src/initial_mineral/output/clinochlore_{i}.h5"
-        output_dir3 = f"/home/geofluids/research/FNO/src/initial_mineral/output/pyrite_{i}.h5"
+        output_dir1 = f"/home/geofluids/research/FNO/src/initial_mineral/output_hr/calcite_{i}.h5"
+        output_dir2 = f"/home/geofluids/research/FNO/src/initial_mineral/output_hr/clinochlore_{i}.h5"
+        output_dir3 = f"/home/geofluids/research/FNO/src/initial_mineral/output_hr/pyrite_{i}.h5"
 
         mu1 = np.random.uniform(-1.77, -1.17) # mean -1.47
         s1 = np.random.uniform(0.6, 0.8) # mean 0.7
