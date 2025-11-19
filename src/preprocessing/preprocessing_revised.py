@@ -83,18 +83,19 @@ def read_one_h5(h5_path: Path):
         x = np.concatenate(in_slices, axis=3).astype(np.float32)   # (9,nx,ny,nt)
         y = np.concatenate(out_slices, axis=3).astype(np.float32)  # (1,nx,ny,nt)
 
-        # Step 2: Convert to delta (change from initial state at t=0)
-        # y[:, :, :, 0] is the initial state (reference)
-        # Compute delta for t=1,2,...,20 (exclude t=0 from output)
-        y_initial = y[:, :, :, 0:1]                    # (1, nx, ny, 1) - reference state at t=0
-        y_delta_all = y - y_initial                     # (1, nx, ny, nt) - delta from t=0
-        y_delta = y_delta_all[:, :, :, 1:]             # (1, nx, ny, nt-1) - exclude t=0, keep (t1-t0), (t2-t0), ...
+        # # Step 2: Convert to delta (change from initial state at t=0)
+        # # y[:, :, :, 0] is the initial state (reference)
+        # # Compute delta for t=1,2,...,20 (exclude t=0 from output)
+        # y_initial = y[:, :, :, 0:1]                    # (1, nx, ny, 1) - reference state at t=0
+        # y_delta_all = y - y_initial                     # (1, nx, ny, nt) - delta from t=0
+        # y_delta = y_delta_all[:, :, :, 1:]             # (1, nx, ny, nt-1) - exclude t=0, keep (t1-t0), (t2-t0), ...
 
-        # Update input to match output timesteps (exclude t=0)
-        x = x[:, :, :, 1:]                             # (9, nx, ny, nt-1) - match output timesteps
-        t_labels = t_labels[1:]                        # Remove t=0 label
+        # # Update input to match output timesteps (exclude t=0)
+        # x = x[:, :, :, 1:]                             # (9, nx, ny, nt-1) - match output timesteps
+        # t_labels = t_labels[1:]                        # Remove t=0 label
+        # return x, y_delta, (xc_unique.astype(np.float32), yc_unique.astype(np.float32)), t_labels
 
-        return x, y_delta, (xc_unique.astype(np.float32), yc_unique.astype(np.float32)), t_labels
+        return x, y, (xc_unique.astype(np.float32), yc_unique.astype(np.float32)), t_labels
 
 def get_available_ids(base_dir: str):
     """Automatically detect available pflotran IDs from output directory"""
