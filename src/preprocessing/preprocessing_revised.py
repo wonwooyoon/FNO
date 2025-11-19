@@ -61,7 +61,7 @@ def read_one_h5(h5_path: Path):
 
         # 시간 키 수집(0~2000y, 100 간격) - t=0 포함!
         available = {}
-        for X in range(0, 2001, 100):
+        for X in range(100, 2001, 100):
             token = f"{int(X/50)} Time"
             match = next((k for k in keys_list if token in k), None)
             if match is not None:
