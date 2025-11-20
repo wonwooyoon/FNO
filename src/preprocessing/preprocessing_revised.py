@@ -7,7 +7,27 @@ import torch
 import sys
 import re
 
-def read_one_h5(h5_path: Path):
+def read_one_h5(h5_path: Path, preprocessing_mode: str = 'log'):
+    """
+    Read and preprocess PFLOTRAN HDF5 output.
+
+    Args:
+        h5_path: Path to HDF5 file
+        preprocessing_mode: How to process Total UO2++ concentration
+            - 'raw': Use raw concentration values (linear scale, absolute)
+            - 'log': Apply log10 transformation with epsilon (log10(C + 1e-12))
+            - 'delta': Compute delta from t=0 initial state (excludes t=0 from output)
+
+    Returns:
+        x: Input tensor (channels, nx, ny, nt)
+        y: Output tensor (1, nx, ny, nt)
+        coords: (xc_unique, yc_unique) coordinate arrays
+        t_labels: List of time labels
+    """
+    valid_modes = ['raw', 'log', 'delta']
+    if preprocessing_mode not in valid_modes:
+        raise ValueError(f"Invalid preprocessing_mode: {preprocessing_mode}. Must be one of {valid_modes}")
+
     with h5py.File(h5_path, "r") as f:
         keys_list = list(f.keys())
 
@@ -54,14 +74,23 @@ def read_one_h5(h5_path: Path):
         x_velo_grid    = to_grid(x_velo)
         y_velo_grid    = to_grid(y_velo)
 
+        # Convert material ID to one-hot encoding
+        # Material IDs: 1=Source, 2=Bentonite, 3=Fracture
+        material_source    = (material_grid == 1).astype(np.float32)
+        material_bentonite = (material_grid == 2).astype(np.float32)
+        material_fracture  = (material_grid == 3).astype(np.float32)
+
         input_base = np.stack(
             [perm_grid, calcite_grid, clino_grid, pyrite_grid, smectite_grid,
-             material_grid, x_velo_grid, y_velo_grid], axis=0
-        )[:, :, :, np.newaxis]  # (9, nx, ny, 1)
+             material_source, material_bentonite, material_fracture,
+             x_velo_grid, y_velo_grid], axis=0
+        )[:, :, :, np.newaxis]  # (10, nx, ny, 1)
 
-        # 시간 키 수집(0~2000y, 100 간격) - t=0 포함!
+        # Time key collection (0~2000y, 100y intervals)
+        # Include t=0 for delta mode, optional for others
+        start_time = 0 if preprocessing_mode == 'delta' else 100
         available = {}
-        for X in range(100, 2001, 100):
+        for X in range(start_time, 2001, 100):
             token = f"{int(X/50)} Time"
             match = next((k for k in keys_list if token in k), None)
             if match is not None:
@@ -71,29 +100,41 @@ def read_one_h5(h5_path: Path):
         t_labels = []
         in_slices, out_slices = [], []
 
-        # Step 1: Collect all timesteps including t=0
+        # Collect all timesteps
         for tnum in times_sorted:
             key = available[tnum]
-            total_uo2 = np.log10(np.array(f[key]["Total UO2++ [M]"][:])[zc_mask] + 1e-12)
+
+            # Load raw UO2 concentration
+            total_uo2_raw = np.array(f[key]["Total UO2++ [M]"][:])[zc_mask]
+
+            # Apply preprocessing based on mode
+            if preprocessing_mode == 'raw':
+                total_uo2 = total_uo2_raw  # Linear scale, absolute concentration
+            elif preprocessing_mode == 'log':
+                total_uo2 = np.log10(total_uo2_raw + 1e-12)  # Log scale with epsilon
+            elif preprocessing_mode == 'delta':
+                # For delta mode, we'll compute log first, then delta later
+                total_uo2 = np.log10(total_uo2_raw + 1e-12)
+
             out_grid = to_grid(total_uo2)
             out_slices.append(out_grid[np.newaxis, :, :, np.newaxis])  # (1,nx,ny,1)
-            in_slices.append(input_base)                                # (9,nx,ny,1)
+            in_slices.append(input_base)                                # (10,nx,ny,1)
             t_labels.append(key.strip())
 
-        x = np.concatenate(in_slices, axis=3).astype(np.float32)   # (9,nx,ny,nt)
+        x = np.concatenate(in_slices, axis=3).astype(np.float32)   # (10,nx,ny,nt)
         y = np.concatenate(out_slices, axis=3).astype(np.float32)  # (1,nx,ny,nt)
 
-        # # Step 2: Convert to delta (change from initial state at t=0)
-        # # y[:, :, :, 0] is the initial state (reference)
-        # # Compute delta for t=1,2,...,20 (exclude t=0 from output)
-        # y_initial = y[:, :, :, 0:1]                    # (1, nx, ny, 1) - reference state at t=0
-        # y_delta_all = y - y_initial                     # (1, nx, ny, nt) - delta from t=0
-        # y_delta = y_delta_all[:, :, :, 1:]             # (1, nx, ny, nt-1) - exclude t=0, keep (t1-t0), (t2-t0), ...
+        # Apply delta transformation if requested
+        if preprocessing_mode == 'delta':
+            # y[:, :, :, 0] is the initial state (reference at t=0)
+            # Compute delta for t=1,2,...,nt (exclude t=0 from output)
+            y_initial = y[:, :, :, 0:1]                    # (1, nx, ny, 1) - reference state at t=0
+            y_delta_all = y - y_initial                     # (1, nx, ny, nt) - delta from t=0
+            y = y_delta_all[:, :, :, 1:]                   # (1, nx, ny, nt-1) - exclude t=0
 
-        # # Update input to match output timesteps (exclude t=0)
-        # x = x[:, :, :, 1:]                             # (9, nx, ny, nt-1) - match output timesteps
-        # t_labels = t_labels[1:]                        # Remove t=0 label
-        # return x, y_delta, (xc_unique.astype(np.float32), yc_unique.astype(np.float32)), t_labels
+            # Update input to match output timesteps (exclude t=0)
+            x = x[:, :, :, 1:]                             # (10, nx, ny, nt-1) - match output timesteps
+            t_labels = t_labels[1:]                        # Remove t=0 label
 
         return x, y, (xc_unique.astype(np.float32), yc_unique.astype(np.float32)), t_labels
 
@@ -118,11 +159,26 @@ def get_available_ids(base_dir: str):
     return available_ids
 
 if __name__ == "__main__":
-    # Default paths - no more interactive input for these
+    # ========================================================================
+    # CONFIGURATION - Preprocessing mode 설정 (이 부분만 수정하세요)
+    # ========================================================================
+
+    # Preprocessing mode 선택:
+    #   - 'raw':   원시 농도 값 (선형 스케일, 절대 농도)
+    #   - 'log':   Log10 변환 적용 (log10(C + 1e-12)) [기본값]
+    #   - 'delta': t=0 시점 대비 변화량 (log 변환 후 delta 계산)
+    preprocessing_mode = 'delta'
+
+    # ========================================================================
+    # 이하 코드는 수정 불필요 (distributed_preprocessing.py와 연동)
+    # ========================================================================
+
+    # Default paths
     base_dir = "./src/pflotran_run/output"
     others_csv = "./src/initial_others/output/others.csv"
-    
-    # Get output suffix from command line or interactive input
+
+    # Get output suffix from command line argument
+    # This is required for distributed_preprocessing.py integration
     if len(sys.argv) > 1:
         out_suffix = sys.argv[1]
     else:
@@ -130,6 +186,25 @@ if __name__ == "__main__":
         if not out_suffix:
             print("[ERROR] Output suffix is required!")
             sys.exit(1)
+
+    # Validate preprocessing mode
+    valid_modes = ['raw', 'log', 'delta']
+    if preprocessing_mode not in valid_modes:
+        print(f"[ERROR] Invalid preprocessing mode: {preprocessing_mode}")
+        print(f"Valid modes: {valid_modes}")
+        print("  - 'raw':   Use raw concentration values (linear scale)")
+        print("  - 'log':   Apply log10 transformation")
+        print("  - 'delta': Compute delta from t=0 initial state")
+        sys.exit(1)
+
+    print("=" * 70)
+    print("PFLOTRAN Data Preprocessing")
+    print("=" * 70)
+    print(f"Output suffix:        {out_suffix}")
+    print(f"Preprocessing mode:   {preprocessing_mode}")
+    print(f"Base directory:       {base_dir}")
+    print(f"Others CSV:           {others_csv}")
+    print("=" * 70)
     
     # Automatically detect available IDs
     print(f"Scanning {base_dir} for available pflotran data...")
@@ -168,7 +243,7 @@ if __name__ == "__main__":
     for i in available_ids:
         h5_path = Path(base_dir) / f"pflotran_{i}" / f"pflotran_{i}.h5"
         print(f"Processing {h5_path}...")
-        x, y, coords, tlabels = read_one_h5(h5_path)
+        x, y, coords, tlabels = read_one_h5(h5_path, preprocessing_mode=preprocessing_mode)
         xs.append(x[np.newaxis, ...])
         ys.append(y[np.newaxis, ...])
         if coords_saved is None:

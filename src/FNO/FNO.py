@@ -54,7 +54,7 @@ CONFIG = {
     'RANDOM_STATE': 42,
     'DOMAIN_PADDING_MODE': 'symmetric',
     'MODEL_CONFIG': {
-        'in_channels': 9,  # 8 original channels + 1 uniform meta channel
+        'in_channels': 11,  # 10 original channels (with material one-hot) + 1 uniform meta channel
         'out_channels': 1,
         'lifting_channel_ratio': 2,
         'projection_channel_ratio': 2,
@@ -139,14 +139,14 @@ CONFIG = {
         'channel_mlp_skip_options': ['linear', 'soft-gating']  # categorical options
     },
     'SINGLE_PARAMS': {
-        "n_modes_1": 15,
-        "n_modes_2": 13,
-        "n_modes_3": 4,
-        "hidden_channels": 47,
-        "n_layers": 6,
+        "n_modes_1": 16,
+        "n_modes_2": 16,
+        "n_modes_3": 2,
+        "hidden_channels": 48,
+        "n_layers": 8,
         "domain_padding": (0.1,0.1,0.1),
         "train_batch_size": 32,
-        "l2_weight": 3.4743249072154194e-05,
+        "l2_weight": 1e-6,
         "channel_mlp_expansion": 0.5,
         "channel_mlp_skip": 'soft-gating'
     }
