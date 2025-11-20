@@ -1054,6 +1054,76 @@ def compute_global_ranges(
     return ig_ranges, input_ranges
 
 
+def visualize_baseline_channels(
+    baseline_data: np.ndarray,
+    output_dir: Path,
+    config: Dict,
+    verbose: bool = True
+) -> List[Path]:
+    """
+    Visualize baseline channels for IG analysis.
+    Creates one image per channel showing the mean baseline (time-invariant).
+
+    Args:
+        baseline_data: Baseline data array (C, nx, ny, nt)
+        output_dir: Output directory (integrated_gradients/sample_{idx}/)
+        config: Configuration dictionary
+        verbose: Whether to print progress
+
+    Returns:
+        List of paths to saved images
+    """
+    channel_names = [
+        'Permeability', 'Calcite', 'Clinochlore', 'Pyrite',
+        'Smectite', 'Material_Source', 'Material_Bentonite', 'Material_Fracture',
+        'X-velocity', 'Y-velocity', 'Meta'
+    ]
+
+    channel_short = [
+        'Perm', 'Calcite', 'Clino', 'Pyrite',
+        'Smectite', 'MatSrc', 'MatBent', 'MatFrac',
+        'Vx', 'Vy', 'Meta'
+    ]
+
+    saved_paths = []
+    dpi = config.get('OUTPUT', {}).get('DPI', 200)
+
+    # Baseline channels are time-invariant, use t=0
+    n_channels = baseline_data.shape[0]
+    for ch in range(n_channels):
+        # Create single subplot
+        fig, ax = plt.subplots(1, 1, figsize=(8, 6))
+
+        # Baseline channel at t=0 (time-invariant)
+        baseline_slice = baseline_data[ch, :, :, 0]
+        baseline_vmin = np.percentile(baseline_slice, 2)
+        baseline_vmax = np.percentile(baseline_slice, 98)
+
+        im = ax.imshow(baseline_slice.T, cmap='viridis',
+                      vmin=baseline_vmin, vmax=baseline_vmax, aspect='auto')
+        ax.set_title(f'{channel_names[ch]} Baseline (Mean)', fontweight='bold')
+        ax.set_xlabel('X')
+        ax.set_ylabel('Y')
+        cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+        cbar.formatter.set_powerlimits((-2, 2))
+        cbar.formatter.set_useMathText(True)
+        cbar.update_ticks()
+
+        plt.tight_layout()
+
+        # Save
+        save_path = output_dir / f'ch{ch}_{channel_short[ch]}_baseline.png'
+        plt.savefig(save_path, dpi=dpi, bbox_inches='tight')
+        plt.close(fig)
+
+        saved_paths.append(save_path)
+
+        if verbose:
+            print(f"  Saved: {save_path.name}")
+
+    return saved_paths
+
+
 def visualize_ig_input_channels(
     input_data: np.ndarray,
     sample_idx: int,
@@ -1077,19 +1147,22 @@ def visualize_ig_input_channels(
     """
     channel_names = [
         'Permeability', 'Calcite', 'Clinochlore', 'Pyrite',
-        'Smectite', 'Material_ID', 'X-velocity', 'Y-velocity', 'Meta'
+        'Smectite', 'Material_Source', 'Material_Bentonite', 'Material_Fracture',
+        'X-velocity', 'Y-velocity', 'Meta'
     ]
 
     channel_short = [
         'Perm', 'Calcite', 'Clino', 'Pyrite',
-        'Smectite', 'MatID', 'Vx', 'Vy', 'Meta'
+        'Smectite', 'MatSrc', 'MatBent', 'MatFrac',
+        'Vx', 'Vy', 'Meta'
     ]
 
     saved_paths = []
     dpi = config.get('OUTPUT', {}).get('DPI', 200)
 
     # Input channels are time-invariant, use t=0
-    for ch in range(9):
+    n_channels = input_data.shape[0]
+    for ch in range(n_channels):
         # Create single subplot
         fig, ax = plt.subplots(1, 1, figsize=(8, 6))
 
@@ -1146,12 +1219,14 @@ def visualize_ig_attributions(
     """
     channel_names = [
         'Permeability', 'Calcite', 'Clinochlore', 'Pyrite',
-        'Smectite', 'Material_ID', 'X-velocity', 'Y-velocity', 'Meta'
+        'Smectite', 'Material_Source', 'Material_Bentonite', 'Material_Fracture',
+        'X-velocity', 'Y-velocity', 'Meta'
     ]
 
     channel_short = [
         'Perm', 'Calcite', 'Clino', 'Pyrite',
-        'Smectite', 'MatID', 'Vx', 'Vy', 'Meta'
+        'Smectite', 'MatSrc', 'MatBent', 'MatFrac',
+        'Vx', 'Vy', 'Meta'
     ]
 
     # Compute global ranges for each channel (across all time indices)
@@ -1193,7 +1268,7 @@ def visualize_ig_attributions(
     dpi = config.get('OUTPUT', {}).get('DPI', 200)
 
     for t_idx, ig_spatial in ig_results.items():
-        for ch in range(9):
+        for ch in range(n_channels):
             # Create single subplot for IG attribution
             fig, ax = plt.subplots(1, 1, figsize=(8, 6))
 
@@ -1249,7 +1324,8 @@ def save_ig_csv(
     """
     channel_names = [
         'Permeability', 'Calcite', 'Clinochlore', 'Pyrite',
-        'Smectite', 'Material_ID', 'X-velocity', 'Y-velocity', 'Meta'
+        'Smectite', 'Material_Source', 'Material_Bentonite', 'Material_Fracture',
+        'X-velocity', 'Y-velocity', 'Meta'
     ]
 
     saved_paths = []
@@ -1310,7 +1386,8 @@ def analyze_channel_importance(
     """
     channel_names = [
         'Perm', 'Calcite', 'Clino', 'Pyrite',
-        'Smectite', 'MatID', 'Vx', 'Vy', 'Meta'
+        'Smectite', 'MatSrc', 'MatBent', 'MatFrac',
+        'Vx', 'Vy', 'Meta'
     ]
 
     times = sorted(ig_results.keys())
@@ -1410,14 +1487,22 @@ def integrated_gradients_analysis(
     # Generate outputs
     print("\nGenerating outputs...")
 
-    # Input channel visualizations (time-invariant, 9 images total)
+    # Baseline channel visualizations (time-invariant)
+    print("\n  Generating baseline channel images...")
+    baseline_data = baseline[0].cpu().numpy()  # (C, nx, ny, nt)
+    baseline_viz_paths = visualize_baseline_channels(
+        baseline_data,
+        output_dirs['ig_sample'], config, verbose
+    )
+
+    # Input channel visualizations (time-invariant)
     print("\n  Generating input channel images...")
     input_viz_paths = visualize_ig_input_channels(
         input_data, sample_idx,
         output_dirs['ig_sample'], config, verbose
     )
 
-    # IG attribution visualizations (9 channels × N time indices)
+    # IG attribution visualizations (N channels × N time indices)
     print("\n  Generating IG attribution images...")
     ig_viz_paths = visualize_ig_attributions(
         ig_results, sample_idx,
@@ -1438,6 +1523,7 @@ def integrated_gradients_analysis(
 
     return {
         'ig_results': ig_results,
+        'baseline_viz_paths': baseline_viz_paths,
         'input_viz_paths': input_viz_paths,
         'ig_viz_paths': ig_viz_paths,
         'csv_paths': csv_paths,
