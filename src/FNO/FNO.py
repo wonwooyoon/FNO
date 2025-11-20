@@ -364,21 +364,17 @@ class LpLoss(nn.Module):
         self.register_buffer('spatial_mask', spatial_mask)
 
     def forward(self, pred, y):
-        # Compute error first (preserve continuity in pred and y)
-        error = pred - y
-
-        # Apply spatial mask to error only (not to pred/y values)
+        # Apply spatial mask if provided
         if self.spatial_mask is not None:
             # Expand mask to match prediction shape (N, C, nx, ny, nt)
             if len(pred.shape) == 5:  # (N, C, nx, ny, nt)
                 mask = self.spatial_mask.unsqueeze(0).unsqueeze(0).unsqueeze(-1)  # (1, 1, nx, ny, 1)
+                pred = pred * mask
+                y = y * mask
             elif len(pred.shape) == 4:  # (N, C, nx, ny)
                 mask = self.spatial_mask.unsqueeze(0).unsqueeze(0)  # (1, 1, nx, ny)
-            else:
-                mask = self.spatial_mask
-
-            # Mask the error (not the values themselves)
-            error = error * mask
+                pred = pred * mask
+                y = y * mask
 
         # Get spatial dimensions (skip batch and channel dimensions)
         if len(pred.shape) == 5:  # (N, C, nx, ny, nt)
@@ -388,8 +384,8 @@ class LpLoss(nn.Module):
         else:
             dims = list(range(2, len(pred.shape)))
 
-        # Compute relative Lp norm: ||masked_error||_p / ||y||_p
-        diff_norm = torch.norm(error, p=self.p, dim=dims, keepdim=False)
+        # Compute relative Lp norm: ||pred - y||_p / ||y||_p
+        diff_norm = torch.norm(pred - y, p=self.p, dim=dims, keepdim=False)
         y_norm = torch.norm(y, p=self.p, dim=dims, keepdim=False)
         relative_error = diff_norm / (y_norm + 1e-12)  # Add small epsilon to avoid division by zero
 
@@ -404,7 +400,7 @@ class LpLoss(nn.Module):
 class MaskedMSELoss(nn.Module):
     """MSE Loss function with spatial masking support.
 
-    Computes MSE loss while ignoring specific spatial regions by masking the error.
+    Wrapper around torch.nn.MSELoss that applies spatial masking before computing loss.
 
     Args:
         spatial_mask: Optional spatial mask tensor (nx, ny) to zero out specific regions
@@ -413,35 +409,23 @@ class MaskedMSELoss(nn.Module):
 
     def __init__(self, spatial_mask=None, reduction='mean'):
         super().__init__()
-        self.reduction = reduction
+        self.mse_loss = nn.MSELoss(reduction=reduction)
         self.register_buffer('spatial_mask', spatial_mask)
 
     def forward(self, pred, y):
-        # Compute error first (preserve continuity in pred and y)
-        error = pred - y
-
-        # Apply spatial mask to error only (not to pred/y values)
+        # Apply spatial mask if provided
         if self.spatial_mask is not None:
             # Expand mask to match prediction shape (N, C, nx, ny, nt)
             if len(pred.shape) == 5:  # (N, C, nx, ny, nt)
                 mask = self.spatial_mask.unsqueeze(0).unsqueeze(0).unsqueeze(-1)  # (1, 1, nx, ny, 1)
+                pred = pred * mask
+                y = y * mask
             elif len(pred.shape) == 4:  # (N, C, nx, ny)
                 mask = self.spatial_mask.unsqueeze(0).unsqueeze(0)  # (1, 1, nx, ny)
-            else:
-                mask = self.spatial_mask
+                pred = pred * mask
+                y = y * mask
 
-            # Mask the error (not the values themselves)
-            error = error * mask
-
-        # Compute MSE on masked error
-        squared_error = error ** 2
-
-        if self.reduction == 'mean':
-            return squared_error.mean()
-        elif self.reduction == 'sum':
-            return squared_error.sum()
-        else:
-            return squared_error
+        return self.mse_loss(pred, y)
 
 
 # ==============================================================================
