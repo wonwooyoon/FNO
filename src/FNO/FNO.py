@@ -45,9 +45,9 @@ from util_output import generate_all_outputs
 # Configuration
 # ==============================================================================
 CONFIG = {
-    'MERGED_PT_PATH': './src/preprocessing/merged_U.pt',
+    'MERGED_PT_PATH': './src/preprocessing/merged_U_log_normalized.pt',  # Pre-normalized data
     'OUTPUT_DIR': './src/FNO/output_pure',
-    'N_EPOCHS': 50,  # Reduced for testing
+    'N_EPOCHS': 5,  # Reduced for testing
     'EVAL_INTERVAL': 1,
     'VAL_SIZE': 0.1,  # Validation set size
     'TEST_SIZE': 0.1,  # Test set size
@@ -77,6 +77,8 @@ CONFIG = {
         'SAMPLE_INDICES': [3, 5, 52, 98, 121, 230],  # Samples to visualize
         'TIME_INDICES': [4, 9, 14, 19],  # Time indices to visualize
         'DPI': 200,  # Resolution for all images
+
+        # Note: NORM_CHECK is now performed in preprocessing_merge.py
 
         # Image output configuration
         'IMAGE_OUTPUT': {
@@ -120,7 +122,7 @@ CONFIG = {
         }
     },
     'TRAINING_CONFIG': {
-        'mode': 'eval',  # Options: 'single', 'optuna', 'eval'
+        'mode': 'single',  # Options: 'single', 'optuna', 'eval'
         'optuna_n_trials': 100,
         'optuna_seed': 42,
         'optuna_n_startup_trials': 10,
@@ -139,11 +141,11 @@ CONFIG = {
         'channel_mlp_skip_options': ['linear', 'soft-gating']  # categorical options
     },
     'SINGLE_PARAMS': {
-        "n_modes_1": 16,
-        "n_modes_2": 16,
+        "n_modes_1": 8,
+        "n_modes_2": 8,
         "n_modes_3": 2,
-        "hidden_channels": 48,
-        "n_layers": 8,
+        "hidden_channels": 12,
+        "n_layers": 4,
         "domain_padding": (0.1,0.1,0.1),
         "train_batch_size": 32,
         "l2_weight": 1e-6,
@@ -181,122 +183,130 @@ class CustomDatasetPure(Dataset):
         }
 
 # ==============================================================================
+# Identity Normalizer (for pre-normalized data)
+# ==============================================================================
+
+class IdentityNormalizer:
+    """Identity normalizer that does nothing (for already normalized data)."""
+
+    def __init__(self):
+        self.eps = 0.0
+
+    def fit(self, data):
+        pass
+
+    def transform(self, x):
+        return x
+
+    def inverse_transform(self, x):
+        return x
+
+    def to(self, device):
+        return self
+
+    def cpu(self):
+        return self
+
+    def cuda(self):
+        return self
+
+
+# ==============================================================================
 # Data Processing Functions
 # ==============================================================================
 
 def preprocessing(config: Dict, verbose: bool = True) -> Tuple:
     """
-    Unified data preprocessing function for Pure FNO training.
-    
+    Load pre-normalized data and perform train/val/test split.
+
     Processing Steps:
-    1. Load saved tensors (x, y, meta)
-    2. Transform meta data to uniform channels and combine with input
-    3. Create normalizers and fit them, form DefaultDataProcessor
+    1. Load normalized tensors (x, y already include meta channel and are normalized)
+    2. Load channel-wise normalizer from saved state
+    3. Create identity processor (data already normalized)
     4. Perform train/val/test split and create datasets
     5. Return necessary objects for training
-    
+
     Args:
         config: Configuration dictionary containing paths and parameters
         verbose: Whether to print progress information
-        
+
     Returns:
         Tuple containing (processor, train_dataset, val_dataset, test_dataset, device)
     """
-    
+
     if verbose:
-        print(f"\nStarting unified data preprocessing...")
-    
+        print(f"\nLoading pre-normalized data and creating datasets...")
+
     # Determine device
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     if verbose:
         print(f"Using device: {device}")
-    
+
     try:
-        # Step 1: Load saved tensors
+        # Step 1: Load normalized tensors
         if verbose:
-            print("Step 1: Loading merged tensors...")
-            
+            print("Step 1: Loading normalized tensors...")
+
         if not Path(config['MERGED_PT_PATH']).exists():
-            raise FileNotFoundError(f"Merged file not found: {config['MERGED_PT_PATH']}")
-            
+            raise FileNotFoundError(f"Normalized file not found: {config['MERGED_PT_PATH']}")
+
         bundle = torch.load(config['MERGED_PT_PATH'], map_location="cpu", weights_only=False)
 
-        required_keys = ["x", "y", "meta"]
+        required_keys = ["x", "y", "normalizer_state"]
         missing_keys = [key for key in required_keys if key not in bundle]
         if missing_keys:
-            raise KeyError(f"Missing required keys in data: {missing_keys}")
+            raise KeyError(f"Missing required keys in normalized data: {missing_keys}")
 
-        # Keep data on CPU to avoid VRAM issues during preprocessing
-        in_data = bundle["x"].float()
-        out_data = bundle["y"].float()
-        meta_data = bundle["meta"].float()
-        
+        # Data is already normalized and combined (includes meta channel)
+        combined_input = bundle["x"].float()   # (N, 11, nx, ny, nt) - already normalized
+        out_data = bundle["y"].float()          # (N, 1, nx, ny, nt) - already normalized
+        normalizer_state = bundle["normalizer_state"]
+
         if verbose:
-            print(f"   Loaded tensors - Input: {tuple(in_data.shape)}, Output: {tuple(out_data.shape)}, Meta: {tuple(meta_data.shape)}")
-            
+            print(f"   Loaded normalized tensors - Input: {tuple(combined_input.shape)}, Output: {tuple(out_data.shape)}")
+
     except Exception as e:
-        raise RuntimeError(f"Failed at Step 1 (tensor loading): {e}")
-    
+        raise RuntimeError(f"Failed at Step 1 (loading normalized data): {e}")
+
     try:
-        # Step 2: Transform meta data to uniform channels and combine
+        # Step 2: Load channel-wise normalizer
         if verbose:
-            print("Step 2: Expanding meta channels and combining with input...")
-            
-        # Apply output masking as in original code
-        # out_data[:, :, 12:20, 12:20, :] = 0
-        
-        # Expand meta data to uniform spatial channels and combine with input
-        N, original_channels, nx, ny, nt = in_data.shape
-        
-        # Handle both 1D and 2D meta tensors
-        if len(meta_data.shape) == 1:
-            meta_data = meta_data.unsqueeze(1)  # (N,) -> (N, 1)
-            
-        N_meta, meta_channels = meta_data.shape
-        
-        if N != N_meta:
-            raise ValueError(f"Batch size mismatch: input_tensor {N}, meta_tensor {N_meta}")
-        
-        # Expand meta tensor to match spatial dimensions
-        # Shape: (N, meta_channels) -> (N, meta_channels, nx, ny, nt)
-        expanded_meta = meta_data.unsqueeze(2).unsqueeze(3).unsqueeze(4)  # (N, meta_channels, 1, 1, 1)
-        expanded_meta = expanded_meta.expand(N, meta_channels, nx, ny, nt)   # (N, meta_channels, nx, ny, nt)
-        
-        # Concatenate along channel dimension
-        combined_input = torch.cat([in_data, expanded_meta], dim=1)
-        
+            print("Step 2: Loading channel-wise normalizer...")
+
+        # Import here to avoid issues
+        sys.path.insert(0, str(Path(__file__).parent.parent / 'preprocessing'))
+        from preprocessing_normalizer import ChannelWiseNormalizer
+
+        channel_normalizer = ChannelWiseNormalizer.load_from_state_dict(normalizer_state)
+
         if verbose:
-            print(f"   Combined input shape: {tuple(combined_input.shape)}")
-            
+            print("   Channel-wise normalizer loaded successfully")
+
     except Exception as e:
-        raise RuntimeError(f"Failed at Step 2 (meta channel expansion): {e}")
-    
+        raise RuntimeError(f"Failed at Step 2 (loading normalizer): {e}")
+
     try:
-        # Step 3: Create normalizers and processor
+        # Step 3: Create identity processor (data already normalized)
         if verbose:
-            print("Step 3: Creating normalizers and data processor...")
+            print("Step 3: Creating processor...")
 
-        # Create normalizers for combined input and output (on CPU)
-        in_normalizer = UnitGaussianNormalizer(
-            mean=combined_input, std=combined_input, dim=[0,2,3,4], eps=1e-6
-        )
-        out_normalizer = UnitGaussianNormalizer(
-            mean=out_data, std=out_data, dim=[0,2,3,4], eps=1e-6
-        )
+        # Create identity normalizers (do nothing, data already normalized)
+        identity_in = IdentityNormalizer()
+        identity_out = IdentityNormalizer()
 
-        # Fit normalizers on CPU data
-        in_normalizer.fit(combined_input)
-        out_normalizer.fit(out_data)
+        # Create processor with identity normalizers
+        processor = DefaultDataProcessor(identity_in, identity_out).to(device)
 
-        # Create processor and move only the processor to device
-        processor = DefaultDataProcessor(in_normalizer, out_normalizer).to(device)
-        
+        # Attach channel_normalizer for inverse transform in output generation
+        processor.channel_normalizer = channel_normalizer
+
         if verbose:
-            print("   Normalizers and processor created successfully")
-            
+            print("   Processor created (using identity normalization)")
+            print("   Channel-wise normalizer attached for inverse transforms")
+
     except Exception as e:
-        raise RuntimeError(f"Failed at Step 3 (normalizer creation): {e}")
-    
+        raise RuntimeError(f"Failed at Step 3 (processor creation): {e}")
+
     try:
         # Step 4: Perform train/val/test split and create datasets
         if verbose:

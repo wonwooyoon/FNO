@@ -9,7 +9,7 @@ def load_cpu(path):
 if __name__ == "__main__":
     # Hardcoded paths
     input_dir = "./src/preprocessing"
-    output_file = "./src/preprocessing/merged_U_raw.pt"
+    output_file = "./src/preprocessing/merged_U_log.pt"
     
     # Automatically find all input_output_com*.pt files
     pattern = f"{input_dir}/input_output_com*.pt"
@@ -70,3 +70,45 @@ if __name__ == "__main__":
     print(f"[OK] 병합 완료: {len(shards)} shards → {out_path}")
     print(f"Final shapes: x{tuple(X.shape)} y{tuple(Y.shape)} meta{tuple(META.shape)}")
     print(f"Total samples: {X.shape[0]}")
+
+    # ==============================================================================
+    # Apply Channel-wise Normalization
+    # ==============================================================================
+    print(f"\n{'='*70}")
+    print("Applying Channel-wise Normalization")
+    print(f"{'='*70}\n")
+
+    from preprocessing_normalizer import apply_channel_normalization
+
+    # Configuration for normalization check
+    norm_config = {
+        'OUTPUT': {
+            'DPI': 150,
+            'NORM_CHECK': {
+                'ENABLED': True,
+                'N_SAMPLES': 10
+            }
+        }
+    }
+
+    # Determine normalized output path
+    # E.g., merged_U_log.pt → merged_U_log_normalized.pt
+    normalized_path = out_path.parent / (out_path.stem + "_normalized" + out_path.suffix)
+
+    # Apply normalization
+    result = apply_channel_normalization(
+        merged_data_path=str(out_path),
+        output_path=str(normalized_path),
+        config=norm_config,
+        verbose=True
+    )
+
+    print(f"\n{'='*70}")
+    print("Normalization Results:")
+    print(f"{'='*70}")
+    print(f"Normalized data: {result['normalized_data_path']}")
+    if 'normalization_check_dir' in result:
+        print(f"Statistics dir:  {result['normalization_check_dir']}")
+        print(f"Input stats:     {result['input_stats_csv']}")
+        print(f"Output stats:    {result['output_stats_csv']}")
+    print(f"{'='*70}\n")

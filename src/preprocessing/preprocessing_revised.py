@@ -53,12 +53,26 @@ def read_one_h5(h5_path: Path, preprocessing_mode: str = 'log'):
 
         # t=0 고정 입력 성분
         grp0 = f["   0 Time  0.00000E+00 y"]
-        perm      = np.log10(np.array(grp0["Permeability [m^2]"][:])[zc_mask])
-        calcite   = np.array(grp0["Calcite VF [m^3 mnrl_m^3 bulk]"][:])[zc_mask]
-        clino     = np.array(grp0["Clinochlore VF [m^3 mnrl_m^3 bulk]"][:])[zc_mask]
-        pyrite    = np.array(grp0["Pyrite VF [m^3 mnrl_m^3 bulk]"][:])[zc_mask]
-        smectite  = np.array(grp0["Smectite_MX80 VF [m^3 mnrl_m^3 bulk]"][:])[zc_mask]
-        material  = np.array(grp0["Material ID"][:])[zc_mask]
+
+        # Permeability: log10 transformation (현재 유지)
+        perm = np.log10(np.array(grp0["Permeability [m^2]"][:])[zc_mask])
+
+        # Minerals: shifted log transformation
+        # Calcite, Clino: log10(x + 1e-6) - log10(1e-6)
+        # Pyrite: log10(x + 1e-9) - log10(1e-9)
+        # Smectite: raw values (no transformation)
+        calcite_raw = np.array(grp0["Calcite VF [m^3 mnrl_m^3 bulk]"][:])[zc_mask]
+        clino_raw = np.array(grp0["Clinochlore VF [m^3 mnrl_m^3 bulk]"][:])[zc_mask]
+        pyrite_raw = np.array(grp0["Pyrite VF [m^3 mnrl_m^3 bulk]"][:])[zc_mask]
+        smectite = np.array(grp0["Smectite_MX80 VF [m^3 mnrl_m^3 bulk]"][:])[zc_mask]
+
+        # Apply shifted log transformations
+        calcite = np.log10(calcite_raw + 1e-6) - np.log10(1e-6)
+        clino = np.log10(clino_raw + 1e-6) - np.log10(1e-6)
+        pyrite = np.log10(pyrite_raw + 1e-9) - np.log10(1e-9)
+
+        # Material ID (will be converted to one-hot encoding later)
+        material = np.array(grp0["Material ID"][:])[zc_mask]
 
         # 예: 50y 속도(필요시 args로 시간 바꿔도 됨)
         grp1 = f["   1 Time  5.00000E+01 y"]
