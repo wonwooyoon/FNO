@@ -167,7 +167,7 @@ if __name__ == "__main__":
     #   - 'raw':   원시 농도 값 (선형 스케일, 절대 농도)
     #   - 'log':   Log10 변환 적용 (log10(C + 1e-12)) [기본값]
     #   - 'delta': t=0 시점 대비 변화량 (log 변환 후 delta 계산)
-    preprocessing_mode = 'raw'
+    preprocessing_mode = 'log'
 
     # ========================================================================
     # 이하 코드는 수정 불필요 (distributed_preprocessing.py와 연동)
