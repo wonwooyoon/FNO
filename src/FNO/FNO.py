@@ -112,7 +112,12 @@ CONFIG = {
     'LOSS_CONFIG': {
         'loss_type': 'l2',  # Options: 'l2', 'mse'
         'l2_d': 3,  # Dimension for L2 loss
-        'l2_p': 2   # Power for L2 loss
+        'l2_p': 2,  # Power for L2 loss
+        'spatial_mask': {
+            'enabled': True,  # Enable spatial masking
+            'x_range': (14, 18),  # x indices to mask (14:18)
+            'y_range': (14, 18),  # y indices to mask (14:18)
+        }
     },
     'TRAINING_CONFIG': {
         'mode': 'eval',  # Options: 'single', 'optuna', 'eval'
@@ -340,23 +345,41 @@ def preprocessing(config: Dict, verbose: bool = True) -> Tuple:
 
 class LpLoss(nn.Module):
     """Lp Loss function for neural operators.
-    
+
     Computes the relative Lp norm between prediction and ground truth:
     ||pred - y||_p / ||y||_p
-    
+
     Args:
         d: Spatial dimensions to compute norm over (e.g., 2 for 2D, 3 for 3D)
         p: Power for Lp norm (e.g., 2 for L2 norm)
         reduction: Reduction method ('mean' or 'sum')
+        spatial_mask: Optional spatial mask tensor (nx, ny) to zero out specific regions
     """
-    
-    def __init__(self, d=2, p=2, reduction='mean'):
+
+    def __init__(self, d=2, p=2, reduction='mean', spatial_mask=None):
         super().__init__()
         self.d = d
         self.p = p
         self.reduction = reduction
+        self.register_buffer('spatial_mask', spatial_mask)
 
     def forward(self, pred, y):
+        # Compute error first (preserve continuity in pred and y)
+        error = pred - y
+
+        # Apply spatial mask to error only (not to pred/y values)
+        if self.spatial_mask is not None:
+            # Expand mask to match prediction shape (N, C, nx, ny, nt)
+            if len(pred.shape) == 5:  # (N, C, nx, ny, nt)
+                mask = self.spatial_mask.unsqueeze(0).unsqueeze(0).unsqueeze(-1)  # (1, 1, nx, ny, 1)
+            elif len(pred.shape) == 4:  # (N, C, nx, ny)
+                mask = self.spatial_mask.unsqueeze(0).unsqueeze(0)  # (1, 1, nx, ny)
+            else:
+                mask = self.spatial_mask
+
+            # Mask the error (not the values themselves)
+            error = error * mask
+
         # Get spatial dimensions (skip batch and channel dimensions)
         if len(pred.shape) == 5:  # (N, C, nx, ny, nt)
             dims = [2, 3, 4]  # spatial and temporal dimensions
@@ -364,18 +387,61 @@ class LpLoss(nn.Module):
             dims = [2, 3]  # spatial dimensions
         else:
             dims = list(range(2, len(pred.shape)))
-        
-        # Compute relative Lp norm: ||pred - y||_p / ||y||_p
-        diff_norm = torch.norm(pred - y, p=self.p, dim=dims, keepdim=False)
+
+        # Compute relative Lp norm: ||masked_error||_p / ||y||_p
+        diff_norm = torch.norm(error, p=self.p, dim=dims, keepdim=False)
         y_norm = torch.norm(y, p=self.p, dim=dims, keepdim=False)
         relative_error = diff_norm / (y_norm + 1e-12)  # Add small epsilon to avoid division by zero
-        
+
         if self.reduction == 'mean':
             return relative_error.mean()
         elif self.reduction == 'sum':
             return relative_error.sum()
         else:
             return relative_error
+
+
+class MaskedMSELoss(nn.Module):
+    """MSE Loss function with spatial masking support.
+
+    Computes MSE loss while ignoring specific spatial regions by masking the error.
+
+    Args:
+        spatial_mask: Optional spatial mask tensor (nx, ny) to zero out specific regions
+        reduction: Reduction method ('mean' or 'sum')
+    """
+
+    def __init__(self, spatial_mask=None, reduction='mean'):
+        super().__init__()
+        self.reduction = reduction
+        self.register_buffer('spatial_mask', spatial_mask)
+
+    def forward(self, pred, y):
+        # Compute error first (preserve continuity in pred and y)
+        error = pred - y
+
+        # Apply spatial mask to error only (not to pred/y values)
+        if self.spatial_mask is not None:
+            # Expand mask to match prediction shape (N, C, nx, ny, nt)
+            if len(pred.shape) == 5:  # (N, C, nx, ny, nt)
+                mask = self.spatial_mask.unsqueeze(0).unsqueeze(0).unsqueeze(-1)  # (1, 1, nx, ny, 1)
+            elif len(pred.shape) == 4:  # (N, C, nx, ny)
+                mask = self.spatial_mask.unsqueeze(0).unsqueeze(0)  # (1, 1, nx, ny)
+            else:
+                mask = self.spatial_mask
+
+            # Mask the error (not the values themselves)
+            error = error * mask
+
+        # Compute MSE on masked error
+        squared_error = error ** 2
+
+        if self.reduction == 'mean':
+            return squared_error.mean()
+        elif self.reduction == 'sum':
+            return squared_error.sum()
+        else:
+            return squared_error
 
 
 # ==============================================================================
@@ -490,19 +556,40 @@ def create_model(config: Dict, train_dataset, val_dataset, test_dataset, device:
         pin_memory=True
     )
     
-    # 2. Create loss function based on config
+    # 2. Create spatial mask if enabled
+    spatial_mask = None
+    mask_config = config['LOSS_CONFIG'].get('spatial_mask', {})
+    if mask_config.get('enabled', False):
+        # Get spatial dimensions from a sample
+        sample = train_dataset[0]
+        x_sample = sample['x']  # Shape: (in_channels, nx, ny, nt)
+        nx, ny = x_sample.shape[1], x_sample.shape[2]
+
+        # Create mask (1 everywhere, 0 in masked region)
+        spatial_mask = torch.ones(nx, ny, dtype=torch.float32)
+        x_range = mask_config['x_range']
+        y_range = mask_config['y_range']
+        spatial_mask[x_range[0]:x_range[1], y_range[0]:y_range[1]] = 0.0
+
+        # Move mask to device
+        spatial_mask = spatial_mask.to(device)
+
+        print(f"   Spatial loss masking enabled: x={x_range}, y={y_range}")
+
+    # 3. Create loss function based on config with spatial mask
     loss_type = config['LOSS_CONFIG']['loss_type']
     if loss_type == 'l2':
         loss_fn = LpLoss(
-            d=config['LOSS_CONFIG']['l2_d'], 
-            p=config['LOSS_CONFIG']['l2_p']
+            d=config['LOSS_CONFIG']['l2_d'],
+            p=config['LOSS_CONFIG']['l2_p'],
+            spatial_mask=spatial_mask
         )
     elif loss_type == 'mse':
-        loss_fn = torch.nn.MSELoss()
+        loss_fn = MaskedMSELoss(spatial_mask=spatial_mask)
     else:
         raise ValueError(f"Unknown loss type: {loss_type}. Use 'l2' or 'mse'.")
     
-    # 3. Create TFNO model
+    # 4. Create TFNO model
     model = TFNO(
         n_modes=n_modes,
         in_channels=config['MODEL_CONFIG']['in_channels'],
@@ -520,10 +607,10 @@ def create_model(config: Dict, train_dataset, val_dataset, test_dataset, device:
         fno_skip='linear'
     ).to(device)
     
-    # 4. Create optimizer
+    # 5. Create optimizer
     optimizer = AdamW(model.parameters(), lr=config['SCHEDULER_CONFIG']['initial_lr'], weight_decay=l2_weight)
     
-    # 5. Create scheduler based on config
+    # 6. Create scheduler based on config
     scheduler_type = config['SCHEDULER_CONFIG']['scheduler_type']
     if scheduler_type == 'cosine':
         scheduler = CappedCosineAnnealingWarmRestarts(
