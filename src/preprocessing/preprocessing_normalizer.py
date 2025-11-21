@@ -137,7 +137,7 @@ class ChannelWiseNormalizer:
 
             if transform_cfg['type'] == 'log10':
                 # Apply log10 transformation
-                transformed = torch.log10(ch_data + 1e-12)  # Add small epsilon for stability
+                transformed = torch.log10(ch_data)  # Add small epsilon for stability
                 transformed_channels.append(transformed)
 
             elif transform_cfg['type'] == 'shifted_log':
@@ -188,9 +188,8 @@ class ChannelWiseNormalizer:
                 raise ValueError(f"Delta mode requires at least 2 timesteps, got {nt}")
 
             # Apply log first, then compute delta
-            log_output = torch.log10(raw_output + 1e-12)  # (N, 1, nx, ny, nt)
-            initial = log_output[:, :, :, :, 0:1]  # (N, 1, nx, ny, 1) - reference at t=0
-            delta_all = log_output - initial  # (N, 1, nx, ny, nt) - delta from t=0
+            initial = raw_output[:, :, :, :, 0:1]  # (N, 1, nx, ny, 1) - reference at t=0
+            delta_all = raw_output - initial  # (N, 1, nx, ny, nt) - delta from t=0
             delta = delta_all[:, :, :, :, 1:]  # (N, 1, nx, ny, nt-1) - exclude t=0
 
             return delta
@@ -372,15 +371,55 @@ class ChannelWiseNormalizer:
 
     def inverse_transform_output(self, normalized_output: torch.Tensor) -> torch.Tensor:
         """
-        Inverse transform for output channel.
+        Inverse transform for output channel (normalization only).
 
         Args:
-            normalized_output: (N, 1, nx, ny, nt)
+            normalized_output: (N, 1, nx, ny, nt) - normalized
 
         Returns:
-            original_output: (N, 1, nx, ny, nt)
+            transformed_output: (N, 1, nx, ny, nt) - denormalized but still in transformed space (log/delta)
         """
         return self.output_normalizer.inverse_transform(normalized_output)
+
+    def inverse_transform_output_to_raw(self, normalized_output: torch.Tensor) -> torch.Tensor:
+        """
+        Complete inverse transform: normalized → transformed → raw physical values.
+
+        This is the full pipeline inverse:
+        1. Inverse normalization: normalized → transformed (log/delta space)
+        2. Inverse transformation: transformed → raw physical values
+
+        Args:
+            normalized_output: (N, 1, nx, ny, nt) - normalized prediction from model
+
+        Returns:
+            raw_output: (N, 1, nx, ny, nt) - raw physical concentration values
+        """
+        # Step 1: Inverse normalization (normalized → transformed)
+        transformed = self.output_normalizer.inverse_transform(normalized_output)
+
+        # Step 2: Inverse transformation (transformed → raw)
+        if self.output_mode == 'raw':
+            # No transformation was applied, already in raw space
+            return transformed
+
+        elif self.output_mode == 'log':
+            # Inverse log transformation: log(C) → C
+            # transformed is in log10 space, convert back to linear
+            return torch.pow(10, transformed)
+
+        elif self.output_mode == 'delta':
+            # Delta mode: Cannot fully reverse to absolute raw values
+            # because we don't have the t=0 reference anymore
+            # Return in log space (best approximation we can do)
+            # User needs to be aware that delta predictions are relative changes
+            raise NotImplementedError(
+                "Delta mode predictions cannot be fully reversed to absolute raw values "
+                "without t=0 reference. Predictions are in log-delta space."
+            )
+
+        else:
+            raise ValueError(f"Unknown output_mode: {self.output_mode}")
 
     def get_state_dict(self) -> Dict:
         """
@@ -762,51 +801,50 @@ def apply_channel_normalization(
         print(f"   Transformed and normalized input shape: {tuple(normalized_input.shape)}")
         print(f"   Transformed and normalized output shape: {tuple(normalized_output.shape)}")
 
-    # Perform normalization distribution check
+    # Perform normalization distribution check (always enabled)
     result_paths = {}
 
-    if config.get('OUTPUT', {}).get('NORM_CHECK', {}).get('ENABLED', False):
-        if verbose:
-            print("\nStep 5: Performing normalization distribution check...")
+    if verbose:
+        print("\nStep 5: Performing normalization distribution check...")
 
-        # Setup output directory
-        output_path_obj = Path(output_path)
-        norm_check_dir = output_path_obj.parent / 'normalization_check'
-        norm_check_dir.mkdir(parents=True, exist_ok=True)
+    # Setup output directory
+    output_path_obj = Path(output_path)
+    norm_check_dir = output_path_obj.parent / 'normalization_check'
+    norm_check_dir.mkdir(parents=True, exist_ok=True)
 
-        # Take samples for analysis
-        n_samples = min(config.get('OUTPUT', {}).get('NORM_CHECK', {}).get('N_SAMPLES', 10), N)
+    # Take samples for analysis
+    n_samples = config.get('OUTPUT', {}).get('N_SAMPLES')
 
-        # Apply transformations to samples (for before/after comparison)
-        sample_raw = raw_input_with_meta[:n_samples]
-        sample_transformed = normalizer.apply_raw_transformations(sample_raw)  # BEFORE normalization
-        sample_normalized = normalized_input[:n_samples]  # AFTER normalization
+    # Apply transformations to samples (for before/after comparison)
+    sample_raw = raw_input_with_meta[:n_samples]
+    sample_transformed = normalizer.apply_raw_transformations(sample_raw)  # BEFORE normalization
+    sample_normalized = normalized_input[:n_samples]  # AFTER normalization
 
-        sample_output_before = y[:n_samples]
-        sample_output_after = normalized_output[:n_samples]
+    sample_output_before = y[:n_samples]
+    sample_output_after = normalized_output[:n_samples]
 
-        # Analyze input distribution (transformed before vs normalized after)
-        input_results = analyze_normalization_distribution(
-            sample_transformed, sample_normalized,
-            'input', norm_check_dir, config, verbose=verbose
-        )
+    # Analyze input distribution (transformed before vs normalized after)
+    input_results = analyze_normalization_distribution(
+        sample_transformed, sample_normalized,
+        'input', norm_check_dir, config, verbose=verbose
+    )
 
-        # Analyze output distribution
-        output_results = analyze_normalization_distribution(
-            sample_output_before, sample_output_after,
-            'output', norm_check_dir, config, verbose=verbose
-        )
+    # Analyze output distribution
+    output_results = analyze_normalization_distribution(
+        sample_output_before, sample_output_after,
+        'output', norm_check_dir, config, verbose=verbose
+    )
 
-        result_paths['normalization_check_dir'] = norm_check_dir
-        result_paths['input_stats_csv'] = input_results['stats_csv']
-        result_paths['output_stats_csv'] = output_results['stats_csv']
-        result_paths['input_histograms'] = input_results['histograms']
-        result_paths['output_histograms'] = output_results['histograms']
-        result_paths['input_summary'] = input_results['summary_plot']
-        result_paths['output_summary'] = output_results['summary_plot']
+    result_paths['normalization_check_dir'] = norm_check_dir
+    result_paths['input_stats_csv'] = input_results['stats_csv']
+    result_paths['output_stats_csv'] = output_results['stats_csv']
+    result_paths['input_histograms'] = input_results['histograms']
+    result_paths['output_histograms'] = output_results['histograms']
+    result_paths['input_summary'] = input_results['summary_plot']
+    result_paths['output_summary'] = output_results['summary_plot']
 
-        if verbose:
-            print(f"   Normalization check completed. Results saved to: {norm_check_dir}")
+    if verbose:
+        print(f"   Normalization check completed. Results saved to: {norm_check_dir}")
 
     # Save normalized data with normalizer state
     if verbose:

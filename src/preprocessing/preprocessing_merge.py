@@ -2,6 +2,7 @@
 import torch
 from pathlib import Path
 import glob
+import sys
 
 def load_cpu(path):
     return torch.load(path, map_location="cpu")
@@ -31,7 +32,8 @@ if __name__ == "__main__":
     shards = [load_cpu(pth) for pth in input_paths]
     ref = shards[0]
 
-    # 메타데이터 일관성 확인
+    # 좌표 및 시간 메타데이터 일관성 확인
+    # Note: Meta values are already embedded as 11th channel in x, no separate check needed
     def check_same(a, b, name):
         if isinstance(a, torch.Tensor) and isinstance(b, torch.Tensor):
             if a.shape != b.shape or not torch.allclose(a, b):
@@ -72,14 +74,11 @@ if __name__ == "__main__":
 
     from preprocessing_normalizer import apply_channel_normalization
 
-    # Configuration for normalization check
+    # Configuration (normalization check always enabled)
     norm_config = {
         'OUTPUT': {
             'DPI': 150,
-            'NORM_CHECK': {
-                'ENABLED': True,
-                'N_SAMPLES': 10
-            }
+            'N_SAMPLES': 100  # Number of samples for distribution analysis
         }
     }
 

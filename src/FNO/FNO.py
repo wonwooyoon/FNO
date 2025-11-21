@@ -187,18 +187,41 @@ class CustomDatasetPure(Dataset):
 # ==============================================================================
 
 class IdentityNormalizer:
-    """Identity normalizer that does nothing (for already normalized data)."""
+    """
+    Identity normalizer that does nothing for transform (data already normalized).
 
-    def __init__(self):
+    Optionally supports channel-wise inverse transform to convert predictions
+    back to raw physical values.
+    """
+
+    def __init__(self, channel_normalizer=None):
+        """
+        Args:
+            channel_normalizer: Optional ChannelWiseNormalizer for complete inverse transform
+        """
         self.eps = 0.0
+        self.channel_normalizer = channel_normalizer
 
     def fit(self, data):
         pass
 
     def transform(self, x):
+        """Data is already normalized, return as-is."""
         return x
 
     def inverse_transform(self, x):
+        """
+        Inverse transform: normalized → raw physical values.
+
+        If channel_normalizer is available, performs complete inverse transform:
+        normalized → transformed → raw
+
+        Otherwise, returns as-is (data remains in normalized space).
+        """
+        if self.channel_normalizer is not None:
+            # Complete inverse: normalized → raw physical values
+            return self.channel_normalizer.inverse_transform_output_to_raw(x)
+        # No inverse available, return as-is
         return x
 
     def to(self, device):
@@ -290,19 +313,20 @@ def preprocessing(config: Dict, verbose: bool = True) -> Tuple:
         if verbose:
             print("Step 3: Creating processor...")
 
-        # Create identity normalizers (do nothing, data already normalized)
+        # Create identity normalizers
+        # Input normalizer: does nothing (data already normalized)
         identity_in = IdentityNormalizer()
-        identity_out = IdentityNormalizer()
+
+        # Output normalizer: performs complete inverse transform (normalized → raw)
+        identity_out = IdentityNormalizer(channel_normalizer=channel_normalizer)
 
         # Create processor with identity normalizers
         processor = DefaultDataProcessor(identity_in, identity_out).to(device)
 
-        # Attach channel_normalizer for inverse transform in output generation
-        processor.channel_normalizer = channel_normalizer
-
         if verbose:
             print("   Processor created (using identity normalization)")
-            print("   Channel-wise normalizer attached for inverse transforms")
+            print("   Output normalizer configured for automatic inverse transform to raw values")
+            print(f"   Output mode: {channel_normalizer.output_mode}")
 
     except Exception as e:
         raise RuntimeError(f"Failed at Step 3 (processor creation): {e}")
