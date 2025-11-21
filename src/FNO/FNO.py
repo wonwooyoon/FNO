@@ -18,6 +18,7 @@ sys.path.append('./')
 import math
 import shutil
 import json
+import pickle
 from pathlib import Path
 from typing import Dict, List, Tuple, Any, Optional
 
@@ -32,8 +33,6 @@ import matplotlib.colors as colors
 from torch.utils.data import DataLoader, Dataset
 from sklearn.model_selection import train_test_split
 
-from neuraloperator.neuralop.data.transforms.normalizers import UnitGaussianNormalizer
-from neuraloperator.neuralop.data.transforms.data_processors import DefaultDataProcessor
 from neuraloperator.neuralop.utils import count_model_params
 from neuraloperator.neuralop.models import TFNO
 from neuraloperator.neuralop.training import AdamW
@@ -41,13 +40,21 @@ from neuraloperator.neuralop.training import AdamW
 # Import unified output utility
 from util_output import generate_all_outputs
 
+# Import preprocessing normalizer (needed for loading channel_normalizer from pickle)
+preprocessing_path = Path(__file__).parent.parent / 'preprocessing'
+if str(preprocessing_path) not in sys.path:
+    sys.path.insert(0, str(preprocessing_path))
+from preprocessing_normalizer import ChannelWiseNormalizer
+
 # ==============================================================================
 # Configuration
 # ==============================================================================
 CONFIG = {
+    # Data paths - ensure these match your preprocessing output mode (raw/log/delta)
     'MERGED_PT_PATH': './src/preprocessing/merged_U_delta_normalized.pt',  # Pre-normalized data
+    'CHANNEL_NORMALIZER_PATH': './src/preprocessing/channel_normalizer_delta.pkl',  # Normalizer (must match output mode)
     'OUTPUT_DIR': './src/FNO/output_pure',
-    'N_EPOCHS': 5,  # Reduced for testing
+    'N_EPOCHS': 3,  # Reduced for testing
     'EVAL_INTERVAL': 1,
     'VAL_SIZE': 0.1,  # Validation set size
     'TEST_SIZE': 0.1,  # Test set size
@@ -69,7 +76,7 @@ CONFIG = {
         'eta_min': 1e-5,
         'step_size': 10,
         'gamma': 0.5,
-        'initial_lr': 1e-2,
+        'initial_lr': 1e-3,
     },
     'OUTPUT': {
         'ENABLED': True,  # Master switch for all output generation
@@ -82,14 +89,14 @@ CONFIG = {
 
         # Image output configuration
         'IMAGE_OUTPUT': {
-            'ENABLED': False,  # Generate static images
+            'ENABLED': True,  # Generate static images
             'COMBINED_IMG': True,  # 3×4 grid (GT/Pred/Error)
             'SEPARATED_IMG': True,  # Individual images per time/type
         },
 
         # GIF generation configuration
         'GIF_OUTPUT': {
-            'ENABLED': False,  # Generate animated GIFs
+            'ENABLED': True,  # Generate animated GIFs
             'FPS': 2,  # Frames per second
             # Always uses all time steps (GIF_ALL_TIMES removed)
         },
@@ -98,14 +105,14 @@ CONFIG = {
         'DETAIL_EVAL': {
             'ENABLED': True,  # Compute RMSE/SSIM per time
             'METRICS': ['RMSE', 'SSIM'],  # Metrics to compute
-            'COMPUTE_NRMSE': False,  # Compute normalized RMSE (MinMax-based)
+            'COMPUTE_NRMSE': True,  # Compute normalized RMSE (MinMax-based)
             'PARITY_PLOT': True,  # Generate parity plot CSV
             'ADD_MEAN_COLUMN': True,  # Add mean column to CSV
         },
 
         # Integrated Gradients configuration
         'IG_ANALYSIS': {
-            'ENABLED': False,  # Perform IG analysis
+            'ENABLED': True,  # Perform IG analysis
             'SAMPLE_IDX': 260,  # Sample to analyze
             'TIME_INDICES': [4, 9, 14, 19],  # Target times
             'N_STEPS': 50,  # Integration steps
@@ -115,11 +122,6 @@ CONFIG = {
         'loss_type': 'l2',  # Options: 'l2', 'mse'
         'l2_d': 3,  # Dimension for L2 loss
         'l2_p': 2,  # Power for L2 loss
-        'spatial_mask': {
-            'enabled': True,  # Enable spatial masking
-            'x_range': (14, 18),  # x indices to mask (14:18)
-            'y_range': (14, 18),  # y indices to mask (14:18)
-        }
     },
     'TRAINING_CONFIG': {
         'mode': 'single',  # Options: 'single', 'optuna', 'eval'
@@ -183,58 +185,6 @@ class CustomDatasetPure(Dataset):
         }
 
 # ==============================================================================
-# Identity Normalizer (for pre-normalized data)
-# ==============================================================================
-
-class IdentityNormalizer:
-    """
-    Identity normalizer that does nothing for transform (data already normalized).
-
-    Optionally supports channel-wise inverse transform to convert predictions
-    back to raw physical values.
-    """
-
-    def __init__(self, channel_normalizer=None):
-        """
-        Args:
-            channel_normalizer: Optional ChannelWiseNormalizer for complete inverse transform
-        """
-        self.eps = 0.0
-        self.channel_normalizer = channel_normalizer
-
-    def fit(self, data):
-        pass
-
-    def transform(self, x):
-        """Data is already normalized, return as-is."""
-        return x
-
-    def inverse_transform(self, x):
-        """
-        Inverse transform: normalized → raw physical values.
-
-        If channel_normalizer is available, performs complete inverse transform:
-        normalized → transformed → raw
-
-        Otherwise, returns as-is (data remains in normalized space).
-        """
-        if self.channel_normalizer is not None:
-            # Complete inverse: normalized → raw physical values
-            return self.channel_normalizer.inverse_transform_output_to_raw(x)
-        # No inverse available, return as-is
-        return x
-
-    def to(self, device):
-        return self
-
-    def cpu(self):
-        return self
-
-    def cuda(self):
-        return self
-
-
-# ==============================================================================
 # Data Processing Functions
 # ==============================================================================
 
@@ -244,17 +194,16 @@ def preprocessing(config: Dict, verbose: bool = True) -> Tuple:
 
     Processing Steps:
     1. Load normalized tensors (x, y already include meta channel and are normalized)
-    2. Load channel-wise normalizer from saved state
-    3. Create identity processor (data already normalized)
-    4. Perform train/val/test split and create datasets
-    5. Return necessary objects for training
+    2. Load channel-wise normalizer from pickle file
+    3. Perform train/val/test split and create datasets
+    4. Return necessary objects for training
 
     Args:
         config: Configuration dictionary containing paths and parameters
         verbose: Whether to print progress information
 
     Returns:
-        Tuple containing (processor, train_dataset, val_dataset, test_dataset, device)
+        Tuple containing (channel_normalizer, train_dataset, val_dataset, test_dataset, device)
     """
 
     if verbose:
@@ -275,7 +224,7 @@ def preprocessing(config: Dict, verbose: bool = True) -> Tuple:
 
         bundle = torch.load(config['MERGED_PT_PATH'], map_location="cpu", weights_only=False)
 
-        required_keys = ["x", "y", "normalizer_state"]
+        required_keys = ["x", "y"]
         missing_keys = [key for key in required_keys if key not in bundle]
         if missing_keys:
             raise KeyError(f"Missing required keys in normalized data: {missing_keys}")
@@ -283,7 +232,6 @@ def preprocessing(config: Dict, verbose: bool = True) -> Tuple:
         # Data is already normalized and combined (includes meta channel)
         combined_input = bundle["x"].float()   # (N, 11, nx, ny, nt) - already normalized
         out_data = bundle["y"].float()          # (N, 1, nx, ny, nt) - already normalized
-        normalizer_state = bundle["normalizer_state"]
 
         if verbose:
             print(f"   Loaded normalized tensors - Input: {tuple(combined_input.shape)}, Output: {tuple(out_data.shape)}")
@@ -292,61 +240,51 @@ def preprocessing(config: Dict, verbose: bool = True) -> Tuple:
         raise RuntimeError(f"Failed at Step 1 (loading normalized data): {e}")
 
     try:
-        # Step 2: Load channel-wise normalizer
+        # Step 2: Load channel-wise normalizer from pickle
         if verbose:
-            print("Step 2: Loading channel-wise normalizer...")
+            print("Step 2: Loading channel-wise normalizer from pickle...")
 
-        # Import here to avoid issues
-        sys.path.insert(0, str(Path(__file__).parent.parent / 'preprocessing'))
-        from preprocessing_normalizer import ChannelWiseNormalizer
+        # Get pickle path from config (or use default location)
+        if 'CHANNEL_NORMALIZER_PATH' in config and config['CHANNEL_NORMALIZER_PATH']:
+            pickle_path = Path(config['CHANNEL_NORMALIZER_PATH'])
+        else:
+            # Fallback: same directory as normalized data
+            data_path = Path(config['MERGED_PT_PATH'])
+            pickle_path = data_path.parent / 'channel_normalizer.pkl'
 
-        channel_normalizer = ChannelWiseNormalizer.load_from_state_dict(normalizer_state)
+        if not pickle_path.exists():
+            raise FileNotFoundError(
+                f"Channel normalizer pickle not found: {pickle_path}\n"
+                f"Please ensure CHANNEL_NORMALIZER_PATH in CONFIG points to the correct file.\n"
+                f"Expected file corresponds to the output mode used during preprocessing."
+            )
+
+        with open(pickle_path, 'rb') as f:
+            channel_normalizer = pickle.load(f)
+
+        # Move to device
+        channel_normalizer = channel_normalizer.to(device)
 
         if verbose:
-            print("   Channel-wise normalizer loaded successfully")
+            print(f"   Channel normalizer loaded from: {pickle_path}")
+            print(f"   Output mode: {channel_normalizer.output_mode}")
+            print(f"   Moved to device: {device}")
 
     except Exception as e:
         raise RuntimeError(f"Failed at Step 2 (loading normalizer): {e}")
 
     try:
-        # Step 3: Create identity processor (data already normalized)
+        # Step 3: Perform train/val/test split and create datasets
         if verbose:
-            print("Step 3: Creating processor...")
+            print("Step 3: Creating train/val/test datasets...")
 
-        # Move channel_normalizer to device (important for GPU inference)
-        channel_normalizer = channel_normalizer.to(device)
-
-        # Create identity normalizers
-        # Input normalizer: does nothing (data already normalized)
-        identity_in = IdentityNormalizer()
-
-        # Output normalizer: performs complete inverse transform (normalized → raw)
-        identity_out = IdentityNormalizer(channel_normalizer=channel_normalizer)
-
-        # Create processor with identity normalizers
-        processor = DefaultDataProcessor(identity_in, identity_out).to(device)
-
-        if verbose:
-            print("   Processor created (using identity normalization)")
-            print("   Output normalizer configured for automatic inverse transform to raw values")
-            print(f"   Output mode: {channel_normalizer.output_mode}")
-            print(f"   Channel normalizer moved to device: {device}")
-
-    except Exception as e:
-        raise RuntimeError(f"Failed at Step 3 (processor creation): {e}")
-
-    try:
-        # Step 4: Perform train/val/test split and create datasets
-        if verbose:
-            print("Step 4: Creating train/val/test datasets...")
-            
         # First split: separate test set (final 10%)
         train_temp_combined, test_combined, train_temp_out, test_out = train_test_split(
             combined_input, out_data,
-            test_size=config['TEST_SIZE'], 
+            test_size=config['TEST_SIZE'],
             random_state=config['RANDOM_STATE']
         )
-        
+
         # Second split: separate validation set from remaining data
         # Val size relative to remaining data: 0.1 / (1 - 0.1) = ~0.111
         val_size_relative = config['VAL_SIZE'] / (1 - config['TEST_SIZE'])
@@ -355,27 +293,27 @@ def preprocessing(config: Dict, verbose: bool = True) -> Tuple:
             test_size=val_size_relative,
             random_state=config['RANDOM_STATE']
         )
-        
+
         # Create datasets with already combined inputs
         train_dataset = CustomDatasetPure(train_combined, train_out)
         val_dataset = CustomDatasetPure(val_combined, val_out)
         test_dataset = CustomDatasetPure(test_combined, test_out)
-        
+
         if verbose:
             print(f"   Train dataset size: {len(train_dataset)}")
             print(f"   Validation dataset size: {len(val_dataset)}")
             print(f"   Test dataset size: {len(test_dataset)}")
             total_size = len(train_dataset) + len(val_dataset) + len(test_dataset)
             print(f"   Split ratios: Train {len(train_dataset)/total_size:.1%}, Val {len(val_dataset)/total_size:.1%}, Test {len(test_dataset)/total_size:.1%}")
-            
+
     except Exception as e:
-        raise RuntimeError(f"Failed at Step 4 (dataset creation): {e}")
-    
+        raise RuntimeError(f"Failed at Step 3 (dataset creation): {e}")
+
     if verbose:
         print("Data preprocessing completed successfully!")
-    
-    # Step 5: Return necessary objects
-    return (processor, train_dataset, val_dataset, test_dataset, device)
+
+    # Step 4: Return necessary objects
+    return (channel_normalizer, train_dataset, val_dataset, test_dataset, device)
 
 # ==============================================================================
 # Loss Function Options
@@ -391,29 +329,15 @@ class LpLoss(nn.Module):
         d: Spatial dimensions to compute norm over (e.g., 2 for 2D, 3 for 3D)
         p: Power for Lp norm (e.g., 2 for L2 norm)
         reduction: Reduction method ('mean' or 'sum')
-        spatial_mask: Optional spatial mask tensor (nx, ny) to zero out specific regions
     """
 
-    def __init__(self, d=2, p=2, reduction='mean', spatial_mask=None):
+    def __init__(self, d=2, p=2, reduction='mean'):
         super().__init__()
         self.d = d
         self.p = p
         self.reduction = reduction
-        self.register_buffer('spatial_mask', spatial_mask)
 
     def forward(self, pred, y):
-        # Apply spatial mask if provided
-        if self.spatial_mask is not None:
-            # Expand mask to match prediction shape (N, C, nx, ny, nt)
-            if len(pred.shape) == 5:  # (N, C, nx, ny, nt)
-                mask = self.spatial_mask.unsqueeze(0).unsqueeze(0).unsqueeze(-1)  # (1, 1, nx, ny, 1)
-                pred = pred * mask
-                y = y * mask
-            elif len(pred.shape) == 4:  # (N, C, nx, ny)
-                mask = self.spatial_mask.unsqueeze(0).unsqueeze(0)  # (1, 1, nx, ny)
-                pred = pred * mask
-                y = y * mask
-
         # Get spatial dimensions (skip batch and channel dimensions)
         if len(pred.shape) == 5:  # (N, C, nx, ny, nt)
             dims = [2, 3, 4]  # spatial and temporal dimensions
@@ -433,37 +357,6 @@ class LpLoss(nn.Module):
             return relative_error.sum()
         else:
             return relative_error
-
-
-class MaskedMSELoss(nn.Module):
-    """MSE Loss function with spatial masking support.
-
-    Wrapper around torch.nn.MSELoss that applies spatial masking before computing loss.
-
-    Args:
-        spatial_mask: Optional spatial mask tensor (nx, ny) to zero out specific regions
-        reduction: Reduction method ('mean' or 'sum')
-    """
-
-    def __init__(self, spatial_mask=None, reduction='mean'):
-        super().__init__()
-        self.mse_loss = nn.MSELoss(reduction=reduction)
-        self.register_buffer('spatial_mask', spatial_mask)
-
-    def forward(self, pred, y):
-        # Apply spatial mask if provided
-        if self.spatial_mask is not None:
-            # Expand mask to match prediction shape (N, C, nx, ny, nt)
-            if len(pred.shape) == 5:  # (N, C, nx, ny, nt)
-                mask = self.spatial_mask.unsqueeze(0).unsqueeze(0).unsqueeze(-1)  # (1, 1, nx, ny, 1)
-                pred = pred * mask
-                y = y * mask
-            elif len(pred.shape) == 4:  # (N, C, nx, ny)
-                mask = self.spatial_mask.unsqueeze(0).unsqueeze(0)  # (1, 1, nx, ny)
-                pred = pred * mask
-                y = y * mask
-
-        return self.mse_loss(pred, y)
 
 
 # ==============================================================================
@@ -577,41 +470,20 @@ def create_model(config: Dict, train_dataset, val_dataset, test_dataset, device:
         num_workers=0,
         pin_memory=True
     )
-    
-    # 2. Create spatial mask if enabled
-    spatial_mask = None
-    mask_config = config['LOSS_CONFIG'].get('spatial_mask', {})
-    if mask_config.get('enabled', False):
-        # Get spatial dimensions from a sample
-        sample = train_dataset[0]
-        x_sample = sample['x']  # Shape: (in_channels, nx, ny, nt)
-        nx, ny = x_sample.shape[1], x_sample.shape[2]
 
-        # Create mask (1 everywhere, 0 in masked region)
-        spatial_mask = torch.ones(nx, ny, dtype=torch.float32)
-        x_range = mask_config['x_range']
-        y_range = mask_config['y_range']
-        spatial_mask[x_range[0]:x_range[1], y_range[0]:y_range[1]] = 0.0
-
-        # Move mask to device
-        spatial_mask = spatial_mask.to(device)
-
-        print(f"   Spatial loss masking enabled: x={x_range}, y={y_range}")
-
-    # 3. Create loss function based on config with spatial mask
+    # 2. Create loss function based on config
     loss_type = config['LOSS_CONFIG']['loss_type']
     if loss_type == 'l2':
         loss_fn = LpLoss(
             d=config['LOSS_CONFIG']['l2_d'],
-            p=config['LOSS_CONFIG']['l2_p'],
-            spatial_mask=spatial_mask
+            p=config['LOSS_CONFIG']['l2_p']
         )
     elif loss_type == 'mse':
-        loss_fn = MaskedMSELoss(spatial_mask=spatial_mask)
+        loss_fn = nn.MSELoss()
     else:
         raise ValueError(f"Unknown loss type: {loss_type}. Use 'l2' or 'mse'.")
-    
-    # 4. Create TFNO model
+
+    # 3. Create TFNO model
     model = TFNO(
         n_modes=n_modes,
         in_channels=config['MODEL_CONFIG']['in_channels'],
@@ -628,11 +500,11 @@ def create_model(config: Dict, train_dataset, val_dataset, test_dataset, device:
         channel_mlp_skip=channel_mlp_skip,
         fno_skip='linear'
     ).to(device)
-    
-    # 5. Create optimizer
+
+    # 4. Create optimizer
     optimizer = AdamW(model.parameters(), lr=config['SCHEDULER_CONFIG']['initial_lr'], weight_decay=l2_weight)
-    
-    # 6. Create scheduler based on config
+
+    # 5. Create scheduler based on config
     scheduler_type = config['SCHEDULER_CONFIG']['scheduler_type']
     if scheduler_type == 'cosine':
         scheduler = CappedCosineAnnealingWarmRestarts(
@@ -657,14 +529,13 @@ def create_model(config: Dict, train_dataset, val_dataset, test_dataset, device:
 # Training Functions
 # ==============================================================================
 
-def train_model(config: Dict, processor, device: str, model, train_loader, val_loader, test_loader, 
+def train_model(config: Dict, device: str, model, train_loader, val_loader, test_loader,
                 optimizer, scheduler, loss_fn, verbose: bool = True):
     """
     Train the FNO model with early stopping and loss tracking.
-    
+
     Args:
         config: Configuration dictionary
-        processor: Data processor for normalization
         device: Device to use (cuda/cpu)
         model: TFNO model to train
         train_loader: Training data loader
@@ -674,71 +545,64 @@ def train_model(config: Dict, processor, device: str, model, train_loader, val_l
         scheduler: Learning rate scheduler
         loss_fn: Loss function
         verbose: Whether to print training progress
-        
+
     Returns:
         Trained model
     """
-    
+
     if verbose:
         print(f"\nStarting model training for {config['N_EPOCHS']} epochs...")
-    
+
     # Training setup
     best_val_loss = float('inf')
     patience = 0
     early_stopping_patience = config['SCHEDULER_CONFIG']['early_stopping']
-    
+
     # Track losses for each epoch
     train_losses = []
     val_losses = []
-    
+
     # Create output directory for saving best model
     output_dir = Path(config['OUTPUT_DIR']) / 'final'
     output_dir.mkdir(parents=True, exist_ok=True)
-    
+
     for epoch in range(config['N_EPOCHS']):
         # Training phase
         model.train()
         total_train_loss = 0
         train_count = 0
-        
+
         for batch in train_loader:
-            x = batch['x'].to(device)
-            y = batch['y'].to(device)
-            
-            # Apply input and output normalization for consistent training
-            x = processor.in_normalizer.transform(x)
-            y = processor.out_normalizer.transform(y)
-            
+            x = batch['x'].to(device)  # Already normalized
+            y = batch['y'].to(device)  # Already normalized
+
             optimizer.zero_grad()
             pred = model(x)
             loss = loss_fn(pred, y)
             loss.backward()
             optimizer.step()
-            
+
             total_train_loss += loss.item()
             train_count += 1
-        
+
         train_loss = total_train_loss / train_count
         train_losses.append(train_loss)
-        
+
         # Validation phase - compute validation loss every epoch
         model.eval()
         total_val_loss = 0
         val_count = 0
-        
+
         with torch.no_grad():
             for batch in val_loader:
-                x = batch['x'].to(device)
-                y = batch['y'].to(device)
-                
-                x = processor.in_normalizer.transform(x)
-                y = processor.out_normalizer.transform(y)
-                
+                x = batch['x'].to(device)  # Already normalized
+                y = batch['y'].to(device)  # Already normalized
+
                 pred = model(x)
                 loss = loss_fn(pred, y)
                 total_val_loss += loss.item()
                 val_count += 1
-        
+
         val_loss = total_val_loss / val_count
         val_losses.append(val_loss)
         
@@ -800,19 +664,18 @@ def train_model(config: Dict, processor, device: str, model, train_loader, val_l
     return model
 
 
-def model_evaluation(config: Dict, processor, device: str, model, test_loader, loss_fn, verbose: bool = True):
+def model_evaluation(config: Dict, device: str, model, test_loader, loss_fn, verbose: bool = True):
     """
     Evaluate the trained model on test set and print detailed results.
-    
+
     Args:
         config: Configuration dictionary
-        processor: Data processor for normalization
         device: Device to use (cuda/cpu)
         model: Trained model to evaluate
         test_loader: Test data loader
         loss_fn: Loss function
         verbose: Whether to print evaluation results
-        
+
     Returns:
         Dictionary containing evaluation results
     """
@@ -831,21 +694,18 @@ def model_evaluation(config: Dict, processor, device: str, model, test_loader, l
     
     with torch.no_grad():
         for batch in test_loader:
-            x = batch['x'].to(device)
-            y = batch['y'].to(device)
-            
-            x = processor.in_normalizer.transform(x)
-            y = processor.out_normalizer.transform(y)
-            
+            x = batch['x'].to(device)  # Already normalized
+            y = batch['y'].to(device)  # Already normalized
+
             pred = model(x)
             loss = loss_fn(pred, y)
             total_test_loss += loss.item()
-            
+
             # Calculate MSE loss additionally when using LpLoss
             if mse_loss_fn is not None:
                 mse_loss = mse_loss_fn(pred, y)
                 total_test_mse_loss += mse_loss.item()
-            
+
             test_count += 1
     
     final_test_loss = total_test_loss / test_count
@@ -881,20 +741,19 @@ def model_evaluation(config: Dict, processor, device: str, model, test_loader, l
 # Optuna Optimization Functions
 # ==============================================================================
 
-def optuna_optimization(config: Dict, processor, train_dataset, val_dataset, test_dataset, device: str, 
+def optuna_optimization(config: Dict, train_dataset, val_dataset, test_dataset, device: str,
                         verbose: bool = True) -> Dict:
     """
     Perform hyperparameter optimization using Optuna.
-    
+
     Args:
         config: Configuration dictionary
-        processor: Data processor for normalization
         train_dataset: Training dataset
         val_dataset: Validation dataset
         test_dataset: Test dataset
         device: Device to use (cuda/cpu)
         verbose: Whether to print progress information
-        
+
     Returns:
         Dictionary containing best parameters and optimization results
     """
@@ -1120,7 +979,6 @@ def optuna_optimization(config: Dict, processor, train_dataset, val_dataset, tes
 
     # Save study as pickle for later analysis
     study_path = optuna_output_dir / 'optuna_study.pkl'
-    import pickle
     with open(study_path, 'wb') as f:
         pickle.dump(study, f)
     
@@ -1187,7 +1045,7 @@ def optuna_optimization(config: Dict, processor, train_dataset, val_dataset, tes
 # Visualization Functions (Simplified - delegates to util_output.py)
 # ==============================================================================
 
-def visualization(config: Dict, processor, device: str, trained_model, train_dataset,
+def visualization(config: Dict, channel_normalizer, device: str, trained_model, train_dataset,
                  val_dataset, test_dataset, verbose: bool = True):
     """
     Generate all outputs using the unified output system.
@@ -1203,7 +1061,7 @@ def visualization(config: Dict, processor, device: str, trained_model, train_dat
 
     Args:
         config: Configuration dictionary containing OUTPUT settings
-        processor: Data processor for normalization
+        channel_normalizer: Channel-wise normalizer for inverse transform
         device: Device to use (e.g., 'cuda' or 'cpu')
         trained_model: The trained FNO model
         train_dataset: Training dataset
@@ -1224,7 +1082,7 @@ def visualization(config: Dict, processor, device: str, trained_model, train_dat
     # Call unified output generation
     results = generate_all_outputs(
         config=config,
-        processor=processor,
+        channel_normalizer=channel_normalizer,
         device=device,
         trained_model=trained_model,
         train_dataset=train_dataset,
@@ -1255,8 +1113,8 @@ def main() -> None:
         print(f"\nFNO-Pure Training Pipeline Started")
         print(f"Training Mode: {CONFIG['TRAINING_CONFIG']['mode'].upper()}")
         
-        processor, train_dataset, val_dataset, test_dataset, device = preprocessing(
-            config=CONFIG, 
+        channel_normalizer, train_dataset, val_dataset, test_dataset, device = preprocessing(
+            config=CONFIG,
             verbose=True
         )
         
@@ -1299,12 +1157,10 @@ def main() -> None:
             print(f"   Optimizer: {type(optimizer).__name__}")
             print(f"   Scheduler: {type(scheduler).__name__}")
             print(f"   Loss function: {type(loss_fn).__name__}")
-            print(f"   Processor: {type(processor).__name__}")
-            
+
             # Train the model
             trained_model = train_model(
                 config=CONFIG,
-                processor=processor,
                 device=device,
                 model=model,
                 train_loader=train_loader,
@@ -1315,11 +1171,10 @@ def main() -> None:
                 loss_fn=loss_fn,
                 verbose=True
             )
-            
+
             # Evaluate the model
             model_evaluation(
                 config=CONFIG,
-                processor=processor,
                 device=device,
                 model=trained_model,
                 test_loader=test_loader,
@@ -1334,7 +1189,6 @@ def main() -> None:
             # Run hyperparameter optimization
             optimization_results = optuna_optimization(
                 config=CONFIG,
-                processor=processor,
                 train_dataset=train_dataset,
                 val_dataset=val_dataset,
                 test_dataset=test_dataset,
@@ -1380,7 +1234,6 @@ def main() -> None:
             # Train final model with best parameters
             trained_model = train_model(
                 config=CONFIG,
-                processor=processor,
                 device=device,
                 model=model,
                 train_loader=train_loader,
@@ -1391,11 +1244,10 @@ def main() -> None:
                 loss_fn=loss_fn,
                 verbose=True
             )
-            
+
             # Evaluate the final model
             model_evaluation(
                 config=CONFIG,
-                processor=processor,
                 device=device,
                 model=trained_model,
                 test_loader=test_loader,
@@ -1457,7 +1309,7 @@ def main() -> None:
         # Step 3: Generate visualization (for all modes)
         visualization(
             config=CONFIG,
-            processor=processor,
+            channel_normalizer=channel_normalizer,
             device=device,
             trained_model=trained_model,
             train_dataset=train_dataset,

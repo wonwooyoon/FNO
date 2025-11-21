@@ -21,6 +21,7 @@ import torch
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import pickle
 
 # Import neuralop normalizers
 import sys
@@ -872,8 +873,26 @@ def apply_channel_normalization(
     result_paths['normalized_data_path'] = output_path_obj
 
     if verbose:
-        print(f"   Saved: {output_path_obj}")
+        print(f"   Saved normalized data: {output_path_obj}")
         print(f"   File size: {output_path_obj.stat().st_size / 1024 / 1024:.2f} MB")
+
+    # Save channel_normalizer as pickle for direct use in FNO.py
+    if verbose:
+        print("\nStep 7: Saving channel_normalizer as pickle...")
+
+    # Move normalizer to CPU before saving (for compatibility)
+    normalizer_cpu = normalizer.cpu()
+
+    # Save as pickle in the same directory
+    pickle_path = output_path_obj.parent / 'channel_normalizer.pkl'
+    with open(pickle_path, 'wb') as f:
+        pickle.dump(normalizer_cpu, f)
+
+    result_paths['channel_normalizer_pkl'] = pickle_path
+
+    if verbose:
+        print(f"   Saved channel_normalizer: {pickle_path}")
+        print(f"   Pickle size: {pickle_path.stat().st_size / 1024:.2f} KB")
         print(f"\n{'='*70}")
         print("Channel-wise normalization completed successfully!")
         print(f"{'='*70}\n")

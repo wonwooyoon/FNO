@@ -704,7 +704,7 @@ def generate_parity_csv(
 
 def detailed_evaluation(
     config: Dict,
-    processor,
+    channel_normalizer,
     device: str,
     model: nn.Module,
     test_loader,
@@ -716,7 +716,7 @@ def detailed_evaluation(
 
     Args:
         config: Configuration dictionary
-        processor: Data processor
+        channel_normalizer: Channel-wise normalizer for inverse transform
         device: Device to use
         model: Trained model
         test_loader: Test data loader
@@ -737,22 +737,26 @@ def detailed_evaluation(
 
     with torch.no_grad():
         for batch in test_loader:
-            x = batch['x'].to(device)
-            y = batch['y'].to(device)
+            x = batch['x'].to(device)  # Already normalized
+            y = batch['y'].to(device)  # Already normalized
 
-            # Normalize and predict
-            x_norm = processor.in_normalizer.transform(x)
-            pred = model(x_norm)
-            pred_phys = processor.out_normalizer.inverse_transform(pred)
+            # Predict in normalized space
+            pred = model(x)
+
+            # Convert prediction to raw physical values
+            pred_phys = channel_normalizer.inverse_transform_output_to_raw(pred)
+
+            # Convert ground truth to raw physical values
+            y_phys = channel_normalizer.inverse_transform_output_to_raw(y)
 
             all_pred.append(pred_phys.cpu())
-            all_gt.append(y.cpu())
+            all_gt.append(y_phys.cpu())
 
     # Concatenate
     pred_phys = torch.cat(all_pred, dim=0)
     gt_phys = torch.cat(all_gt, dim=0)
 
-    # Note: Inverse transform (log→raw) is now handled automatically by processor.out_normalizer
+    # Note: Inverse transform (log→raw) is now handled by channel_normalizer
     # Apply additional masking if needed (e.g., source region masking)
     # pred_phys[:, :, 14:18, 14:18, :] = 0
     # gt_phys[:, :, 14:18, 14:18, :] = 0
@@ -900,7 +904,7 @@ def create_mean_baseline(
 
 def compute_integrated_gradients(
     model: nn.Module,
-    processor,
+    channel_normalizer,
     device: str,
     test_sample: torch.Tensor,
     baseline: torch.Tensor,
@@ -913,7 +917,7 @@ def compute_integrated_gradients(
 
     Args:
         model: Trained model
-        processor: Data processor
+        channel_normalizer: Channel-wise normalizer for inverse transform
         device: Device to use
         test_sample: Test sample tensor (1, C, nx, ny, nt)
         baseline: Baseline tensor (1, C, nx, ny, nt)
@@ -932,20 +936,21 @@ def compute_integrated_gradients(
 
     # Wrapper model for sum-of-squares aggregation
     class SumSquaresWrapper(nn.Module):
-        def __init__(self, model, processor, target_t):
+        def __init__(self, model, channel_normalizer, target_t):
             super().__init__()
             self.model = model
-            self.processor = processor
+            self.channel_normalizer = channel_normalizer
             self.target_t = target_t
 
         def forward(self, x):
-            x_norm = self.processor.in_normalizer.transform(x)
-            pred = self.model(x_norm)
-            pred_phys = self.processor.out_normalizer.inverse_transform(pred)
+            # x is already normalized
+            pred = self.model(x)
+            # Convert to raw physical values
+            pred_phys = self.channel_normalizer.inverse_transform_output_to_raw(pred)
             output_slice = pred_phys[:, 0, :, :, self.target_t]
             return (output_slice ** 2).sum(dim=[1, 2])
 
-    wrapped = SumSquaresWrapper(model, processor, target_t).to(device)
+    wrapped = SumSquaresWrapper(model, channel_normalizer, target_t).to(device)
 
     # Compute gradients
     grads = []
@@ -1429,7 +1434,7 @@ def analyze_channel_importance(
 
 def integrated_gradients_analysis(
     config: Dict,
-    processor,
+    channel_normalizer,
     device: str,
     model: nn.Module,
     train_dataset,
@@ -1477,7 +1482,7 @@ def integrated_gradients_analysis(
     ig_results = {}
     for t in time_indices:
         ig_spatial, info = compute_integrated_gradients(
-            model, processor, device,
+            model, channel_normalizer, device,
             test_sample, baseline, t,
             n_steps=n_steps, verbose=verbose
         )
@@ -1537,7 +1542,7 @@ def integrated_gradients_analysis(
 
 def generate_all_outputs(
     config: Dict,
-    processor,
+    channel_normalizer,
     device: str,
     trained_model: nn.Module,
     train_dataset,
@@ -1559,7 +1564,7 @@ def generate_all_outputs(
 
     Args:
         config: Configuration dictionary
-        processor: Data processor
+        channel_normalizer: Channel-wise normalizer for inverse transform
         device: Device to use
         trained_model: Trained FNO model
         train_dataset: Training dataset
@@ -1601,18 +1606,21 @@ def generate_all_outputs(
             if verbose and batch_idx % 2 == 0:
                 print(f"  Processing batch {batch_idx + 1}/{len(test_loader)}...")
 
-            x, y = batch['x'].to(device), batch['y'].to(device)
+            x, y = batch['x'].to(device), batch['y'].to(device)  # Already normalized
 
             all_input.append(x.cpu())
 
-            x_norm = processor.in_normalizer.transform(x)
-            pred = trained_model(x_norm)
-            pred_phys = processor.out_normalizer.inverse_transform(pred)
+            # Predict in normalized space
+            pred = trained_model(x)
+
+            # Convert to raw physical values
+            pred_phys = channel_normalizer.inverse_transform_output_to_raw(pred)
+            y_phys = channel_normalizer.inverse_transform_output_to_raw(y)
 
             all_pred.append(pred_phys.cpu())
-            all_gt.append(y.cpu())
+            all_gt.append(y_phys.cpu())
 
-            del x, y, x_norm, pred, pred_phys
+            del x, y, pred, pred_phys, y_phys
             if device == 'cuda':
                 torch.cuda.empty_cache()
 
@@ -1623,10 +1631,10 @@ def generate_all_outputs(
 
     del all_pred, all_gt, all_input
 
-    # Note: Inverse transform (log→raw) is now handled automatically by processor.out_normalizer
+    # Note: Inverse transform (log→raw) is now handled by channel_normalizer
     # Apply additional masking if needed (e.g., source region masking)
-    # pred_phys[:, :, 14:18, 14:18, :] = 0
-    # gt_phys[:, :, 14:18, 14:18, :] = 0
+    pred_phys[:, :, 14:18, 14:18, :] = 0
+    gt_phys[:, :, 14:18, 14:18, :] = 0
 
 
     results = {}
@@ -1699,7 +1707,7 @@ def generate_all_outputs(
         print("="*50)
 
         eval_results = detailed_evaluation(
-            config, processor, device, trained_model,
+            config, channel_normalizer, device, trained_model,
             test_loader, output_dirs['metrics'], verbose
         )
         results['metrics'] = eval_results
@@ -1707,7 +1715,7 @@ def generate_all_outputs(
     # ==== Integrated Gradients ====
     if output_config.get('IG_ANALYSIS', {}).get('ENABLED', False):
         ig_results = integrated_gradients_analysis(
-            config, processor, device, trained_model,
+            config, channel_normalizer, device, trained_model,
             train_dataset, val_dataset, test_dataset,
             output_dirs, verbose
         )
