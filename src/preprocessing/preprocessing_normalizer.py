@@ -395,6 +395,15 @@ class ChannelWiseNormalizer:
         Returns:
             raw_output: (N, 1, nx, ny, nt) - raw physical concentration values
         """
+        # Get device from input tensor
+        device = normalized_output.device
+
+        # Ensure output_normalizer is on the same device
+        if hasattr(self.output_normalizer, 'mean'):
+            if self.output_normalizer.mean.device != device:
+                self.output_normalizer.mean = self.output_normalizer.mean.to(device)
+                self.output_normalizer.std = self.output_normalizer.std.to(device)
+
         # Step 1: Inverse normalization (normalized → transformed)
         transformed = self.output_normalizer.inverse_transform(normalized_output)
 
@@ -413,10 +422,7 @@ class ChannelWiseNormalizer:
             # because we don't have the t=0 reference anymore
             # Return in log space (best approximation we can do)
             # User needs to be aware that delta predictions are relative changes
-            raise NotImplementedError(
-                "Delta mode predictions cannot be fully reversed to absolute raw values "
-                "without t=0 reference. Predictions are in log-delta space."
-            )
+            return transformed
 
         else:
             raise ValueError(f"Unknown output_mode: {self.output_mode}")

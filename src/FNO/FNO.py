@@ -45,7 +45,7 @@ from util_output import generate_all_outputs
 # Configuration
 # ==============================================================================
 CONFIG = {
-    'MERGED_PT_PATH': './src/preprocessing/merged_U_log_normalized.pt',  # Pre-normalized data
+    'MERGED_PT_PATH': './src/preprocessing/merged_U_delta_normalized.pt',  # Pre-normalized data
     'OUTPUT_DIR': './src/FNO/output_pure',
     'N_EPOCHS': 5,  # Reduced for testing
     'EVAL_INTERVAL': 1,
@@ -313,6 +313,9 @@ def preprocessing(config: Dict, verbose: bool = True) -> Tuple:
         if verbose:
             print("Step 3: Creating processor...")
 
+        # Move channel_normalizer to device (important for GPU inference)
+        channel_normalizer = channel_normalizer.to(device)
+
         # Create identity normalizers
         # Input normalizer: does nothing (data already normalized)
         identity_in = IdentityNormalizer()
@@ -327,6 +330,7 @@ def preprocessing(config: Dict, verbose: bool = True) -> Tuple:
             print("   Processor created (using identity normalization)")
             print("   Output normalizer configured for automatic inverse transform to raw values")
             print(f"   Output mode: {channel_normalizer.output_mode}")
+            print(f"   Channel normalizer moved to device: {device}")
 
     except Exception as e:
         raise RuntimeError(f"Failed at Step 3 (processor creation): {e}")
