@@ -84,8 +84,8 @@ def read_one_h5(h5_path: Path, meta_value: float):
              x_velo_grid, y_velo_grid], axis=0
         )[:, :, :, np.newaxis]  # (10, nx, ny, 1) - raw data with one-hot encoded material
 
-        # Time key collection (0~2000y, 100y intervals)
-        # Always include all timesteps in RAW format
+        # Time key collection (100~2000y, 100y intervals)
+        # Always include all timesteps in RAW format (t=0 excluded, 20 timesteps total)
         available = {}
         for X in range(0, 2001, 100):
             token = f"{int(X/50)} Time"
@@ -141,17 +141,10 @@ def get_available_ids(base_dir: str):
 
 if __name__ == "__main__":
     # ========================================================================
-    # CONFIGURATION - Preprocessing mode 설정 (이 부분만 수정하세요)
+    # CONFIGURATION
     # ========================================================================
-
-    # Preprocessing mode 선택:
-    #   - 'raw':   원시 농도 값 (선형 스케일, 절대 농도)
-    #   - 'log':   Log10 변환 적용 (log10(C + 1e-12)) [기본값]
-    #   - 'delta': t=0 시점 대비 변화량 (log 변환 후 delta 계산)
-    preprocessing_mode = 'log'
-
-    # ========================================================================
-    # 이하 코드는 수정 불필요 (distributed_preprocessing.py와 연동)
+    # This script saves all data in RAW format.
+    # Transformations (log, delta) will be applied during normalization step.
     # ========================================================================
 
     # Default paths

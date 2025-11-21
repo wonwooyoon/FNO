@@ -311,13 +311,17 @@ class ChannelWiseNormalizer:
             output_tensor: (N, 1, nx, ny, nt) - RAW output data
 
         Returns:
-            normalized_input: (N, 11, nx, ny, nt) - transformed and normalized
-            normalized_output: (N, 1, nx, ny, nt) - transformed and normalized
+            normalized_input: (N, 11, nx, ny, nt-1) - transformed and normalized (t=0 removed)
+            normalized_output: (N, 1, nx, ny, nt-1) - transformed and normalized (t=0 removed)
         """
         # Step 1: Apply raw transformations to input
         transformed_input = self.apply_raw_transformations(input_tensor)
 
-        # Step 2: Apply normalization to transformed input
+        # Step 2: Remove t=0 from input to match output timesteps
+        # (Output transformation will remove t=0, so input must match)
+        transformed_input = transformed_input[:, :, :, :, 1:]  # (N, 11, nx, ny, nt-1)
+
+        # Step 3: Apply normalization to transformed input
         N, C_in, nx, ny, nt = transformed_input.shape
 
         normalized_channels = []
@@ -333,10 +337,10 @@ class ChannelWiseNormalizer:
 
         normalized_input = torch.cat(normalized_channels, dim=1)
 
-        # Step 3: Apply transformation to output
+        # Step 4: Apply transformation to output (will remove t=0)
         transformed_output = self.apply_output_transformation(output_tensor)
 
-        # Step 4: Normalize transformed output
+        # Step 5: Normalize transformed output
         normalized_output = self.output_normalizer.transform(transformed_output)
 
         return normalized_input, normalized_output
