@@ -9,7 +9,7 @@ def load_cpu(path):
 if __name__ == "__main__":
     # Hardcoded paths
     input_dir = "./src/preprocessing"
-    output_file = "./src/preprocessing/merged_U_log.pt"
+    output_file = "./src/preprocessing/merged_U_raw.pt"  # Now saves RAW data
     
     # Automatically find all input_output_com*.pt files
     pattern = f"{input_dir}/input_output_com*.pt"
@@ -24,13 +24,6 @@ if __name__ == "__main__":
     if len(input_paths) < 1:
         raise RuntimeError("병합할 파일이 최소 1개 필요합니다.")
     
-    if len(input_paths) == 1:
-        print("[INFO] 파일이 1개만 있습니다. 단순 복사합니다.")
-        import shutil
-        shutil.copy2(input_paths[0], output_file)
-        print(f"[OK] 파일 복사 완료: {input_paths[0]} → {output_file}")
-        exit(0)
-
     out_path = Path(output_file)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -59,16 +52,15 @@ if __name__ == "__main__":
     # 병합
     X = torch.cat([sh["x"] for sh in shards], dim=0).contiguous()
     Y = torch.cat([sh["y"] for sh in shards], dim=0).contiguous()
-    META = torch.cat([sh["meta"] for sh in shards], dim=0).contiguous()
 
     payload = {
-        "x": X, "y": Y, "meta": META,
+        "x": X, "y": Y,
         "xc": ref["xc"], "yc": ref["yc"],
         "time_keys": ref["time_keys"],
     }
     torch.save(payload, out_path)
     print(f"[OK] 병합 완료: {len(shards)} shards → {out_path}")
-    print(f"Final shapes: x{tuple(X.shape)} y{tuple(Y.shape)} meta{tuple(META.shape)}")
+    print(f"Final shapes: x{tuple(X.shape)} y{tuple(Y.shape)}")
     print(f"Total samples: {X.shape[0]}")
 
     # ==============================================================================
@@ -91,15 +83,29 @@ if __name__ == "__main__":
         }
     }
 
+    # Get output mode from user (default: log)
+    print("Output transformation modes:")
+    print("  - 'raw':   Use raw concentration values (linear scale)")
+    print("  - 'log':   Apply log10 transformation (default)")
+    print("  - 'delta': Compute delta from t=0 initial state")
+    output_mode = input("\nEnter output transformation mode [log]: ").strip().lower()
+    if not output_mode:
+        output_mode = 'log'
+
+    if output_mode not in ['raw', 'log', 'delta']:
+        print(f"[ERROR] Invalid output mode: {output_mode}")
+        sys.exit(1)
+
     # Determine normalized output path
-    # E.g., merged_U_log.pt → merged_U_log_normalized.pt
-    normalized_path = out_path.parent / (out_path.stem + "_normalized" + out_path.suffix)
+    # E.g., merged_U_raw.pt → merged_U_<mode>_normalized.pt
+    normalized_path = out_path.parent / f"merged_U_{output_mode}_normalized.pt"
 
     # Apply normalization
     result = apply_channel_normalization(
         merged_data_path=str(out_path),
         output_path=str(normalized_path),
         config=norm_config,
+        output_mode=output_mode,
         verbose=True
     )
 

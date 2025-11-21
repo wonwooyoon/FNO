@@ -7,26 +7,20 @@ import torch
 import sys
 import re
 
-def read_one_h5(h5_path: Path, preprocessing_mode: str = 'log'):
+def read_one_h5(h5_path: Path, meta_value: float):
     """
-    Read and preprocess PFLOTRAN HDF5 output.
+    Read PFLOTRAN HDF5 output and save as RAW data.
 
     Args:
         h5_path: Path to HDF5 file
-        preprocessing_mode: How to process Total UO2++ concentration
-            - 'raw': Use raw concentration values (linear scale, absolute)
-            - 'log': Apply log10 transformation with epsilon (log10(C + 1e-12))
-            - 'delta': Compute delta from t=0 initial state (excludes t=0 from output)
+        meta_value: Meta parameter value to add as 11th channel
 
     Returns:
-        x: Input tensor (channels, nx, ny, nt)
-        y: Output tensor (1, nx, ny, nt)
+        x: Input tensor (11, nx, ny, nt) - includes meta as 11th channel
+        y: Output tensor (1, nx, ny, nt) - RAW uranium concentration
         coords: (xc_unique, yc_unique) coordinate arrays
         t_labels: List of time labels
     """
-    valid_modes = ['raw', 'log', 'delta']
-    if preprocessing_mode not in valid_modes:
-        raise ValueError(f"Invalid preprocessing_mode: {preprocessing_mode}. Must be one of {valid_modes}")
 
     with h5py.File(h5_path, "r") as f:
         keys_list = list(f.keys())
@@ -52,27 +46,17 @@ def read_one_h5(h5_path: Path, preprocessing_mode: str = 'log'):
             return grid
 
         # t=0 고정 입력 성분
+        # NOTE: All data is stored in RAW format (no transformations applied)
+        # Transformations (log, shifted log, etc.) will be applied during normalization
         grp0 = f["   0 Time  0.00000E+00 y"]
 
-        # Permeability: log10 transformation (현재 유지)
-        perm = np.log10(np.array(grp0["Permeability [m^2]"][:])[zc_mask])
-
-        # Minerals: shifted log transformation
-        # Calcite, Clino: log10(x + 1e-6) - log10(1e-6)
-        # Pyrite: log10(x + 1e-9) - log10(1e-9)
-        # Smectite: raw values (no transformation)
-        calcite_raw = np.array(grp0["Calcite VF [m^3 mnrl_m^3 bulk]"][:])[zc_mask]
-        clino_raw = np.array(grp0["Clinochlore VF [m^3 mnrl_m^3 bulk]"][:])[zc_mask]
-        pyrite_raw = np.array(grp0["Pyrite VF [m^3 mnrl_m^3 bulk]"][:])[zc_mask]
-        smectite = np.array(grp0["Smectite_MX80 VF [m^3 mnrl_m^3 bulk]"][:])[zc_mask]
-
-        # Apply shifted log transformations
-        calcite = np.log10(calcite_raw + 1e-6) - np.log10(1e-6)
-        clino = np.log10(clino_raw + 1e-6) - np.log10(1e-6)
-        pyrite = np.log10(pyrite_raw + 1e-9) - np.log10(1e-9)
-
-        # Material ID (will be converted to one-hot encoding later)
-        material = np.array(grp0["Material ID"][:])[zc_mask]
+        # Load all data in raw format
+        perm = np.array(grp0["Permeability [m^2]"][:])[zc_mask]  # Raw permeability (will be log10 in normalizer)
+        calcite = np.array(grp0["Calcite VF [m^3 mnrl_m^3 bulk]"][:])[zc_mask]  # Raw
+        clino = np.array(grp0["Clinochlore VF [m^3 mnrl_m^3 bulk]"][:])[zc_mask]  # Raw
+        pyrite = np.array(grp0["Pyrite VF [m^3 mnrl_m^3 bulk]"][:])[zc_mask]  # Raw
+        smectite = np.array(grp0["Smectite_MX80 VF [m^3 mnrl_m^3 bulk]"][:])[zc_mask]  # Raw
+        material = np.array(grp0["Material ID"][:])[zc_mask]  # Raw (will be one-hot in normalizer)
 
         # 예: 50y 속도(필요시 args로 시간 바꿔도 됨)
         grp1 = f["   1 Time  5.00000E+01 y"]
@@ -88,23 +72,22 @@ def read_one_h5(h5_path: Path, preprocessing_mode: str = 'log'):
         x_velo_grid    = to_grid(x_velo)
         y_velo_grid    = to_grid(y_velo)
 
-        # Convert material ID to one-hot encoding
-        # Material IDs: 1=Source, 2=Bentonite, 3=Fracture
-        material_source    = (material_grid == 1).astype(np.float32)
-        material_bentonite = (material_grid == 2).astype(np.float32)
-        material_fracture  = (material_grid == 3).astype(np.float32)
+        # Apply one-hot encoding to material (1, 2, 3 → 3 channels)
+        material_source = (material_grid == 1).astype(np.float32)     # Material ID 1: Source
+        material_bentonite = (material_grid == 2).astype(np.float32)  # Material ID 2: Bentonite
+        material_fracture = (material_grid == 3).astype(np.float32)   # Material ID 3: Fracture
 
+        # Stack all input channels (10 channels: 5 properties + 3 materials + 2 velocities)
         input_base = np.stack(
             [perm_grid, calcite_grid, clino_grid, pyrite_grid, smectite_grid,
              material_source, material_bentonite, material_fracture,
              x_velo_grid, y_velo_grid], axis=0
-        )[:, :, :, np.newaxis]  # (10, nx, ny, 1)
+        )[:, :, :, np.newaxis]  # (10, nx, ny, 1) - raw data with one-hot encoded material
 
         # Time key collection (0~2000y, 100y intervals)
-        # Include t=0 for delta mode, optional for others
-        start_time = 0 if preprocessing_mode == 'delta' else 100
+        # Always include all timesteps in RAW format
         available = {}
-        for X in range(start_time, 2001, 100):
+        for X in range(0, 2001, 100):
             token = f"{int(X/50)} Time"
             match = next((k for k in keys_list if token in k), None)
             if match is not None:
@@ -118,37 +101,21 @@ def read_one_h5(h5_path: Path, preprocessing_mode: str = 'log'):
         for tnum in times_sorted:
             key = available[tnum]
 
-            # Load raw UO2 concentration
+            # Load RAW UO2 concentration (no transformation)
             total_uo2_raw = np.array(f[key]["Total UO2++ [M]"][:])[zc_mask]
 
-            # Apply preprocessing based on mode
-            if preprocessing_mode == 'raw':
-                total_uo2 = total_uo2_raw  # Linear scale, absolute concentration
-            elif preprocessing_mode == 'log':
-                total_uo2 = np.log10(total_uo2_raw + 1e-12)  # Log scale with epsilon
-            elif preprocessing_mode == 'delta':
-                # For delta mode, we'll compute log first, then delta later
-                total_uo2 = np.log10(total_uo2_raw + 1e-12)
-
-            out_grid = to_grid(total_uo2)
+            out_grid = to_grid(total_uo2_raw)
             out_slices.append(out_grid[np.newaxis, :, :, np.newaxis])  # (1,nx,ny,1)
             in_slices.append(input_base)                                # (10,nx,ny,1)
             t_labels.append(key.strip())
 
         x = np.concatenate(in_slices, axis=3).astype(np.float32)   # (10,nx,ny,nt)
-        y = np.concatenate(out_slices, axis=3).astype(np.float32)  # (1,nx,ny,nt)
+        y = np.concatenate(out_slices, axis=3).astype(np.float32)  # (1,nx,ny,nt) - RAW concentration
 
-        # Apply delta transformation if requested
-        if preprocessing_mode == 'delta':
-            # y[:, :, :, 0] is the initial state (reference at t=0)
-            # Compute delta for t=1,2,...,nt (exclude t=0 from output)
-            y_initial = y[:, :, :, 0:1]                    # (1, nx, ny, 1) - reference state at t=0
-            y_delta_all = y - y_initial                     # (1, nx, ny, nt) - delta from t=0
-            y = y_delta_all[:, :, :, 1:]                   # (1, nx, ny, nt-1) - exclude t=0
-
-            # Update input to match output timesteps (exclude t=0)
-            x = x[:, :, :, 1:]                             # (10, nx, ny, nt-1) - match output timesteps
-            t_labels = t_labels[1:]                        # Remove t=0 label
+        # Add meta value as 11th channel (constant across space and time)
+        nt = x.shape[3]
+        meta_channel = np.full((1, nx, ny, nt), meta_value, dtype=np.float32)  # (1, nx, ny, nt)
+        x = np.concatenate([x, meta_channel], axis=0)  # (11, nx, ny, nt)
 
         return x, y, (xc_unique.astype(np.float32), yc_unique.astype(np.float32)), t_labels
 
@@ -201,21 +168,11 @@ if __name__ == "__main__":
             print("[ERROR] Output suffix is required!")
             sys.exit(1)
 
-    # Validate preprocessing mode
-    valid_modes = ['raw', 'log', 'delta']
-    if preprocessing_mode not in valid_modes:
-        print(f"[ERROR] Invalid preprocessing mode: {preprocessing_mode}")
-        print(f"Valid modes: {valid_modes}")
-        print("  - 'raw':   Use raw concentration values (linear scale)")
-        print("  - 'log':   Apply log10 transformation")
-        print("  - 'delta': Compute delta from t=0 initial state")
-        sys.exit(1)
-
     print("=" * 70)
-    print("PFLOTRAN Data Preprocessing")
+    print("PFLOTRAN Data Preprocessing (RAW Data)")
     print("=" * 70)
     print(f"Output suffix:        {out_suffix}")
-    print(f"Preprocessing mode:   {preprocessing_mode}")
+    print(f"Output mode:          RAW (transformations will be applied in normalizer)")
     print(f"Base directory:       {base_dir}")
     print(f"Others CSV:           {others_csv}")
     print("=" * 70)
@@ -248,16 +205,17 @@ if __name__ == "__main__":
         sys.exit(1)
 
     # Extract meta values only for available simulation IDs
-    meta = others_data[available_ids, 2]
-    print(f"Meta shape: {meta.shape} (for {len(available_ids)} available simulations)")
+    meta_values = others_data[available_ids, 2]
+    print(f"Meta values: {len(meta_values)} simulations")
 
     xs, ys = [], []
     coords_saved, times_saved = None, None
 
-    for i in available_ids:
-        h5_path = Path(base_dir) / f"pflotran_{i}" / f"pflotran_{i}.h5"
-        print(f"Processing {h5_path}...")
-        x, y, coords, tlabels = read_one_h5(h5_path, preprocessing_mode=preprocessing_mode)
+    for idx, sim_id in enumerate(available_ids):
+        h5_path = Path(base_dir) / f"pflotran_{sim_id}" / f"pflotran_{sim_id}.h5"
+        meta_val = meta_values[idx]
+        print(f"Processing {h5_path} (meta={meta_val:.6f})...")
+        x, y, coords, tlabels = read_one_h5(h5_path, meta_value=meta_val)
         xs.append(x[np.newaxis, ...])
         ys.append(y[np.newaxis, ...])
         if coords_saved is None:
@@ -269,10 +227,9 @@ if __name__ == "__main__":
 
     X = torch.from_numpy(np.concatenate(xs, axis=0))
     Y = torch.from_numpy(np.concatenate(ys, axis=0))
-    meta = torch.from_numpy(meta)
-    
+
     payload = {
-        "x": X, "y": Y, "meta": meta,
+        "x": X, "y": Y,
         "xc": torch.from_numpy(coords_saved[0]),
         "yc": torch.from_numpy(coords_saved[1]),
         "time_keys": times_saved,
@@ -281,4 +238,4 @@ if __name__ == "__main__":
     out_pt = f"./src/preprocessing/input_output_com{out_suffix}.pt"
     Path(out_pt).parent.mkdir(parents=True, exist_ok=True)
     torch.save(payload, out_pt)
-    print(f"[OK] Saved shard: {out_pt} | x{tuple(X.shape)} y{tuple(Y.shape)} meta{tuple(meta.shape)}")
+    print(f"[OK] Saved shard: {out_pt} | x{tuple(X.shape)} y{tuple(Y.shape)}")
