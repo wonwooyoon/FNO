@@ -233,21 +233,21 @@ def main():
         print(f"Error loading config: {e}")
         sys.exit(1)
     
-    # First, execute preprocessing locally
-    local_output_suffix = "localhost"
-    print("=" * 60)
-    print("PROCESSING LOCALLY")
-    print("=" * 60)
+    # # First, execute preprocessing locally
+    # local_output_suffix = "localhost"
+    # print("=" * 60)
+    # print("PROCESSING LOCALLY")
+    # print("=" * 60)
 
-    # Sync local preprocessing script from git
-    local_sync_success = sync_local_preprocessing_script()
-    if not local_sync_success:
-        print(f"Warning: Failed to sync script locally, continuing anyway...")
+    # # Sync local preprocessing script from git
+    # local_sync_success = sync_local_preprocessing_script()
+    # if not local_sync_success:
+    #     print(f"Warning: Failed to sync script locally, continuing anyway...")
 
-    local_success = execute_local_preprocessing(local_output_suffix)
-    if not local_success:
-        print(f"Failed to process locally")
-        sys.exit(1)
+    # local_success = execute_local_preprocessing(local_output_suffix)
+    # if not local_success:
+    #     print(f"Failed to process locally")
+    #     sys.exit(1)
     
     # Then process each remote server
     print("\n" + "=" * 60)

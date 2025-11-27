@@ -51,7 +51,7 @@ from preprocessing_normalizer import ChannelWiseNormalizer
 # ==============================================================================
 CONFIG = {
     # Data paths - ensure these match your preprocessing output mode (raw/log/delta)
-    'MERGED_PT_PATH': './src/preprocessing/merged_U_delta_normalized.pt',  # Pre-normalized data
+    'MERGED_PT_PATH': './src/preprocessing/merged_U_delta_normalized_hr.pt',  # Pre-normalized data
     'CHANNEL_NORMALIZER_PATH': './src/preprocessing/channel_normalizer_delta.pkl',  # Normalizer (must match output mode)
     'OUTPUT_DIR': './src/FNO/output_pure',
     'N_EPOCHS': 3,  # Reduced for testing
@@ -81,7 +81,7 @@ CONFIG = {
     'OUTPUT': {
         'ENABLED': True,  # Master switch for all output generation
         'OUTPUT_DIR': './src/FNO/output_pure',  # Base output directory
-        'SAMPLE_INDICES': [3, 5, 52, 98, 121, 230],  # Samples to visualize
+        'SAMPLE_INDICES': [1, 3],  # Samples to visualize
         'TIME_INDICES': [4, 9, 14, 19],  # Time indices to visualize
         'DPI': 200,  # Resolution for all images
 
@@ -498,7 +498,7 @@ def create_model(config: Dict, train_dataset, val_dataset, test_dataset, device:
         use_channel_mlp=True,
         channel_mlp_expansion=channel_mlp_expansion,
         channel_mlp_skip=channel_mlp_skip,
-        fno_skip='linear'
+        fno_skip='linear',
     ).to(device)
 
     # 4. Create optimizer
