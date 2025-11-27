@@ -84,32 +84,32 @@ class ChannelWiseNormalizer:
             1: {'type': 'shifted_log', 'eps': 1e-6},          # Calcite
             2: {'type': 'shifted_log', 'eps': 1e-6},          # Clino
             3: {'type': 'shifted_log', 'eps': 1e-9},          # Pyrite
-            4: {'type': 'none'},                              # Smectite (keep raw)
-            5: {'type': 'none'},                              # Material_Source (already one-hot)
-            6: {'type': 'none'},                              # Material_Bentonite (already one-hot)
-            7: {'type': 'none'},                              # Material_Fracture (already one-hot)
-            8: {'type': 'none'},                              # Vx
-            9: {'type': 'none'},                              # Vy
-            10: {'type': 'none'},                             # Meta (keep raw)
+            4: {'type': 'none'},                               # Smectite (keep raw)
+            5: {'type': 'none'},                               # Material_Source (already one-hot)
+            6: {'type': 'none'},                               # Material_Bentonite (already one-hot)
+            7: {'type': 'none'},                               # Material_Fracture (already one-hot)
+            8: {'type': 'none'},                               # Vx
+            9: {'type': 'none'},                               # Vy
+            10: {'type': 'none'},                              # Meta (keep raw)
         }
 
         # Normalization configuration for TRANSFORMED input (11 channels)
         self.norm_config = {
             'input': {
-                0: {'type': 'UnitGaussian', 'dim': [0, 2, 3, 4], 'eps': 1e-6},   # Perm (after log10)
-                1: {'type': 'MinMax', 'dim': [0, 2, 3, 4], 'eps': 1e-7},         # Calcite (after shifted log)
-                2: {'type': 'MinMax', 'dim': [0, 2, 3, 4], 'eps': 1e-7},         # Clino (after shifted log)
-                3: {'type': 'MinMax', 'dim': [0, 2, 3, 4], 'eps': 1e-7},         # Pyrite (after shifted log)
-                4: {'type': 'MinMax', 'dim': [0, 2, 3, 4], 'eps': 1e-7},         # Smectite
+                0: {'type': 'UnitGaussian', 'dim': [0, 2, 3, 4], 'eps': 0},   # Perm (after log10)
+                1: {'type': 'UnitGaussian', 'dim': [0, 2, 3, 4], 'eps': 0},         # Calcite (after shifted log)
+                2: {'type': 'UnitGaussian', 'dim': [0, 2, 3, 4], 'eps': 0},         # Clino (after shifted log)
+                3: {'type': 'UnitGaussian', 'dim': [0, 2, 3, 4], 'eps': 0},         # Pyrite (after shifted log)
+                4: {'type': 'UnitGaussian', 'dim': [0, 2, 3, 4], 'eps': 0},         # Smectite
                 5: {'type': 'None'},  # Material_Source (one-hot)
                 6: {'type': 'None'},  # Material_Bentonite (one-hot)
                 7: {'type': 'None'},  # Material_Fracture (one-hot)
-                8: {'type': 'MinMax', 'dim': [0, 2, 3, 4], 'eps': 1e-7},         # Vx
-                9: {'type': 'MinMax', 'dim': [0, 2, 3, 4], 'eps': 1e-7},         # Vy
-                10: {'type': 'MinMax', 'dim': [0, 2, 3, 4], 'eps': 1e-7},        # Meta
+                8: {'type': 'UnitGaussian', 'dim': [0, 2, 3, 4], 'eps': 0},         # Vx
+                9: {'type': 'UnitGaussian', 'dim': [0, 2, 3, 4], 'eps': 0},         # Vy
+                10: {'type': 'UnitGaussian', 'dim': [0, 2, 3, 4], 'eps': 0},        # Meta
             },
             'output': {
-                0: {'type': 'UnitGaussian', 'dim': [0, 2, 3, 4], 'eps': 1e-6},  # Uranium
+                0: {'type': 'UnitGaussian', 'dim': [0, 2, 3, 4], 'eps': 0},  # Uranium
             }
         }
 

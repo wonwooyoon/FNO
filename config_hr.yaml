@@ -1,0 +1,6 @@
+# Simple configuration for distributed preprocessing
+# Each server automatically processes all available pflotran data
+servers:
+  - host: "165.132.33.30"  
+    user: "geofluids"
+    port: 22

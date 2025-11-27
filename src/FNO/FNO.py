@@ -96,7 +96,7 @@ CONFIG = {
 
         # GIF generation configuration
         'GIF_OUTPUT': {
-            'ENABLED': True,  # Generate animated GIFs
+            'ENABLED': False,  # Generate animated GIFs
             'FPS': 2,  # Frames per second
             # Always uses all time steps (GIF_ALL_TIMES removed)
         },
@@ -124,7 +124,7 @@ CONFIG = {
         'l2_p': 2,  # Power for L2 loss
     },
     'TRAINING_CONFIG': {
-        'mode': 'single',  # Options: 'single', 'optuna', 'eval'
+        'mode': 'eval',  # Options: 'single', 'optuna', 'eval'
         'optuna_n_trials': 100,
         'optuna_seed': 42,
         'optuna_n_startup_trials': 10,
@@ -143,15 +143,15 @@ CONFIG = {
         'channel_mlp_skip_options': ['linear', 'soft-gating']  # categorical options
     },
     'SINGLE_PARAMS': {
-        "n_modes_1": 8,
-        "n_modes_2": 8,
-        "n_modes_3": 2,
-        "hidden_channels": 12,
-        "n_layers": 4,
+        "n_modes_1": 19,
+        "n_modes_2": 6,
+        "n_modes_3": 4,
+        "hidden_channels": 48,
+        "n_layers": 6,
         "domain_padding": (0.1,0.1,0.1),
         "train_batch_size": 32,
         "l2_weight": 1e-6,
-        "channel_mlp_expansion": 0.5,
+        "channel_mlp_expansion": 1.0,
         "channel_mlp_skip": 'soft-gating'
     }
 }
@@ -830,7 +830,6 @@ def optuna_optimization(config: Dict, train_dataset, val_dataset, test_dataset, 
             # Train model and get best validation loss
             trained_model = train_model(
                 config=config,
-                processor=processor,
                 device=device,
                 model=model,
                 train_loader=train_loader,
@@ -1295,7 +1294,6 @@ def main() -> None:
             # Evaluate the loaded model
             model_evaluation(
                 config=CONFIG,
-                processor=processor,
                 device=device,
                 model=trained_model,
                 test_loader=test_loader,

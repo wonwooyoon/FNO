@@ -78,7 +78,7 @@ if __name__ == "__main__":
     norm_config = {
         'OUTPUT': {
             'DPI': 150,
-            'N_SAMPLES': 100  # Number of samples for distribution analysis
+            'N_SAMPLES': 3000  # Number of samples for distribution analysis
         }
     }
 
