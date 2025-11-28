@@ -82,7 +82,7 @@ CONFIG = {
         'ENABLED': True,  # Master switch for all output generation
         'OUTPUT_DIR': './src/FNO/output_pure',  # Base output directory
         'SAMPLE_INDICES': [1, 3],  # Samples to visualize
-        'TIME_INDICES': [4, 9, 14, 19],  # Time indices to visualize
+        'TIME_INDICES': [8, 18, 28, 38],  # Time indices to visualize
         'DPI': 200,  # Resolution for all images
 
         # Note: NORM_CHECK is now performed in preprocessing_merge.py

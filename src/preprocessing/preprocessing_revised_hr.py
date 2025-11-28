@@ -87,7 +87,7 @@ def read_one_h5(h5_path: Path, meta_value: float):
         # Time key collection (100~2000y, 100y intervals)
         # Always include all timesteps in RAW format (t=0 excluded, 20 timesteps total)
         available = {}
-        for X in range(0, 2001, 50):
+        for X in range(0, 2001, 100):
             token = f"{int(X/50)} Time"
             match = next((k for k in keys_list if token in k), None)
             if match is not None:
