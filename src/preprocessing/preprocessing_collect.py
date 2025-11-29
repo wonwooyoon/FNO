@@ -43,16 +43,18 @@ PROJECT_ROOT = SCRIPT_DIR.parent.parent
 
 CONFIG = {
     'lr': {
+        'mode': 'lr',
         'pflotran_dir': PROJECT_ROOT / 'src/pflotran_run/output',
         'meta_csv': PROJECT_ROOT / 'src/initial_others/output/others.csv',
-        'preprocessing_script': 'preprocessing_revised.py',
+        'preprocessing_script': 'preprocessing_collect.py',
         'output_prefix': 'input_output_com',
         'output_file': SCRIPT_DIR / 'merged_raw.pt'  # Always save to src/preprocessing/
     },
     'hr': {
+        'mode': 'hr',
         'pflotran_dir': PROJECT_ROOT / 'src/pflotran_run/output_hr',
         'meta_csv': PROJECT_ROOT / 'src/initial_others/output_hr/others.csv',
-        'preprocessing_script': 'preprocessing_revised_hr.py',
+        'preprocessing_script': 'preprocessing_collect.py',
         'output_prefix': 'input_output_hr_com',
         'output_file': SCRIPT_DIR / 'merged_raw_hr.pt'  # Always save to src/preprocessing/
     }
@@ -328,13 +330,14 @@ def execute_remote_preprocessing(
     host: str,
     user: str,
     port: int,
-    output_suffix: str
+    script_name: str,
+    mode: str
 ) -> bool:
     """Execute preprocessing script on remote server via SSH"""
     remote_command = (
         "cd research/FNO && "
         "source .venv_FNO/bin/activate && "
-        f"python3 src/preprocessing/preprocessing_revised.py {output_suffix}"
+        f"python3 src/preprocessing/{script_name} --mode {mode} --local-only"
     )
 
     ssh_cmd = [
@@ -372,7 +375,7 @@ def download_result_file(
     output_prefix: str
 ) -> Optional[Path]:
     """Download generated .pt file from remote server using SCP"""
-    remote_file = f"research/FNO/src/preprocessing/{output_prefix}{output_suffix}.pt"
+    remote_file = f"research/FNO/src/preprocessing/{output_prefix}localhost.pt"
     # Always save to script directory (src/preprocessing/)
     local_file = SCRIPT_DIR / f"{output_prefix}{output_suffix}.pt"
 
@@ -439,7 +442,7 @@ def process_remote_data(server_config: dict, mode_config: dict) -> List[Path]:
         sync_script_on_server(host, user, port, script_name)
 
         # Step 2: Execute preprocessing
-        success = execute_remote_preprocessing(host, user, port, output_suffix)
+        success = execute_remote_preprocessing(host, user, port, script_name, mode_config['mode'])
 
         if not success:
             print(f"✗ Failed to process {host}")
