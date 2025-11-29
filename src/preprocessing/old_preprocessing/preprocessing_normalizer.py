@@ -192,6 +192,8 @@ class ChannelWiseNormalizer:
             initial = raw_output[:, :, :, :, 0:1]  # (N, 1, nx, ny, 1) - reference at t=0
             delta_all = raw_output - initial  # (N, 1, nx, ny, nt) - delta from t=0
             delta = delta_all[:, :, :, :, 1:]  # (N, 1, nx, ny, nt-1) - exclude t=0
+            delta[:, :, 14:18, 14:18, :] = 0
+            # delta[:, :, 28:37, 28:37, :] = 0
 
             return delta
 

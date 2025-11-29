@@ -34,7 +34,7 @@ from torch.utils.data import DataLoader, Dataset
 from sklearn.model_selection import train_test_split
 
 from neuraloperator.neuralop.utils import count_model_params
-from neuraloperator.neuralop.models import TFNO
+from neuraloperator.neuralop.models import TFNO, FNO
 from neuraloperator.neuralop.training import AdamW
 
 # Import unified output utility
@@ -51,7 +51,7 @@ from preprocessing_normalizer import ChannelWiseNormalizer
 # ==============================================================================
 CONFIG = {
     # Data paths - ensure these match your preprocessing output mode (raw/log/delta)
-    'MERGED_PT_PATH': './src/preprocessing/merged_U_delta_normalized_hr.pt',  # Pre-normalized data
+    'MERGED_PT_PATH': './src/preprocessing/merged_U_delta_normalized.pt',  # Pre-normalized data
     'CHANNEL_NORMALIZER_PATH': './src/preprocessing/channel_normalizer_delta.pkl',  # Normalizer (must match output mode)
     'OUTPUT_DIR': './src/FNO/output_pure',
     'N_EPOCHS': 3,  # Reduced for testing
@@ -81,8 +81,8 @@ CONFIG = {
     'OUTPUT': {
         'ENABLED': True,  # Master switch for all output generation
         'OUTPUT_DIR': './src/FNO/output_pure',  # Base output directory
-        'SAMPLE_INDICES': [1, 3],  # Samples to visualize
-        'TIME_INDICES': [8, 18, 28, 38],  # Time indices to visualize
+        'SAMPLE_INDICES': [1, 3, 5, 10, 15],  # Samples to visualize
+        'TIME_INDICES': [4, 9, 14, 19],  # Time indices to visualize
         'DPI': 200,  # Resolution for all images
 
         # Note: NORM_CHECK is now performed in preprocessing_merge.py
@@ -112,7 +112,7 @@ CONFIG = {
 
         # Integrated Gradients configuration
         'IG_ANALYSIS': {
-            'ENABLED': True,  # Perform IG analysis
+            'ENABLED': False,  # Perform IG analysis
             'SAMPLE_IDX': 260,  # Sample to analyze
             'TIME_INDICES': [4, 9, 14, 19],  # Target times
             'N_STEPS': 50,  # Integration steps
@@ -144,13 +144,13 @@ CONFIG = {
     },
     'SINGLE_PARAMS': {
         "n_modes_1": 19,
-        "n_modes_2": 6,
-        "n_modes_3": 4,
+        "n_modes_2": 9,
+        "n_modes_3": 6,
         "hidden_channels": 48,
         "n_layers": 6,
         "domain_padding": (0.1,0.1,0.1),
         "train_batch_size": 32,
-        "l2_weight": 1e-6,
+        "l2_weight": 2.5e-8,
         "channel_mlp_expansion": 1.0,
         "channel_mlp_skip": 'soft-gating'
     }

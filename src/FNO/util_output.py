@@ -1590,8 +1590,8 @@ def generate_all_outputs(
 
     # Get configuration
     output_config = config.get('OUTPUT', {})
-    sample_indices = output_config.get('SAMPLE_INDICES', [0])
-    time_indices = output_config.get('TIME_INDICES', [0, 5, 10, 15, 19])
+    sample_indices = output_config.get('SAMPLE_INDICES')
+    time_indices = output_config.get('TIME_INDICES')
 
     # Generate predictions
     print("\nGenerating predictions...")
@@ -1633,8 +1633,10 @@ def generate_all_outputs(
 
     # Note: Inverse transform (log→raw) is now handled by channel_normalizer
     # Apply additional masking if needed (e.g., source region masking)
-    pred_phys[:, :, 28:36, 28:36, :] = 0
-    gt_phys[:, :, 28:36, 28:36, :] = 0
+    pred_phys[:, :, 14:18, 14:18, :] = 0
+    gt_phys[:, :, 14:18, 14:18, :] = 0
+    # pred_phys[:, :, 28:37, 28:37, :] = 0
+    # gt_phys[:, :, 28:37, 28:37, :] = 0
 
 
     results = {}
