@@ -67,13 +67,16 @@ class ChannelNormalizer:
         return torch.log10(x + eps) - np.log10(eps)
 
     @staticmethod
-    def transform_delta(y: torch.Tensor, mask_source: bool = True) -> torch.Tensor:
+    def transform_delta(y: torch.Tensor, mask_source: bool = True, material_source_map: torch.Tensor = None) -> torch.Tensor:
         """
         Compute delta from t=0 initial state
 
         Args:
             y: (N, 1, nx, ny, nt) - raw output with t=0
-            mask_source: Whether to mask source region [14:18, 14:18]
+            mask_source: Whether to mask source region
+            material_source_map: (N, 1, nx, ny, nt) - material source map (1 where material==3)
+                                 If provided, masks locations where map==1
+                                 If None, uses legacy hard-coded indices [14:18, 14:18]
 
         Returns:
             delta: (N, 1, nx, ny, nt-1) - delta from t=0
@@ -83,8 +86,9 @@ class ChannelNormalizer:
         delta = delta[:, :, :, :, 1:]  # (N, 1, nx, ny, nt-1) - exclude t=0
 
         if mask_source:
-            # Mask source region to focus on transport
-            delta[:, :, 14:18, 14:18, :] = 0
+            source_mask = material_source_map[:, :, :, :, 1:]  # (N, 1, nx, ny, nt-1)
+            mask = (source_mask == 1)
+            delta[mask] = 0
 
         return delta
 
@@ -174,12 +178,13 @@ class ChannelNormalizer:
     # Output transformation
     # ========================================================================
 
-    def apply_output_transform(self, y_raw: torch.Tensor) -> torch.Tensor:
+    def apply_output_transform(self, y_raw: torch.Tensor, x_raw: torch.Tensor = None) -> torch.Tensor:
         """
         Apply transformation to output based on output_mode
 
         Args:
             y_raw: (N, 1, nx, ny, nt) - raw output with t=0
+            x_raw: (N, C, nx, ny, nt) - raw input (optional, needed for material_source_map in delta mode)
 
         Returns:
             y_transformed: (N, 1, nx, ny, nt-1) - transformed output (t=0 removed)
@@ -197,7 +202,14 @@ class ChannelNormalizer:
         elif transform_type == 'delta':
             # Compute delta from t=0, then remove t=0
             mask_source = self.output_config.get('mask_source', True)
-            y = self.transform_delta(y_raw, mask_source=mask_source)
+
+            # Extract material_source_map from x_raw if available
+            material_source_map = None
+            if mask_source and x_raw is not None:
+                # Channel 5 is Material_Source (one-hot encoding of material==3)
+                material_source_map = x_raw[:, 7:8, :, :, :]  # (N, 1, nx, ny, nt)
+
+            y = self.transform_delta(y_raw, mask_source=mask_source, material_source_map=material_source_map)
 
         elif transform_type == 'none':
             # Keep raw, but remove t=0
@@ -223,7 +235,7 @@ class ChannelNormalizer:
         """
         # 1. Apply transformations
         x_trans = self.apply_input_transforms(x_raw)
-        y_trans = self.apply_output_transform(y_raw)
+        y_trans = self.apply_output_transform(y_raw, x_raw=x_raw)
 
         if verbose:
             print(f"\n{'='*70}")
@@ -299,7 +311,7 @@ class ChannelNormalizer:
         """
         # 1. Apply transformations
         x_trans = self.apply_input_transforms(x_raw)
-        y_trans = self.apply_output_transform(y_raw)
+        y_trans = self.apply_output_transform(y_raw, x_raw=x_raw)
 
         # 2. Remove t=0 from input to match output timesteps
         x_trans = x_trans[:, :, :, :, 1:]  # (N, C, nx, ny, nt-1)

@@ -128,9 +128,9 @@ def read_pflotran_h5(h5_path: Path, meta_value: float) -> Tuple:
         y_velo_grid = to_grid(y_velo)
 
         # One-hot encode material (1, 2, 3 → 3 channels)
-        material_source = (material_grid == 1).astype(np.float32)
+        material_source = (material_grid == 3).astype(np.float32)
         material_bentonite = (material_grid == 2).astype(np.float32)
-        material_fracture = (material_grid == 3).astype(np.float32)
+        material_fracture = (material_grid == 1).astype(np.float32)
 
         # Stack input channels (10 channels)
         input_base = np.stack(
