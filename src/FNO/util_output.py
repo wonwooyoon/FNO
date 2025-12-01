@@ -744,10 +744,10 @@ def detailed_evaluation(
             pred = model(x)
 
             # Convert prediction to raw physical values
-            pred_phys = channel_normalizer.inverse_transform_output_to_raw(pred)
+            pred_phys = channel_normalizer.inverse_transform_output(pred)
 
             # Convert ground truth to raw physical values
-            y_phys = channel_normalizer.inverse_transform_output_to_raw(y)
+            y_phys = channel_normalizer.inverse_transform_output(y)
 
             all_pred.append(pred_phys.cpu())
             all_gt.append(y_phys.cpu())
@@ -946,7 +946,7 @@ def compute_integrated_gradients(
             # x is already normalized
             pred = self.model(x)
             # Convert to raw physical values
-            pred_phys = self.channel_normalizer.inverse_transform_output_to_raw(pred)
+            pred_phys = self.channel_normalizer.inverse_transform_output(pred)
             output_slice = pred_phys[:, 0, :, :, self.target_t]
             return (output_slice ** 2).sum(dim=[1, 2])
 
@@ -1614,8 +1614,8 @@ def generate_all_outputs(
             pred = trained_model(x)
 
             # Convert to raw physical values
-            pred_phys = channel_normalizer.inverse_transform_output_to_raw(pred)
-            y_phys = channel_normalizer.inverse_transform_output_to_raw(y)
+            pred_phys = channel_normalizer.inverse_transform_output(pred)
+            y_phys = channel_normalizer.inverse_transform_output(y)
 
             all_pred.append(pred_phys.cpu())
             all_gt.append(y_phys.cpu())

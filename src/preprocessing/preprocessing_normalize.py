@@ -415,49 +415,6 @@ def normalize_hr(
     print(f"  - The resolution difference is handled by FNO architecture")
     print(f"{'='*70}\n")
 
-    # Sample for visualization
-    n_samples = 100
-    sample_indices = torch.randperm(x_raw.shape[0])[:n_samples]
-
-    x_trans_sample = x_transformed[sample_indices]
-    x_norm_sample = x_norm[sample_indices]
-    y_trans_sample = y_transformed[sample_indices]
-    y_norm_sample = y_norm[sample_indices]
-
-    # Visualize distributions
-    print("  Creating visualizations...")
-    channel_names = [cfg[1] for cfg in CHANNEL_CONFIG]
-    stats_dir = PREPROC_DIR / 'normalization_stats'
-
-    visualize_distributions(
-        x_trans_sample, x_norm_sample,
-        stats_dir / 'input_distributions.png',
-        channel_names,
-        dpi=150
-    )
-
-    visualize_distributions(
-        y_trans_sample, y_norm_sample,
-        stats_dir / 'output_distributions.png',
-        ['Uranium'],
-        dpi=150
-    )
-
-    # Summary plots
-    visualize_normalized_summary(
-        x_norm_sample,
-        stats_dir / 'input_normalized_summary.png',
-        channel_names,
-        dpi=150
-    )
-
-    visualize_normalized_summary(
-        y_norm_sample,
-        stats_dir / 'output_normalized_summary.png',
-        ['Uranium'],
-        dpi=150
-    )
-
     return {
         'normalized_data': output_path,
         'normalizer': normalizer_path

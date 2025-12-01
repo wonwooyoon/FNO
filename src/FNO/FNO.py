@@ -44,7 +44,7 @@ from util_output import generate_all_outputs
 preprocessing_path = Path(__file__).parent.parent / 'preprocessing'
 if str(preprocessing_path) not in sys.path:
     sys.path.insert(0, str(preprocessing_path))
-from preprocessing_normalizer import ChannelWiseNormalizer
+from preprocessing_normalize import ChannelNormalizer
 
 # ==============================================================================
 # Configuration

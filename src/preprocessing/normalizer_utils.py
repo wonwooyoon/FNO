@@ -9,6 +9,7 @@ Normalization Utility Functions
 """
 
 import torch
+import torch.nn.functional as F
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -228,3 +229,25 @@ def print_stats_table(stats: List[Dict], title: str = "Statistics"):
 
     print(df.to_string(index=False))
     print("=" * 100)
+
+
+def artificial_highres(x, scale_factor):
+
+    D0, D1, D2, D3, D4 = x.shape
+
+    permute_indices1 = (0, 1, 4, 2, 3)
+    tensor_permuted = x.permute(permute_indices1)
+
+    tensor_4d = tensor_permuted.reshape(D0*D1*D4, 1, D2, D3)
+
+    upscaled_permuted = F.interpolate(tensor_4d,
+                                        scale_factor=scale_factor,
+                                        mode='bilinear',
+                                        align_corners=True)
+
+    upscaled_permuted = upscaled_permuted.reshape(D0, D1, D4, D2*2, D3*2)
+
+    permute_indices2 = (0, 1, 3, 4, 2)
+    upscaled_permuted = upscaled_permuted.permute(permute_indices2)
+
+    return upscaled_permuted
