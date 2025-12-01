@@ -51,10 +51,10 @@ from preprocessing_normalize import ChannelNormalizer
 # ==============================================================================
 CONFIG = {
     # Data paths - ensure these match your preprocessing output mode (raw/log/delta)
-    'MERGED_PT_PATH': './src/preprocessing/merged_U_delta_normalized.pt',  # Pre-normalized data
-    'CHANNEL_NORMALIZER_PATH': './src/preprocessing/channel_normalizer_delta.pkl',  # Normalizer (must match output mode)
+    'MERGED_PT_PATH': './src/preprocessing/merged_normalized_upscaled.pt',  # Pre-normalized data
+    'CHANNEL_NORMALIZER_PATH': './src/preprocessing/normalizer_delta.pkl',  # Normalizer (must match output mode)
     'OUTPUT_DIR': './src/FNO/output_pure',
-    'N_EPOCHS': 3,  # Reduced for testing
+    'N_EPOCHS': 100,  
     'EVAL_INTERVAL': 1,
     'VAL_SIZE': 0.1,  # Validation set size
     'TEST_SIZE': 0.1,  # Test set size
@@ -81,7 +81,7 @@ CONFIG = {
     'OUTPUT': {
         'ENABLED': True,  # Master switch for all output generation
         'OUTPUT_DIR': './src/FNO/output_pure',  # Base output directory
-        'SAMPLE_INDICES': [1, 3, 5, 10, 15],  # Samples to visualize
+        'SAMPLE_INDICES': [1, 3],  # Samples to visualize
         'TIME_INDICES': [4, 9, 14, 19],  # Time indices to visualize
         'DPI': 200,  # Resolution for all images
 
@@ -103,7 +103,7 @@ CONFIG = {
 
         # Detailed evaluation configuration
         'DETAIL_EVAL': {
-            'ENABLED': True,  # Compute RMSE/SSIM per time
+            'ENABLED': False,  # Compute RMSE/SSIM per time
             'METRICS': ['RMSE', 'SSIM'],  # Metrics to compute
             'COMPUTE_NRMSE': True,  # Compute normalized RMSE (MinMax-based)
             'PARITY_PLOT': True,  # Generate parity plot CSV
@@ -143,9 +143,9 @@ CONFIG = {
         'channel_mlp_skip_options': ['linear', 'soft-gating']  # categorical options
     },
     'SINGLE_PARAMS': {
-        "n_modes_1": 19,
-        "n_modes_2": 9,
-        "n_modes_3": 6,
+        "n_modes_1": 16,
+        "n_modes_2": 8,
+        "n_modes_3": 4,
         "hidden_channels": 48,
         "n_layers": 6,
         "domain_padding": (0.1,0.1,0.1),

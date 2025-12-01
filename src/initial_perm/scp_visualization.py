@@ -265,7 +265,7 @@ def main():
         'b': 2.64,
         'size_x': 256,
         'size_y': 128,
-        'level_max': 4,
+        'level_max': 3,
         'density_map_ratio': 0.25,
         'output_dir': '/home/geofluids/research/FNO/src/initial_perm/output_visualization'
     }

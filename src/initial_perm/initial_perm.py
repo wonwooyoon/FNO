@@ -9,7 +9,7 @@ def generate_scp_field(N, b, size_x, size_y, level_max, density_map_ratio, itera
     # Calculate density map dimensions based on ratio
     density_map_size_x = int(size_x * density_map_ratio)
     density_map_size_y = int(size_y * density_map_ratio)
-    density_map = np.ones((density_map_size_x, density_map_size_y))  # (rows, cols) = (X, Y)
+    density_map = np.ones((density_map_size_x, density_map_size_y)) * ((1/density_map_ratio)**2) / 16  # (rows, cols) = (X, Y)
 
     def draw_squares(N, b, size_x, size_y, level=1, parent_coords=[(0, 0)]):
         
@@ -110,7 +110,7 @@ if __name__ == '__main__':
     size_x = 256  # Width of rectangular domain
     size_y = 128  # Height of rectangular domain  
     level_max = 5
-    density_map_ratio = 0.5  # Ratio for density map resolution (0.25 * 256 = 64)
+    density_map_ratio = 0.5 # Ratio for density map resolution (0.25 * 256 = 64)
 
     with Pool(30) as p:
         p.starmap(generate_scp_field, [(N, b, size_x, size_y, level_max, density_map_ratio, i) for i in range(map_num)])
