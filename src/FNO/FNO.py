@@ -51,13 +51,13 @@ from preprocessing_normalize import ChannelNormalizer
 # ==============================================================================
 CONFIG = {
     # Data paths - ensure these match your preprocessing output mode (raw/log/delta)
-    'MERGED_PT_PATH': './src/preprocessing/merged_normalized_upscaled.pt',  # Pre-normalized data
+    'MERGED_PT_PATH': './src/preprocessing/merged_normalized.pt',  # Pre-normalized data
     'CHANNEL_NORMALIZER_PATH': './src/preprocessing/normalizer_delta.pkl',  # Normalizer (must match output mode)
     'OUTPUT_DIR': './src/FNO/output_pure',
     'N_EPOCHS': 100,  
     'EVAL_INTERVAL': 1,
-    'VAL_SIZE': 0.1,  # Validation set size
-    'TEST_SIZE': 0.1,  # Test set size
+    'VAL_SIZE': 0.33,  # Validation set size
+    'TEST_SIZE': 0.33,  # Test set size
     'RANDOM_STATE': 42,
     'DOMAIN_PADDING_MODE': 'symmetric',
     'MODEL_CONFIG': {
@@ -81,7 +81,7 @@ CONFIG = {
     'OUTPUT': {
         'ENABLED': True,  # Master switch for all output generation
         'OUTPUT_DIR': './src/FNO/output_pure',  # Base output directory
-        'SAMPLE_INDICES': [1, 3],  # Samples to visualize
+        'SAMPLE_INDICES': [0],  # Samples to visualize
         'TIME_INDICES': [4, 9, 14, 19],  # Time indices to visualize
         'DPI': 200,  # Resolution for all images
 

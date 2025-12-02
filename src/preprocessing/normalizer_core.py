@@ -207,7 +207,8 @@ class ChannelNormalizer:
             material_source_map = None
             if mask_source and x_raw is not None:
                 # Channel 5 is Material_Source (one-hot encoding of material==3)
-                material_source_map = x_raw[:, 7:8, :, :, :]  # (N, 1, nx, ny, nt)
+                material_source_map = x_raw[:, 5:6, :, :, :]  # (N, 1, nx, ny, nt)
+                print(f'Please look at me: {x_raw[0, 5:6, :, :, 0].numpy()}')
 
             y = self.transform_delta(y_raw, mask_source=mask_source, material_source_map=material_source_map)
 

@@ -1633,8 +1633,8 @@ def generate_all_outputs(
 
     # Note: Inverse transform (log→raw) is now handled by channel_normalizer
     # Apply additional masking if needed (e.g., source region masking)
-    pred_phys[:, :, 14:18, 14:18, :] = 0
-    gt_phys[:, :, 14:18, 14:18, :] = 0
+    # pred_phys[:, :, 14:18, 14:18, :] = 0
+    # gt_phys[:, :, 14:18, 14:18, :] = 0
     # pred_phys[:, :, 28:37, 28:37, :] = 0
     # gt_phys[:, :, 28:37, 28:37, :] = 0
 
