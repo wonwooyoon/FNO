@@ -1,6 +1,6 @@
 import torch
 from pathlib import Path
-from normalizer_utils import artificial_highres
+from normalizer_utils import artificial_highres, artificial_highres_with_onehot
 
 PREPROC_DIR = Path('./src/preprocessing')
 data_path = PREPROC_DIR / 'merged_normalized.pt'
@@ -12,8 +12,13 @@ y_raw = data['y']
 
 scale_factor = 2.0
 
-upscaled_x_data = artificial_highres(x_raw, scale_factor)
+# Channels 5, 6, 7 are one-hot encoded and need special handling
+onehot_channels = [5, 6, 7]
+print("Upscaling x with one-hot preservation...")
+upscaled_x_data = artificial_highres_with_onehot(x_raw, scale_factor, onehot_channels)
+print("Upscaling y...")
 upscaled_y_data = artificial_highres(y_raw, scale_factor)
+print("Upscaling complete.")
 
 print(f"  Raw input shape:  {tuple(x_raw.shape)}")
 print(f"  Raw output shape: {tuple(y_raw.shape)}")

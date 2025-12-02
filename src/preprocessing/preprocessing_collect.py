@@ -141,7 +141,7 @@ def read_pflotran_h5(h5_path: Path, meta_value: float) -> Tuple:
 
         # Collect timesteps (100~2000y, 100y intervals)
         available = {}
-        for X in range(0, 2001, 100):
+        for X in range(0, 2001, 50):
             token = f"{int(X/50)} Time"
             match = next((k for k in keys_list if token in k), None)
             if match is not None:

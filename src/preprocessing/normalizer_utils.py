@@ -251,3 +251,61 @@ def artificial_highres(x, scale_factor):
     upscaled_permuted = upscaled_permuted.permute(permute_indices2)
 
     return upscaled_permuted
+
+
+def artificial_highres_with_onehot(x, scale_factor, onehot_channels):
+    """
+    Upscale tensor with special handling for one-hot encoded channels
+
+    Args:
+        x: (N, C, nx, ny, nt) input tensor
+        scale_factor: upscaling factor
+        onehot_channels: list of channel indices that are one-hot encoded
+
+    Returns:
+        Upscaled tensor with one-hot channels preserved as binary (0 or 1)
+    """
+    D0, D1, D2, D3, D4 = x.shape
+
+    # Separate one-hot channels from other channels
+    all_channels = list(range(D1))
+    regular_channels = [ch for ch in all_channels if ch not in onehot_channels]
+
+    # Upscale regular channels using bilinear interpolation
+    if regular_channels:
+        x_regular = x[:, regular_channels]
+        upscaled_regular = artificial_highres(x_regular, scale_factor)
+    else:
+        upscaled_regular = None
+
+    # Upscale one-hot channels using argmax method
+    if onehot_channels:
+        x_onehot = x[:, onehot_channels]  # (N, 3, nx, ny, nt)
+
+        # First upscale with bilinear to get soft probabilities
+        upscaled_onehot_soft = artificial_highres(x_onehot, scale_factor)  # (N, 3, nx*2, ny*2, nt)
+
+        # Apply argmax to get hard one-hot encoding
+        # Shape: (N, 3, nx*2, ny*2, nt)
+        argmax_indices = torch.argmax(upscaled_onehot_soft, dim=1, keepdim=True)  # (N, 1, nx*2, ny*2, nt)
+
+        # Create one-hot encoding
+        num_onehot = len(onehot_channels)
+        upscaled_onehot = torch.zeros_like(upscaled_onehot_soft)
+        upscaled_onehot.scatter_(1, argmax_indices, 1.0)  # (N, 3, nx*2, ny*2, nt)
+    else:
+        upscaled_onehot = None
+
+    # Reconstruct the full tensor in the original channel order
+    upscaled_full = torch.zeros(D0, D1, int(D2*scale_factor), int(D3*scale_factor), D4,
+                                dtype=x.dtype, device=x.device)
+
+    if upscaled_regular is not None:
+        for i, ch in enumerate(regular_channels):
+            upscaled_full[:, ch] = upscaled_regular[:, i]
+
+    if upscaled_onehot is not None:
+        for i, ch in enumerate(onehot_channels):
+            upscaled_full[:, ch] = upscaled_onehot[:, i]
+
+    return upscaled_full
