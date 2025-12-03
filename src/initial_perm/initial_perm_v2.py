@@ -21,6 +21,9 @@ def generate_scp_field_v2(N, b, size_x, size_y, level_max, density_map_ratio, it
     - Consistent DC gain
     """
 
+    np.random.seed(42)
+    random.seed(42)
+
     # Base resolution (always 256×128)
     base_size_x = 256
     base_size_y = 128
@@ -164,10 +167,6 @@ def generate_scp_field_v2(N, b, size_x, size_y, level_max, density_map_ratio, it
             # HR
             output_dir = "output_hr"
             discretization = [0.125, 0.125]
-        else:
-            # Custom ratio
-            output_dir = f"output_ratio_{density_map_ratio}"
-            discretization = [16.0 / density_map.shape[0], 8.0 / density_map.shape[1]]
 
         perm_dir = f"/home/geofluids/research/FNO/src/initial_perm/{output_dir}/perm_map_{iteration}.h5"
         poro_dir = f"/home/geofluids/research/FNO/src/initial_perm/{output_dir}/poro_map_{iteration}.h5"
@@ -231,6 +230,8 @@ def generate_scp_field_v2(N, b, size_x, size_y, level_max, density_map_ratio, it
 
 
 if __name__ == '__main__':
+ 
+    # Fix random seed for reproducibility
     # Example usage - DO NOT RUN (to preserve existing data)
 
     # LR generation (ratio=0.25, stride=4 → 64×32)
@@ -248,7 +249,8 @@ if __name__ == '__main__':
     #                for i in range(map_num)])
 
     # HR generation (ratio=0.5, stride=2 → 128×64)
-    map_num = 100
+    
+    map_num = 1
     N = 9
     b = 2.64
     size_x = 256
@@ -261,17 +263,3 @@ if __name__ == '__main__':
                   [(N, b, size_x, size_y, level_max, density_map_ratio, i)
                    for i in range(map_num)])
 
-    print("initial_perm_v2.py - Ready to use")
-    print()
-    print("Key improvements:")
-    print("1. Always generates 256×128 base density map")
-    print("2. Applies 4×4 box averaging (consistent filter)")
-    print("3. Stride varies by ratio:")
-    print("   - ratio=0.25 (LR): stride=4 → 64×32")
-    print("   - ratio=0.5 (HR): stride=2 → 128×64")
-    print("4. Ensures HR[::2, ::2] = LR (signal inclusion)")
-    print("5. Same DC gain for LR and HR")
-    print()
-    print("To generate new data:")
-    print("  Uncomment the appropriate section above")
-    print("  Adjust output directory in generate_perm_map if needed")

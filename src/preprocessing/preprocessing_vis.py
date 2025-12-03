@@ -4,7 +4,7 @@ import numpy as np
 from pathlib import Path
 
 
-def save_samples_to_hdf5(data_path, output_path, n_samples=5):
+def save_samples_to_hdf5(data_path, output_path, n_samples=1):
     """
     Extract samples from PyTorch tensor and save to HDF5 for visualization
 

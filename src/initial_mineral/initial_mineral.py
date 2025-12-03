@@ -116,18 +116,19 @@ if __name__ == "__main__":
 
     for i in range(n):
         
-        x_corr1 = np.random.uniform(2.0, 10.0)
-        y_corr1 = np.random.uniform(2.0, 10.0)
-        x_corr2 = np.random.uniform(2.0, 10.0)
-        y_corr2 = np.random.uniform(2.0, 10.0)
-        x_corr3 = np.random.uniform(2.0, 10.0)
-        y_corr3 = np.random.uniform(2.0, 10.0)
+        x_corr1 = np.random.uniform(4.0, 20.0)
+        y_corr1 = np.random.uniform(4.0, 20.0)
+        x_corr2 = np.random.uniform(4.0, 20.0)
+        y_corr2 = np.random.uniform(4.0, 20.0)
+        x_corr3 = np.random.uniform(4.0, 20.0)
+        y_corr3 = np.random.uniform(4.0, 20.0)
 
         print(f"Iteration {i}: x_corr1={x_corr1}, y_corr1={y_corr1}, x_corr2={x_corr2}, y_corr2={y_corr2}, x_corr3={x_corr3}, y_corr3={y_corr3}")
 
         xx, yy, Z1 = generate_gaussian_field_fft_anisotropic(
             X, Y, nX, nY, x_corr1, y_corr1, mean, std
         )
+        
         xx, yy, Z2 = generate_gaussian_field_fft_anisotropic(
             X, Y, nX, nY, x_corr2, y_corr2, mean, std
         )

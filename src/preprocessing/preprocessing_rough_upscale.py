@@ -13,7 +13,7 @@ y_raw = data['y']
 scale_factor = 2.0
 
 # Channels 5, 6, 7 are one-hot encoded and need special handling
-onehot_channels = [5, 6, 7]
+onehot_channels = [4, 5, 6, 7]
 print("Upscaling x with one-hot preservation...")
 upscaled_x_data = artificial_highres_with_onehot(x_raw, scale_factor, onehot_channels)
 print("Upscaling y...")
