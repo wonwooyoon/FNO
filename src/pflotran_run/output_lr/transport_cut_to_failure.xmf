@@ -3,7 +3,7 @@
 <Xdmf>
   <Domain>
     <Grid Name="Mesh">
-      <Time Value = "0.00000E+00" />
+      <Time Value = "2.50000E-05" />
       <Topology Type="Mixed" NumberOfElements="3904">
         <DataItem Format="HDF" DataType="Int" Dimensions="35136">
           pflotran_0.h5:/Domain/Cells
@@ -31,692 +31,692 @@
       </Attribute>
       <Attribute Name="Porosity" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Porosity
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Porosity
         </DataItem>
       </Attribute>
       <Attribute Name="Permeability [m^2]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Permeability [m^2]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Permeability [m^2]
         </DataItem>
       </Attribute>
       <Attribute Name="Volume [m^3]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Volume [m^3]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Volume [m^3]
         </DataItem>
       </Attribute>
       <Attribute Name="pH" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/pH
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/pH
         </DataItem>
       </Attribute>
       <Attribute Name="pe" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/pe
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/pe
         </DataItem>
       </Attribute>
       <Attribute Name="Total H+ [M]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Total H+ [M]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Total H+ [M]
         </DataItem>
       </Attribute>
       <Attribute Name="Total Ca++ [M]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Total Ca++ [M]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Total Ca++ [M]
         </DataItem>
       </Attribute>
       <Attribute Name="Total Na+ [M]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Total Na+ [M]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Total Na+ [M]
         </DataItem>
       </Attribute>
       <Attribute Name="Total K+ [M]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Total K+ [M]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Total K+ [M]
         </DataItem>
       </Attribute>
       <Attribute Name="Total Mg++ [M]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Total Mg++ [M]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Total Mg++ [M]
         </DataItem>
       </Attribute>
       <Attribute Name="Total CO3-- [M]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Total CO3-- [M]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Total CO3-- [M]
         </DataItem>
       </Attribute>
       <Attribute Name="Total Cl- [M]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Total Cl- [M]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Total Cl- [M]
         </DataItem>
       </Attribute>
       <Attribute Name="Total UO2++ [M]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Total UO2++ [M]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Total UO2++ [M]
         </DataItem>
       </Attribute>
       <Attribute Name="Total O2(aq) [M]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Total O2(aq) [M]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Total O2(aq) [M]
         </DataItem>
       </Attribute>
       <Attribute Name="Total H4(SiO4) [M]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Total H4(SiO4) [M]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Total H4(SiO4) [M]
         </DataItem>
       </Attribute>
       <Attribute Name="Total Fe++ [M]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Total Fe++ [M]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Total Fe++ [M]
         </DataItem>
       </Attribute>
       <Attribute Name="Total Al+++ [M]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Total Al+++ [M]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Total Al+++ [M]
         </DataItem>
       </Attribute>
       <Attribute Name="Total SO4-- [M]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Total SO4-- [M]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Total SO4-- [M]
         </DataItem>
       </Attribute>
       <Attribute Name="OH- [M]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/OH- [M]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/OH- [M]
         </DataItem>
       </Attribute>
       <Attribute Name="CH4 [M]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/CH4 [M]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/CH4 [M]
         </DataItem>
       </Attribute>
       <Attribute Name="Al(OH)4- [M]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Al(OH)4- [M]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Al(OH)4- [M]
         </DataItem>
       </Attribute>
       <Attribute Name="Al(OH)3 [M]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Al(OH)3 [M]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Al(OH)3 [M]
         </DataItem>
       </Attribute>
       <Attribute Name="NaAl(OH)4 [M]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/NaAl(OH)4 [M]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/NaAl(OH)4 [M]
         </DataItem>
       </Attribute>
       <Attribute Name="Al(OH)2+ [M]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Al(OH)2+ [M]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Al(OH)2+ [M]
         </DataItem>
       </Attribute>
       <Attribute Name="HCO3- [M]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/HCO3- [M]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/HCO3- [M]
         </DataItem>
       </Attribute>
       <Attribute Name="CO2 [M]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/CO2 [M]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/CO2 [M]
         </DataItem>
       </Attribute>
       <Attribute Name="Na(HCO3) [M]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Na(HCO3) [M]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Na(HCO3) [M]
         </DataItem>
       </Attribute>
       <Attribute Name="Mg(HCO3)+ [M]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Mg(HCO3)+ [M]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Mg(HCO3)+ [M]
         </DataItem>
       </Attribute>
       <Attribute Name="CaCO3 [M]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/CaCO3 [M]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/CaCO3 [M]
         </DataItem>
       </Attribute>
       <Attribute Name="Na(CO3)- [M]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Na(CO3)- [M]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Na(CO3)- [M]
         </DataItem>
       </Attribute>
       <Attribute Name="FeCO3 [M]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/FeCO3 [M]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/FeCO3 [M]
         </DataItem>
       </Attribute>
       <Attribute Name="Fe(OH)CO3 [M]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Fe(OH)CO3 [M]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Fe(OH)CO3 [M]
         </DataItem>
       </Attribute>
       <Attribute Name="Ca(SO4) [M]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Ca(SO4) [M]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Ca(SO4) [M]
         </DataItem>
       </Attribute>
       <Attribute Name="Ca(HCO3)+ [M]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Ca(HCO3)+ [M]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Ca(HCO3)+ [M]
         </DataItem>
       </Attribute>
       <Attribute Name="MgCl+ [M]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/MgCl+ [M]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/MgCl+ [M]
         </DataItem>
       </Attribute>
       <Attribute Name="Fe+++ [M]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Fe+++ [M]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Fe+++ [M]
         </DataItem>
       </Attribute>
       <Attribute Name="FeCl+ [M]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/FeCl+ [M]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/FeCl+ [M]
         </DataItem>
       </Attribute>
       <Attribute Name="Fe(SO4) [M]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Fe(SO4) [M]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Fe(SO4) [M]
         </DataItem>
       </Attribute>
       <Attribute Name="Fe(OH)+ [M]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Fe(OH)+ [M]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Fe(OH)+ [M]
         </DataItem>
       </Attribute>
       <Attribute Name="Fe(OH)2+ [M]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Fe(OH)2+ [M]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Fe(OH)2+ [M]
         </DataItem>
       </Attribute>
       <Attribute Name="Fe(OH)3 [M]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Fe(OH)3 [M]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Fe(OH)3 [M]
         </DataItem>
       </Attribute>
       <Attribute Name="Fe(CO3)2-- [M]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Fe(CO3)2-- [M]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Fe(CO3)2-- [M]
         </DataItem>
       </Attribute>
       <Attribute Name="H2(aq) [M]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/H2(aq) [M]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/H2(aq) [M]
         </DataItem>
       </Attribute>
       <Attribute Name="Mg(SO4) [M]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Mg(SO4) [M]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Mg(SO4) [M]
         </DataItem>
       </Attribute>
       <Attribute Name="Mg(CO3) [M]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Mg(CO3) [M]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Mg(CO3) [M]
         </DataItem>
       </Attribute>
       <Attribute Name="U++++ [M]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/U++++ [M]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/U++++ [M]
         </DataItem>
       </Attribute>
       <Attribute Name="Ca2UO2(CO3)3 [M]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Ca2UO2(CO3)3 [M]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Ca2UO2(CO3)3 [M]
         </DataItem>
       </Attribute>
       <Attribute Name="CaUO2(CO3)3-- [M]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/CaUO2(CO3)3-- [M]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/CaUO2(CO3)3-- [M]
         </DataItem>
       </Attribute>
       <Attribute Name="UO2(CO3)3---- [M]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/UO2(CO3)3---- [M]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/UO2(CO3)3---- [M]
         </DataItem>
       </Attribute>
       <Attribute Name="MgUO2(CO3)3-- [M]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/MgUO2(CO3)3-- [M]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/MgUO2(CO3)3-- [M]
         </DataItem>
       </Attribute>
       <Attribute Name="Mg2UO2(CO3)3 [M]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Mg2UO2(CO3)3 [M]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Mg2UO2(CO3)3 [M]
         </DataItem>
       </Attribute>
       <Attribute Name="UO2(CO3)2-- [M]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/UO2(CO3)2-- [M]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/UO2(CO3)2-- [M]
         </DataItem>
       </Attribute>
       <Attribute Name="UO2(CO3) [M]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/UO2(CO3) [M]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/UO2(CO3) [M]
         </DataItem>
       </Attribute>
       <Attribute Name="UO2(OH)+ [M]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/UO2(OH)+ [M]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/UO2(OH)+ [M]
         </DataItem>
       </Attribute>
       <Attribute Name="UO2(OH)2 [M]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/UO2(OH)2 [M]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/UO2(OH)2 [M]
         </DataItem>
       </Attribute>
       <Attribute Name="U(OH)4 [M]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/U(OH)4 [M]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/U(OH)4 [M]
         </DataItem>
       </Attribute>
       <Attribute Name="UO2+ [M]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/UO2+ [M]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/UO2+ [M]
         </DataItem>
       </Attribute>
       <Attribute Name="HS- [M]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/HS- [M]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/HS- [M]
         </DataItem>
       </Attribute>
       <Attribute Name="H2S [M]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/H2S [M]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/H2S [M]
         </DataItem>
       </Attribute>
       <Attribute Name="Fe(HS)+ [M]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Fe(HS)+ [M]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Fe(HS)+ [M]
         </DataItem>
       </Attribute>
       <Attribute Name="SO3-- [M]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/SO3-- [M]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/SO3-- [M]
         </DataItem>
       </Attribute>
       <Attribute Name="S2O3-- [M]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/S2O3-- [M]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/S2O3-- [M]
         </DataItem>
       </Attribute>
       <Attribute Name="Na(S2O3)- [M]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Na(S2O3)- [M]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Na(S2O3)- [M]
         </DataItem>
       </Attribute>
       <Attribute Name="Mg(S2O3) [M]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Mg(S2O3) [M]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Mg(S2O3) [M]
         </DataItem>
       </Attribute>
       <Attribute Name="Ca(S2O3) [M]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Ca(S2O3) [M]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Ca(S2O3) [M]
         </DataItem>
       </Attribute>
       <Attribute Name="H(SO3)- [M]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/H(SO3)- [M]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/H(SO3)- [M]
         </DataItem>
       </Attribute>
       <Attribute Name="H(SO4)- [M]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/H(SO4)- [M]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/H(SO4)- [M]
         </DataItem>
       </Attribute>
       <Attribute Name="Smectite_MX80 VF [m^3 mnrl_m^3 bulk]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Smectite_MX80 VF [m^3 mnrl_m^3 bulk]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Smectite_MX80 VF [m^3 mnrl_m^3 bulk]
         </DataItem>
       </Attribute>
       <Attribute Name="InertMineral VF [m^3 mnrl_m^3 bulk]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/InertMineral VF [m^3 mnrl_m^3 bulk]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/InertMineral VF [m^3 mnrl_m^3 bulk]
         </DataItem>
       </Attribute>
       <Attribute Name="Quartz VF [m^3 mnrl_m^3 bulk]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Quartz VF [m^3 mnrl_m^3 bulk]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Quartz VF [m^3 mnrl_m^3 bulk]
         </DataItem>
       </Attribute>
       <Attribute Name="Gypsum VF [m^3 mnrl_m^3 bulk]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Gypsum VF [m^3 mnrl_m^3 bulk]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Gypsum VF [m^3 mnrl_m^3 bulk]
         </DataItem>
       </Attribute>
       <Attribute Name="Pyrite VF [m^3 mnrl_m^3 bulk]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Pyrite VF [m^3 mnrl_m^3 bulk]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Pyrite VF [m^3 mnrl_m^3 bulk]
         </DataItem>
       </Attribute>
       <Attribute Name="Calcite VF [m^3 mnrl_m^3 bulk]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Calcite VF [m^3 mnrl_m^3 bulk]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Calcite VF [m^3 mnrl_m^3 bulk]
         </DataItem>
       </Attribute>
       <Attribute Name="Dolomite VF [m^3 mnrl_m^3 bulk]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Dolomite VF [m^3 mnrl_m^3 bulk]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Dolomite VF [m^3 mnrl_m^3 bulk]
         </DataItem>
       </Attribute>
       <Attribute Name="Siderite VF [m^3 mnrl_m^3 bulk]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Siderite VF [m^3 mnrl_m^3 bulk]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Siderite VF [m^3 mnrl_m^3 bulk]
         </DataItem>
       </Attribute>
       <Attribute Name="Clinochlore VF [m^3 mnrl_m^3 bulk]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Clinochlore VF [m^3 mnrl_m^3 bulk]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Clinochlore VF [m^3 mnrl_m^3 bulk]
         </DataItem>
       </Attribute>
       <Attribute Name="UO2:2H2O(am) VF [m^3 mnrl_m^3 bulk]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/UO2:2H2O(am) VF [m^3 mnrl_m^3 bulk]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/UO2:2H2O(am) VF [m^3 mnrl_m^3 bulk]
         </DataItem>
       </Attribute>
       <Attribute Name="Smectite_MX80 Rate [mol_m^3 bulk_sec]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Smectite_MX80 Rate [mol_m^3 bulk_sec]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Smectite_MX80 Rate [mol_m^3 bulk_sec]
         </DataItem>
       </Attribute>
       <Attribute Name="InertMineral Rate [mol_m^3 bulk_sec]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/InertMineral Rate [mol_m^3 bulk_sec]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/InertMineral Rate [mol_m^3 bulk_sec]
         </DataItem>
       </Attribute>
       <Attribute Name="Quartz Rate [mol_m^3 bulk_sec]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Quartz Rate [mol_m^3 bulk_sec]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Quartz Rate [mol_m^3 bulk_sec]
         </DataItem>
       </Attribute>
       <Attribute Name="Gypsum Rate [mol_m^3 bulk_sec]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Gypsum Rate [mol_m^3 bulk_sec]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Gypsum Rate [mol_m^3 bulk_sec]
         </DataItem>
       </Attribute>
       <Attribute Name="Pyrite Rate [mol_m^3 bulk_sec]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Pyrite Rate [mol_m^3 bulk_sec]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Pyrite Rate [mol_m^3 bulk_sec]
         </DataItem>
       </Attribute>
       <Attribute Name="Calcite Rate [mol_m^3 bulk_sec]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Calcite Rate [mol_m^3 bulk_sec]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Calcite Rate [mol_m^3 bulk_sec]
         </DataItem>
       </Attribute>
       <Attribute Name="Dolomite Rate [mol_m^3 bulk_sec]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Dolomite Rate [mol_m^3 bulk_sec]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Dolomite Rate [mol_m^3 bulk_sec]
         </DataItem>
       </Attribute>
       <Attribute Name="Siderite Rate [mol_m^3 bulk_sec]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Siderite Rate [mol_m^3 bulk_sec]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Siderite Rate [mol_m^3 bulk_sec]
         </DataItem>
       </Attribute>
       <Attribute Name="Clinochlore Rate [mol_m^3 bulk_sec]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Clinochlore Rate [mol_m^3 bulk_sec]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Clinochlore Rate [mol_m^3 bulk_sec]
         </DataItem>
       </Attribute>
       <Attribute Name="UO2:2H2O(am) Rate [mol_m^3 bulk_sec]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/UO2:2H2O(am) Rate [mol_m^3 bulk_sec]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/UO2:2H2O(am) Rate [mol_m^3 bulk_sec]
         </DataItem>
       </Attribute>
       <Attribute Name=">SOH Site Density [mol_m^3 bulk]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/>SOH Site Density [mol_m^3 bulk]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/>SOH Site Density [mol_m^3 bulk]
         </DataItem>
       </Attribute>
       <Attribute Name=">WOH Site Density [mol_m^3 bulk]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/>WOH Site Density [mol_m^3 bulk]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/>WOH Site Density [mol_m^3 bulk]
         </DataItem>
       </Attribute>
       <Attribute Name=">MOH Site Density [mol_m^3 bulk]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/>MOH Site Density [mol_m^3 bulk]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/>MOH Site Density [mol_m^3 bulk]
         </DataItem>
       </Attribute>
       <Attribute Name="Free >SOH [mol_m^3 bulk]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Free >SOH [mol_m^3 bulk]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Free >SOH [mol_m^3 bulk]
         </DataItem>
       </Attribute>
       <Attribute Name="Free >WOH [mol_m^3 bulk]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Free >WOH [mol_m^3 bulk]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Free >WOH [mol_m^3 bulk]
         </DataItem>
       </Attribute>
       <Attribute Name="Free >MOH [mol_m^3 bulk]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Free >MOH [mol_m^3 bulk]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Free >MOH [mol_m^3 bulk]
         </DataItem>
       </Attribute>
       <Attribute Name=">SOH2+ [mol_m^3 bulk]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/>SOH2+ [mol_m^3 bulk]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/>SOH2+ [mol_m^3 bulk]
         </DataItem>
       </Attribute>
       <Attribute Name=">SO- [mol_m^3 bulk]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/>SO- [mol_m^3 bulk]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/>SO- [mol_m^3 bulk]
         </DataItem>
       </Attribute>
       <Attribute Name=">SOUO2+ [mol_m^3 bulk]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/>SOUO2+ [mol_m^3 bulk]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/>SOUO2+ [mol_m^3 bulk]
         </DataItem>
       </Attribute>
       <Attribute Name=">SOUO2OH [mol_m^3 bulk]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/>SOUO2OH [mol_m^3 bulk]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/>SOUO2OH [mol_m^3 bulk]
         </DataItem>
       </Attribute>
       <Attribute Name=">SOUO2(OH)2- [mol_m^3 bulk]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/>SOUO2(OH)2- [mol_m^3 bulk]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/>SOUO2(OH)2- [mol_m^3 bulk]
         </DataItem>
       </Attribute>
       <Attribute Name=">SOUO2(OH)3-- [mol_m^3 bulk]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/>SOUO2(OH)3-- [mol_m^3 bulk]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/>SOUO2(OH)3-- [mol_m^3 bulk]
         </DataItem>
       </Attribute>
       <Attribute Name=">SOUO2CO3- [mol_m^3 bulk]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/>SOUO2CO3- [mol_m^3 bulk]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/>SOUO2CO3- [mol_m^3 bulk]
         </DataItem>
       </Attribute>
       <Attribute Name=">SOUO2(CO3)2--- [mol_m^3 bulk]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/>SOUO2(CO3)2--- [mol_m^3 bulk]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/>SOUO2(CO3)2--- [mol_m^3 bulk]
         </DataItem>
       </Attribute>
       <Attribute Name=">WOH2+ [mol_m^3 bulk]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/>WOH2+ [mol_m^3 bulk]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/>WOH2+ [mol_m^3 bulk]
         </DataItem>
       </Attribute>
       <Attribute Name=">WO- [mol_m^3 bulk]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/>WO- [mol_m^3 bulk]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/>WO- [mol_m^3 bulk]
         </DataItem>
       </Attribute>
       <Attribute Name=">WOUO2+ [mol_m^3 bulk]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/>WOUO2+ [mol_m^3 bulk]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/>WOUO2+ [mol_m^3 bulk]
         </DataItem>
       </Attribute>
       <Attribute Name=">WOUO2OH [mol_m^3 bulk]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/>WOUO2OH [mol_m^3 bulk]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/>WOUO2OH [mol_m^3 bulk]
         </DataItem>
       </Attribute>
       <Attribute Name=">WOUO2CO3- [mol_m^3 bulk]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/>WOUO2CO3- [mol_m^3 bulk]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/>WOUO2CO3- [mol_m^3 bulk]
         </DataItem>
       </Attribute>
       <Attribute Name=">MOH2+ [mol_m^3 bulk]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/>MOH2+ [mol_m^3 bulk]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/>MOH2+ [mol_m^3 bulk]
         </DataItem>
       </Attribute>
       <Attribute Name=">MO- [mol_m^3 bulk]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/>MO- [mol_m^3 bulk]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/>MO- [mol_m^3 bulk]
         </DataItem>
       </Attribute>
       <Attribute Name="H+ KD [-]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/H+ KD [-]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/H+ KD [-]
         </DataItem>
       </Attribute>
       <Attribute Name="Ca++ KD [-]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Ca++ KD [-]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Ca++ KD [-]
         </DataItem>
       </Attribute>
       <Attribute Name="Na+ KD [-]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Na+ KD [-]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Na+ KD [-]
         </DataItem>
       </Attribute>
       <Attribute Name="K+ KD [-]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/K+ KD [-]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/K+ KD [-]
         </DataItem>
       </Attribute>
       <Attribute Name="Mg++ KD [-]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Mg++ KD [-]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Mg++ KD [-]
         </DataItem>
       </Attribute>
       <Attribute Name="CO3-- KD [-]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/CO3-- KD [-]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/CO3-- KD [-]
         </DataItem>
       </Attribute>
       <Attribute Name="Cl- KD [-]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Cl- KD [-]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Cl- KD [-]
         </DataItem>
       </Attribute>
       <Attribute Name="UO2++ KD [-]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/UO2++ KD [-]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/UO2++ KD [-]
         </DataItem>
       </Attribute>
       <Attribute Name="O2(aq) KD [-]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/O2(aq) KD [-]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/O2(aq) KD [-]
         </DataItem>
       </Attribute>
       <Attribute Name="H4(SiO4) KD [-]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/H4(SiO4) KD [-]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/H4(SiO4) KD [-]
         </DataItem>
       </Attribute>
       <Attribute Name="Fe++ KD [-]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Fe++ KD [-]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Fe++ KD [-]
         </DataItem>
       </Attribute>
       <Attribute Name="Al+++ KD [-]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Al+++ KD [-]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Al+++ KD [-]
         </DataItem>
       </Attribute>
       <Attribute Name="SO4-- KD [-]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/SO4-- KD [-]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/SO4-- KD [-]
         </DataItem>
       </Attribute>
       <Attribute Name="Total Sorbed H+ [mol_m^3 bulk]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Total Sorbed H+ [mol_m^3 bulk]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Total Sorbed H+ [mol_m^3 bulk]
         </DataItem>
       </Attribute>
       <Attribute Name="Total Sorbed Ca++ [mol_m^3 bulk]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Total Sorbed Ca++ [mol_m^3 bulk]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Total Sorbed Ca++ [mol_m^3 bulk]
         </DataItem>
       </Attribute>
       <Attribute Name="Total Sorbed Na+ [mol_m^3 bulk]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Total Sorbed Na+ [mol_m^3 bulk]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Total Sorbed Na+ [mol_m^3 bulk]
         </DataItem>
       </Attribute>
       <Attribute Name="Total Sorbed K+ [mol_m^3 bulk]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Total Sorbed K+ [mol_m^3 bulk]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Total Sorbed K+ [mol_m^3 bulk]
         </DataItem>
       </Attribute>
       <Attribute Name="Total Sorbed Mg++ [mol_m^3 bulk]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Total Sorbed Mg++ [mol_m^3 bulk]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Total Sorbed Mg++ [mol_m^3 bulk]
         </DataItem>
       </Attribute>
       <Attribute Name="Total Sorbed CO3-- [mol_m^3 bulk]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Total Sorbed CO3-- [mol_m^3 bulk]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Total Sorbed CO3-- [mol_m^3 bulk]
         </DataItem>
       </Attribute>
       <Attribute Name="Total Sorbed Cl- [mol_m^3 bulk]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Total Sorbed Cl- [mol_m^3 bulk]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Total Sorbed Cl- [mol_m^3 bulk]
         </DataItem>
       </Attribute>
       <Attribute Name="Total Sorbed UO2++ [mol_m^3 bulk]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Total Sorbed UO2++ [mol_m^3 bulk]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Total Sorbed UO2++ [mol_m^3 bulk]
         </DataItem>
       </Attribute>
       <Attribute Name="Total Sorbed O2(aq) [mol_m^3 bulk]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Total Sorbed O2(aq) [mol_m^3 bulk]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Total Sorbed O2(aq) [mol_m^3 bulk]
         </DataItem>
       </Attribute>
       <Attribute Name="Total Sorbed H4(SiO4) [mol_m^3 bulk]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Total Sorbed H4(SiO4) [mol_m^3 bulk]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Total Sorbed H4(SiO4) [mol_m^3 bulk]
         </DataItem>
       </Attribute>
       <Attribute Name="Total Sorbed Fe++ [mol_m^3 bulk]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Total Sorbed Fe++ [mol_m^3 bulk]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Total Sorbed Fe++ [mol_m^3 bulk]
         </DataItem>
       </Attribute>
       <Attribute Name="Total Sorbed Al+++ [mol_m^3 bulk]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Total Sorbed Al+++ [mol_m^3 bulk]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Total Sorbed Al+++ [mol_m^3 bulk]
         </DataItem>
       </Attribute>
       <Attribute Name="Total Sorbed SO4-- [mol_m^3 bulk]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Total Sorbed SO4-- [mol_m^3 bulk]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Total Sorbed SO4-- [mol_m^3 bulk]
         </DataItem>
       </Attribute>
       <Attribute Name="Material ID" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Material ID
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Material ID
         </DataItem>
       </Attribute>
       <Attribute Name="Liquid X-Velocity [m_per_yr]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Liquid X-Velocity [m_per_yr]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Liquid X-Velocity [m_per_yr]
         </DataItem>
       </Attribute>
       <Attribute Name="Liquid Y-Velocity [m_per_yr]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Liquid Y-Velocity [m_per_yr]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Liquid Y-Velocity [m_per_yr]
         </DataItem>
       </Attribute>
       <Attribute Name="Liquid Z-Velocity [m_per_yr]" AttributeType="Scalar"  Center="Cell">
         <DataItem Dimensions="3904 1" Format="HDF">
-        pflotran_0.h5:/   0 Time  0.00000E+00 y/Liquid Z-Velocity [m_per_yr]
+        pflotran_0.h5:/   1 Time  2.50000E-05 y transport_cut_to_failure/Liquid Z-Velocity [m_per_yr]
         </DataItem>
       </Attribute>
     </Grid>
