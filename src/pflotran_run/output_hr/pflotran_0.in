@@ -254,7 +254,6 @@ CHEMISTRY
     / 
   /
   
-  SKIP
   SORPTION
     ION_EXCHANGE_RXN
       MINERAL Smectite_MX80
@@ -307,7 +306,6 @@ CHEMISTRY
       /
     /
   /
-  NOSKIP
   
   DATABASE ./PFLOTRAN_O2_ThermoChimie_v12a_T_modified.dat
   
