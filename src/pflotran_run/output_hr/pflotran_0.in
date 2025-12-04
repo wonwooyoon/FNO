@@ -122,18 +122,7 @@ CHEMISTRY
   PASSIVE_GAS_SPECIES
     O2(g)
   /
-  
-  MINERALS
-    UO2:2H2O(am)
-  /
 
-  ! Kinetics data from Palandri and Kharaka (2004) and Marty et al. (2015)
-    
-    MINERAL_KINETICS
-    UO2:2H2O(am)
-      RATE_CONSTANT 1e-9
-    / 
-  /
   
   SKIP
   SORPTION
@@ -413,9 +402,6 @@ CONSTRAINT granite_conc
     UO2++	1.000104E-16			T
     O2(aq)	-2.629056	PE
   /
-  MINERALS
-    UO2:2H2O(am)		0.0	1e2 	m^2/m^3
-  /
 /
   
 CONSTRAINT bentonite_conc
@@ -435,9 +421,6 @@ CONSTRAINT bentonite_conc
     UO2++	9.931716E-17			T
     O2(aq)	-2.574846		PE
   /
-  MINERALS
-    UO2:2H2O(am)		0.0	1e2 	m^2/m^3
-  /
 /	
 
 CONSTRAINT source_conc
@@ -454,11 +437,8 @@ CONSTRAINT source_conc
     SO4--	0.01793532	T
     H4(SiO4)	0.0002337517	T
     Al+++	0.00000001109302			T
-    UO2++	9.931716E-17			M UO2:2H2O(am)
+    UO2++	1E-4			T
     O2(aq)	-2.574846		PE
-  /
-  MINERALS
-    UO2:2H2O(am)		0.05 0.05 m^2/g
   /
 /
 
