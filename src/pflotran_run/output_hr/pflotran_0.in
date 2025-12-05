@@ -126,6 +126,7 @@ CHEMISTRY
   MINERALS
     InertMineral
     UO2:2H2O(am)
+    Calcite
   /
 
   ! Kinetics data from Palandri and Kharaka (2004) and Marty et al. (2015)
@@ -134,6 +135,10 @@ CHEMISTRY
 
     InertMineral
       RATE_CONSTANT   0.0 mol/m^2-sec
+    /
+
+    Calcite
+      RATE_CONSTANT   1e-9 mol/m^2-sec
     /
     
     UO2:2H2O(am)
@@ -144,6 +149,7 @@ CHEMISTRY
         ACTIVATION_ENERGY 32.0d3
       /
     / 
+
   /
   
   DATABASE ./PFLOTRAN_O2_ThermoChimie_v12a_T_modified.dat
@@ -359,6 +365,7 @@ CONSTRAINT granite_conc
   MINERALS
     InertMineral 0.9 0.0 m^2/m^3
     UO2:2H2O(am)		0.0	1e2 	m^2/m^3
+    Calcite         0.0 1e2   m^2/m^3
   /
 /
   
@@ -382,6 +389,7 @@ CONSTRAINT bentonite_conc
   MINERALS
     InertMineral		0.9	0.0 	m^2/m^3
     UO2:2H2O(am)		0.0	1e2 	m^2/m^3
+    Calcite         0.0 1e2   m^2/m^3
   /
 /	
 
@@ -403,8 +411,9 @@ CONSTRAINT source_conc
     O2(aq)	-2.574846		PE
   /
   MINERALS
-    InertMineral 0.94 0.0 m^2/m^3
+    InertMineral 0.89 0.0 m^2/m^3
     UO2:2H2O(am)		0.05 0.05 m^2/m^3
+    Calcite         0.05 0.05 m^2/m^3
   /
 /
 
