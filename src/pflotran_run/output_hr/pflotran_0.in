@@ -184,7 +184,7 @@ END
 
 MATERIAL_PROPERTY bentonite
   ID 2
-  POROSITY 0.42
+  POROSITY 0.1
   TORTUOSITY 1.0
   LONGITUDINAL_DISPERSIVITY 0.1
   PERMEABILITY
@@ -380,7 +380,7 @@ CONSTRAINT bentonite_conc
     O2(aq)	-2.574846		PE
   /
   MINERALS
-    InertMineral		0.58	0.0 	m^2/m^3
+    InertMineral		0.9	0.0 	m^2/m^3
     UO2:2H2O(am)		0.0	1e2 	m^2/m^3
   /
 /	
