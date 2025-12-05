@@ -392,14 +392,14 @@ CONSTRAINT source_conc
     Mg++	0.01145159	T
     Na+		0.09379946		T
     SO4--	0.01793532	T
-    H4(SiO4)	0.0003337517	T
+    H4(SiO4)	0.0002337517	T
     Al+++	0.00000001109302			T
     UO2++	9.931716E-17			M UO2:2H2O(am)
     O2(aq)	-2.574846		PE
   /
   MINERALS
     InertMineral 0.94 0.0 m^2/m^3
-    UO2:2H2O(am)		0.05 0.05 m^2/g
+    UO2:2H2O(am)		0.05 0.0 m^2/g
   /
 /
 

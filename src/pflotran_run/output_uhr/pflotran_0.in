@@ -399,7 +399,7 @@ CONSTRAINT source_conc
   /
   MINERALS
     InertMineral 0.94 0.0 m^2/m^3
-    UO2:2H2O(am)		0.05 0.05 m^2/g
+    UO2:2H2O(am)		0.05 0.0 m^2/g
   /
 /
 
@@ -414,7 +414,7 @@ CONSTRAINT seawater_conc
     Mg++	0.00930007	  T
     Na+		0.0888	      T
     SO4--	0.00680009 	T
-    H4(SiO4)	0.0003337517	T
+    H4(SiO4)	0.0002337517	T
     Al+++	0.00000001350717			T
     UO2++	1.000104E-16			T
     O2(aq)	-2.629056	PE
