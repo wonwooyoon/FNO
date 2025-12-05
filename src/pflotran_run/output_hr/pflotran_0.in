@@ -126,7 +126,6 @@ CHEMISTRY
   MINERALS
     InertMineral
     UO2:2H2O(am)
-    Calcite
   /
 
   ! Kinetics data from Palandri and Kharaka (2004) and Marty et al. (2015)
@@ -135,10 +134,6 @@ CHEMISTRY
 
     InertMineral
       RATE_CONSTANT   0.0 mol/m^2-sec
-    /
-
-    Calcite
-      RATE_CONSTANT   1e-9 mol/m^2-sec
     /
     
     UO2:2H2O(am)
@@ -182,19 +177,23 @@ MATERIAL_PROPERTY source
   POROSITY 0.01
   TORTUOSITY 1.0
   LONGITUDINAL_DISPERSIVITY 0.1
+  TRANSVERSE_DISPERSIVITY_H 0.01
+  TRANSVERSE_DISPERSIVITY_V 0.01
   PERMEABILITY
-    PERM_ISO 1.d-14 ! unit: m^2
+    PERM_ISO 1.d-20 ! unit: m^2
   /
   CHARACTERISTIC_CURVES default
 END
 
 MATERIAL_PROPERTY bentonite
   ID 2
-  POROSITY 0.01
+  POROSITY 0.42
   TORTUOSITY 1.0
   LONGITUDINAL_DISPERSIVITY 0.1
+  TRANSVERSE_DISPERSIVITY_H 0.01
+  TRANSVERSE_DISPERSIVITY_V 0.01
   PERMEABILITY
-    PERM_ISO 1.d-14 ! unit: m^2
+    PERM_ISO 1.d-18 ! unit: m^2
   /
   CHARACTERISTIC_CURVES default
 END
@@ -204,6 +203,8 @@ MATERIAL_PROPERTY granite_fracture
   POROSITY 0.1
   TORTUOSITY 1.0
   LONGITUDINAL_DISPERSIVITY 0.1
+  TRANSVERSE_DISPERSIVITY_H 0.01
+  TRANSVERSE_DISPERSIVITY_V 0.01
   PERMEABILITY
     PERM_ISO 1.d-14
   /
@@ -365,7 +366,6 @@ CONSTRAINT granite_conc
   MINERALS
     InertMineral 0.9 0.0 m^2/m^3
     UO2:2H2O(am)		0.0	1e2 	m^2/m^3
-    Calcite         0.0 1e2   m^2/m^3
   /
 /
   
@@ -387,9 +387,8 @@ CONSTRAINT bentonite_conc
     O2(aq)	-2.574846		PE
   /
   MINERALS
-    InertMineral		0.89	0.0 	m^2/m^3
+    InertMineral		0.58	0.0 	m^2/m^3
     UO2:2H2O(am)		0.0 1e2 m^2/m^3
-    Calcite         0.05 1e2   m^2/m^3
   /
 /	
 
@@ -411,9 +410,8 @@ CONSTRAINT source_conc
     O2(aq)	-2.574846		PE
   /
   MINERALS
-    InertMineral 0.89 0.0 m^2/m^3
+    InertMineral 0.94 0.0 m^2/m^3
     UO2:2H2O(am)		0.05 0.05 m^2/m^3
-    Calcite         0.05 0.05 m^2/m^3
   /
 /
 
