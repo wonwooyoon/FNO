@@ -6,7 +6,7 @@ SIMULATION
       MODE RICHARDS
     /
     SUBSURFACE_TRANSPORT transport
-      MODE OSRT
+      MODE GIRT
     /
   /
 
@@ -137,7 +137,7 @@ CHEMISTRY
     /
     
     UO2:2H2O(am)
-      RATE_CONSTANT 1e-9
+      RATE_CONSTANT 1e-9 mol/m^2-sec
     / 
   /
   
