@@ -349,8 +349,8 @@ CONSTRAINT granite_conc
   ACKNOWLEDGE_ZERO_SURFACE_AREA
   CONCENTRATIONS
     H+		6.835764	    pH
-    CO3--	0.002026657	  T
-    Ca++ 	0.02312668	  T
+    CO3--	0.001026657	  T
+    Ca++ 	0.01312668	  T
     Cl-		0.1392766	    Z
     Fe++	0.00003310075	T
     K+		0.000875	    T
