@@ -159,7 +159,7 @@ CHEMISTRY
 END
 
 GRID
-  TYPE UNSTRUCTURED ../../mesh/output_hr/mesh.h5
+  TYPE UNSTRUCTURED ../../mesh/output_hr_modified/mesh.h5
 END
 
 FLUID_PROPERTY
@@ -240,23 +240,23 @@ REGION all
 END
 
 REGION west
-  FILE ../../mesh/output_hr/sideset1.ss
+  FILE ../../mesh/output_hr_modified/sideset1.ss
 END
 
 REGION east
-  FILE ../../mesh/output_hr/sideset2.ss
+  FILE ../../mesh/output_hr_modified/sideset2.ss
 END
 
 REGION source 
-  FILE ../../mesh/output_hr/material_3.txt
+  FILE ../../mesh/output_hr_modified/material_3.txt
 END
 
 REGION bentonite
-  FILE ../../mesh/output_hr/material_2.txt
+  FILE ../../mesh/output_hr_modified/material_2.txt
 END
 
 REGION granite_fracture
-  FILE ../../mesh/output_hr/material_1.txt
+  FILE ../../mesh/output_hr_modified/material_1.txt
 END
 
 FLOW_CONDITION initial_pressure
@@ -422,5 +422,5 @@ CONSTRAINT seawater_conc
 /
   
 STRATA
-  FILE ../../mesh/output_hr/mesh.h5
+  FILE ../../mesh/output_hr_modified/mesh.h5
 END
