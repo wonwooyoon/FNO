@@ -383,7 +383,7 @@ CONSTRAINT bentonite_conc
     SO4--	0.01793532	T
     H4(SiO4)	0.0002337517	T
     Al+++	0.00000001109302			T
-    UO2++	9.931716E-17			M UO2:2H2O(am)
+    UO2++	9.931716E-17			T
     O2(aq)	-2.574846		PE
   /
   MINERALS
