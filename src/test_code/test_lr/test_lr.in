@@ -99,12 +99,24 @@ CHEMISTRY
     Ca2UO2(CO3)3
     CaUO2(CO3)3--
     UO2(CO3)3----
+    MgUO2(CO3)3--
+    Mg2UO2(CO3)3
     UO2(CO3)2--
     UO2(CO3)
     UO2(OH)+
     UO2(OH)2
     U(OH)4
     UO2+
+    HS-
+    H2S
+    Fe(HS)+
+    SO3--
+    S2O3--
+    Na(S2O3)-
+    Mg(S2O3)
+    Ca(S2O3)
+    H(SO3)-
+    H(SO4)-
   /
   
   PASSIVE_GAS_SPECIES
