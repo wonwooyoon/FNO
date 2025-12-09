@@ -36,7 +36,7 @@ NUMERICAL_METHODS transport
   NEWTON_SOLVER
     SNES_TYPE NTRDC
     STOL 1e-50
-    ATOL 1e-13
+    ATOL 1e-15
     RTOL 1e-9
     MAXIMUM_NUMBER_OF_ITERATIONS 25
     NO_PRINT_CONVERGENCE
@@ -55,6 +55,7 @@ CHEMISTRY
   PRIMARY_SPECIES
     H+
     Ca++
+    Na+
     K+
     Mg++
     CO3--
@@ -68,50 +69,8 @@ CHEMISTRY
   /
   SECONDARY_SPECIES
     OH-
-    CH4
-    Al(OH)4-
-    Al(OH)3
-    Al(OH)2+
-    HCO3-
-    CO2 
-    Mg(HCO3)+
-    CaCO3
-    FeCO3
-    Fe(OH)CO3
-    Ca(SO4)
-    Ca(HCO3)+
-    MgCl+
-    Fe+++
-    FeCl+
-    Fe(SO4)
-    Fe(OH)+
-    Fe(OH)2+
-    Fe(OH)3
-    Fe(CO3)2--
-    H2(aq)
-    Mg(SO4)
-    Mg(CO3)
     U++++
-    Ca2UO2(CO3)3
-    CaUO2(CO3)3--
-    UO2(CO3)3----
-    MgUO2(CO3)3--
-    Mg2UO2(CO3)3
-    UO2(CO3)2--
-    UO2(CO3)
-    UO2(OH)+
-    UO2(OH)2
-    U(OH)4
     UO2+
-    HS-
-    H2S
-    Fe(HS)+
-    SO3--
-    S2O3--
-    Mg(S2O3)
-    Ca(S2O3)
-    H(SO3)-
-    H(SO4)-
   /
   
   PASSIVE_GAS_SPECIES
@@ -255,6 +214,7 @@ CONSTRAINT bentonite_conc
     H+		6.835764	    pH
     CO3--	0.002026657	  T
     Ca++ 	0.02312668	  T
+    Na+   0.0888        T
     Cl-		0.1392766	    Z
     Fe++	0.00003310075	T
     K+		0.000875	    T
@@ -277,6 +237,7 @@ CONSTRAINT source_conc
     H+		6.835764	    pH
     CO3--	0.002026657	  T
     Ca++ 	0.02312668	  T
+    Na+   0.0888        T
     Cl-		0.1392766	    Z
     Fe++	0.00003310075	T
     K+		0.000875	    T
