@@ -250,7 +250,7 @@ CONSTRAINT bentonite_conc
   ACKNOWLEDGE_ZERO_SURFACE_AREA
   CONCENTRATIONS
     H+		6.835764	    pH
-    CO3--	0.002026657	  T
+    CO3--	0.000026657	  T
     Ca++ 	0.02312668	  T
     Na+   0.0888        T
     Cl-		0.1392766	    Z
@@ -273,7 +273,7 @@ CONSTRAINT source_conc
   ACKNOWLEDGE_ZERO_SURFACE_AREA
   CONCENTRATIONS
     H+		6.835764	    pH
-    CO3--	0.002026657	  T
+    CO3--	0.000026657	  T
     Ca++ 	0.02312668	  T
     Na+   0.0888        T
     Cl-		0.1392766	    Z
