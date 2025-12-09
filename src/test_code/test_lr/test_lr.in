@@ -253,60 +253,7 @@ CHEMISTRY
       RATE_CONSTANT 1e-9
     / 
   /
-  
-  SORPTION
-    ION_EXCHANGE_RXN
-      MINERAL Smectite_MX80
-      CEC 2.3925d3 ! unit: eq/m^3 of specified mineral 
-      CATIONS
-        Na+ 1. REFERENCE
-        K+ 3.9810717
-	      Ca++ 2.5703957
-        Mg++ 2.18776
-	      UO2++ 2.8183829
-      /
-    /
-  
-    SURFACE_COMPLEXATION_RXN
-      EQUILIBRIUM
-      MINERAL Smectite_MX80
-      SITE >SOH 5.50 ! unit: mol/m^3 of specified mineral
-      COMPLEXES
-        >SOH2+
-        >SO-
-        >SOUO2+
-        >SOUO2OH
-        >SOUO2(OH)2-
-        >SOUO2(OH)3--
-        >SOUO2CO3-
-        >SOUO2(CO3)2---
-      /
-    /
-
-    SURFACE_COMPLEXATION_RXN
-      EQUILIBRIUM
-      MINERAL Smectite_MX80
-      SITE >WOH 1.11d2 ! unit: mol/m^3 of specified mineral
-      COMPLEXES
-        >WOH2+
-        >WO-
-        >WOUO2+
-        >WOUO2OH
-        >WOUO2CO3-
-      /
-    /
-  
-    SURFACE_COMPLEXATION_RXN
-      EQUILIBRIUM
-      MINERAL Smectite_MX80 
-      SITE >MOH 1.11d2 ! unit: mol/m^3 of specified mineral
-      COMPLEXES
-        >MOH2+
-        >MO-
-      /
-    /
-  /
-  
+    
   DATABASE ./PFLOTRAN_O2_ThermoChimie_v12a_T_modified.dat
   
   LOG_FORMULATION
@@ -361,7 +308,7 @@ END
 OUTPUT
   VELOCITY_AT_CENTER
   SNAPSHOT_FILE
-    PERIODIC TIME 50 yr
+    PERIODIC TIME 10 yr
     FORMAT HDF5
     VARIABLES
       POROSITY
