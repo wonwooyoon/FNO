@@ -164,11 +164,22 @@ CHEMISTRY
 END
 
 GRID
-  TYPE UNSTRUCTURED ../../mesh/output_modified/mesh.h5
+  TYPE UNSTRUCTURED ../../mesh/output_test_lr/mesh.h5
 END
 
 FLUID_PROPERTY
   DIFFUSION_COEFFICIENT 1.d-9 
+END
+
+MATERIAL_PROPERTY canister
+  ID 4
+  POROSITY 0.01
+  TORTUOSITY 1.0
+  LONGITUDINAL_DISPERSIVITY 0.1
+  PERMEABILITY
+    PERM_ISO 1.d-19
+  /
+  CHARACTERISTIC_CURVES default
 END
 
 MATERIAL_PROPERTY source
@@ -177,14 +188,14 @@ MATERIAL_PROPERTY source
   TORTUOSITY 1.0
   LONGITUDINAL_DISPERSIVITY 0.1
   PERMEABILITY
-    PERM_ISO 1.d-20 ! unit: m^2
+    PERM_ISO 1.d-19 ! unit: m^2
   /
   CHARACTERISTIC_CURVES default
 END
 
 MATERIAL_PROPERTY bentonite
   ID 2
-  POROSITY 0.01
+  POROSITY 0.42
   TORTUOSITY 1.0
   LONGITUDINAL_DISPERSIVITY 0.1
   PERMEABILITY
@@ -199,7 +210,7 @@ MATERIAL_PROPERTY granite_fracture
   TORTUOSITY 1.0
   LONGITUDINAL_DISPERSIVITY 0.1
   PERMEABILITY
-    PERM_ISO 1.d-18
+    PERM_ISO 1.d-14
   /
   CHARACTERISTIC_CURVES default
 END
@@ -245,23 +256,27 @@ REGION all
 END
 
 REGION west
-  FILE ../../mesh/output_modified/sideset1.ss
+  FILE ../../mesh/output_test_lr/sideset1.ss
 END
 
 REGION east
-  FILE ../../mesh/output_modified/sideset2.ss
+  FILE ../../mesh/output_test_lr/sideset2.ss
+END
+
+REGION canister
+  FILE ../../mesh/output_test_lr/material_4.txt
 END
 
 REGION source 
-  FILE ../../mesh/output_modified/material_3.txt
+  FILE ../../mesh/output_test_lr/material_3.txt
 END
 
 REGION bentonite
-  FILE ../../mesh/output_modified/material_2.txt
+  FILE ../../mesh/output_test_lr/material_2.txt
 END
 
 REGION granite_fracture
-  FILE ../../mesh/output_modified/material_1.txt
+  FILE ../../mesh/output_test_lr/material_1.txt
 END
 
 FLOW_CONDITION initial_pressure
@@ -300,6 +315,13 @@ TRANSPORT_CONDITION SOURCE_TC
   /
 END
 
+TRANSPORT_CONDITION CANISTER_TC
+  TYPE DIRICHLET_ZERO_GRADIENT
+  CONSTRAINT_LIST
+    0.d0 canister_conc
+  /
+END
+
 TRANSPORT_CONDITION INLET_TC
   TYPE DIRICHLET
   TIME_UNITS yr
@@ -324,6 +346,12 @@ INITIAL_CONDITION SOURCE
   FLOW_CONDITION initial_pressure
   TRANSPORT_CONDITION SOURCE_TC
   REGION source
+END
+
+INITIAL_CONDITION CANISTER
+  FLOW_CONDITION initial_pressure
+  TRANSPORT_CONDITION CANISTER_TC
+  REGION canister
 END
 
 BOUNDARY_CONDITION OUTLET
@@ -380,7 +408,7 @@ CONSTRAINT bentonite_conc
     O2(aq)	-2.574846		PE
   /
   MINERALS
-    InertMineral		0.99	0.0 	m^2/m^3
+    InertMineral		0.58	0.0 	m^2/m^3
     UO2:2H2O(am)		0.0 1e2 m^2/m^3
   /
 /	
@@ -408,6 +436,29 @@ CONSTRAINT source_conc
   /
 /
 
+CONSTRAINT canister_conc
+  ACKNOWLEDGE_ZERO_SURFACE_AREA
+  CONCENTRATIONS
+    H+		6.83427		pH
+    CO3--	0.001881264 	T
+    Ca++ 	0.0294397	T
+    Cl-		0.1392766		Z
+    Fe++	0.00003310096	T 
+    K+		0.0009260782	T
+    Mg++	0.01145159	T
+    Na+		0.09379946		T
+    SO4--	0.01793532	T
+    H4(SiO4)	0.0002337517	T
+    Al+++	0.00000001109302			T
+    UO2++	9.931716E-17			M UO2:2H2O(am)
+    O2(aq)	-2.574846		PE
+  /
+  MINERALS
+    InertMineral 0.99 0.0 m^2/m^3
+    UO2:2H2O(am)		0.00 1e2 m^2/m^3
+  /
+/
+
 CONSTRAINT seawater_conc
   CONCENTRATIONS
     H+		6.83427		pH
@@ -427,5 +478,5 @@ CONSTRAINT seawater_conc
 /
   
 STRATA
-  FILE ../../mesh/output_modified/mesh.h5
+  FILE ../../mesh/output_test_lr/mesh.h5
 END
