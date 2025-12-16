@@ -171,97 +171,96 @@ def exodus_to_pflotran_mesh(infilename, outfilename):
     h5dset = pflotranfile.create_dataset('Materials/Material Ids', data=mat_id)
 
     # Write sidesets
-    if sideset_exist is True:
-        for i in range(num_sidesets):
-            varname='elem_ss'+str(i+1)
-            elem = exofile.variables[varname][:]
-            varname='side_ss'+str(i+1)
-            side = exofile.variables[varname][:]
+    for i in range(num_sidesets):
+        varname='elem_ss'+str(i+1)
+        elem = exofile.variables[varname][:]
+        varname='side_ss'+str(i+1)
+        side = exofile.variables[varname][:]
 
-            print(numpy.shape(elem))
+        print(numpy.shape(elem))
 
-            if elem.size != side.size:
-                print("Inconsistent size in the data set: "+str(varname))
-                sys.exit(0)
-            
-                    
-            sideset = numpy.zeros((side.size,5), int)
-            # We will check which face of the element is at the boundary and
-            # create our sidesets accordingly
-            for j in range(len(elem)):
-                sideset[j,0] = 4
-                jelem = elem[j] -1
-                if (cell_array[jelem,0] == 6):
-                    if side[j] == 1:
-                        sideset[j,1] = cell_array[jelem,1]
-                        sideset[j,2] = cell_array[jelem,2]
-                        sideset[j,3] = cell_array[jelem,5]
-                        sideset[j,4] = cell_array[jelem,4]
-                    elif side[j] == 2:
-                        sideset[j,1] = cell_array[jelem,2]
-                        sideset[j,2] = cell_array[jelem,3]
-                        sideset[j,3] = cell_array[jelem,6]
-                        sideset[j,4] = cell_array[jelem,5]
-                    elif side[j] == 3:
-                        sideset[j,1] = cell_array[jelem,3]
-                        sideset[j,2] = cell_array[jelem,1]
-                        sideset[j,3] = cell_array[jelem,4]
-                        sideset[j,4] = cell_array[jelem,6]
-                    elif side[j] == 4:
-                        sideset[j,0] = 3
-                        sideset[j,1] = cell_array[jelem,3]
-                        sideset[j,2] = cell_array[jelem,2]
-                        sideset[j,3] = cell_array[jelem,1]
-                    elif side[j] == 5:
-                        sideset[j,0] = 3
-                        sideset[j,1] = cell_array[jelem,4]
-                        sideset[j,2] = cell_array[jelem,5]
-                        sideset[j,3] = cell_array[jelem,6]
-                elif (cell_array[jelem,0] == 8):
-                    if side[j] == 1:
-                        sideset[j,1] = cell_array[jelem,1]
-                        sideset[j,2] = cell_array[jelem,2]
-                        sideset[j,3] = cell_array[jelem,6]
-                        sideset[j,4] = cell_array[jelem,5]
-                    elif side[j] == 2:
-                        sideset[j,1] = cell_array[jelem,2]
-                        sideset[j,2] = cell_array[jelem,3]
-                        sideset[j,3] = cell_array[jelem,7]
-                        sideset[j,4] = cell_array[jelem,6]
-                    elif side[j] == 3:
-                        sideset[j,1] = cell_array[jelem,3]
-                        sideset[j,2] = cell_array[jelem,7]
-                        sideset[j,3] = cell_array[jelem,8]
-                        sideset[j,4] = cell_array[jelem,4]
-                    elif side[j] == 4:
-                        sideset[j,1] = cell_array[jelem,4]
-                        sideset[j,2] = cell_array[jelem,8]
-                        sideset[j,3] = cell_array[jelem,5]
-                        sideset[j,4] = cell_array[jelem,1]
-                    elif side[j] == 5:
-                        sideset[j,1] = cell_array[jelem,1]
-                        sideset[j,2] = cell_array[jelem,2]
-                        sideset[j,3] = cell_array[jelem,3]
-                        sideset[j,4] = cell_array[jelem,4]
-                    elif side[j] == 6:
-                        sideset[j,1] = cell_array[jelem,5]
-                        sideset[j,2] = cell_array[jelem,6]
-                        sideset[j,3] = cell_array[jelem,7]
-                        sideset[j,4] = cell_array[jelem,8]
+        if elem.size != side.size:
+            print("Inconsistent size in the data set: "+str(varname))
+            sys.exit(0)
+        
+                
+        sideset = numpy.zeros((side.size,5), int)
+        # We will check which face of the element is at the boundary and
+        # create our sidesets accordingly
+        for j in range(len(elem)):
+            sideset[j,0] = 4
+            jelem = elem[j] -1
+            if (cell_array[jelem,0] == 6):
+                if side[j] == 1:
+                    sideset[j,1] = cell_array[jelem,1]
+                    sideset[j,2] = cell_array[jelem,2]
+                    sideset[j,3] = cell_array[jelem,5]
+                    sideset[j,4] = cell_array[jelem,4]
+                elif side[j] == 2:
+                    sideset[j,1] = cell_array[jelem,2]
+                    sideset[j,2] = cell_array[jelem,3]
+                    sideset[j,3] = cell_array[jelem,6]
+                    sideset[j,4] = cell_array[jelem,5]
+                elif side[j] == 3:
+                    sideset[j,1] = cell_array[jelem,3]
+                    sideset[j,2] = cell_array[jelem,1]
+                    sideset[j,3] = cell_array[jelem,4]
+                    sideset[j,4] = cell_array[jelem,6]
+                elif side[j] == 4:
+                    sideset[j,0] = 3
+                    sideset[j,1] = cell_array[jelem,3]
+                    sideset[j,2] = cell_array[jelem,2]
+                    sideset[j,3] = cell_array[jelem,1]
+                elif side[j] == 5:
+                    sideset[j,0] = 3
+                    sideset[j,1] = cell_array[jelem,4]
+                    sideset[j,2] = cell_array[jelem,5]
+                    sideset[j,3] = cell_array[jelem,6]
+            elif (cell_array[jelem,0] == 8):
+                if side[j] == 1:
+                    sideset[j,1] = cell_array[jelem,1]
+                    sideset[j,2] = cell_array[jelem,2]
+                    sideset[j,3] = cell_array[jelem,6]
+                    sideset[j,4] = cell_array[jelem,5]
+                elif side[j] == 2:
+                    sideset[j,1] = cell_array[jelem,2]
+                    sideset[j,2] = cell_array[jelem,3]
+                    sideset[j,3] = cell_array[jelem,7]
+                    sideset[j,4] = cell_array[jelem,6]
+                elif side[j] == 3:
+                    sideset[j,1] = cell_array[jelem,3]
+                    sideset[j,2] = cell_array[jelem,7]
+                    sideset[j,3] = cell_array[jelem,8]
+                    sideset[j,4] = cell_array[jelem,4]
+                elif side[j] == 4:
+                    sideset[j,1] = cell_array[jelem,4]
+                    sideset[j,2] = cell_array[jelem,8]
+                    sideset[j,3] = cell_array[jelem,5]
+                    sideset[j,4] = cell_array[jelem,1]
+                elif side[j] == 5:
+                    sideset[j,1] = cell_array[jelem,1]
+                    sideset[j,2] = cell_array[jelem,2]
+                    sideset[j,3] = cell_array[jelem,3]
+                    sideset[j,4] = cell_array[jelem,4]
+                elif side[j] == 6:
+                    sideset[j,1] = cell_array[jelem,5]
+                    sideset[j,2] = cell_array[jelem,6]
+                    sideset[j,3] = cell_array[jelem,7]
+                    sideset[j,4] = cell_array[jelem,8]
 
 
-            dataset_name = 'Regions/Sideset%d' % (i+1)
-            h5dset = pflotranfile.create_dataset(dataset_name, data=sideset)
+        dataset_name = 'Regions/Sideset%d' % (i+1)
+        h5dset = pflotranfile.create_dataset(dataset_name, data=sideset)
 
     return sideset_exist
 
 
 if __name__ == "__main__":
     
-    exodus_path = './src/mesh/mesh_full_canister.e'
-    hdf_path = './src/mesh/output_test_lr/mesh.h5'
+    exodus_path = './src/mesh/mesh_new_hr.e'
+    hdf_path = './src/mesh/output_test_hr/mesh.h5'
     sideset_dataset_path = ['/Regions/Sideset1', '/Regions/Sideset2']
-    ascii_file_path = ['./src/mesh/output_test_lr/sideset1.ss', './src/mesh/output_test_lr/sideset2.ss']
+    ascii_file_path = ['./src/mesh/output_test_hr/sideset1.ss', './src/mesh/output_test_hr/sideset2.ss']
     material_dataset_path = '/Materials/Material Ids'
     
     exodus_to_pflotran_mesh(exodus_path, hdf_path)
@@ -281,5 +280,5 @@ if __name__ == "__main__":
 
     for key in material_dic.keys():
         writer = ASCIIWriterMaterial(material_dic[key])
-        writer.save_to_file(f'./src/mesh/output_test_lr/{key}.txt')
+        writer.save_to_file(f'./src/mesh/output_test_hr/{key}.txt')
 
