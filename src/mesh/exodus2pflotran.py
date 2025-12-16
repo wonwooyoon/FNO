@@ -261,9 +261,7 @@ if __name__ == "__main__":
     exodus_path = './src/mesh/mesh_full_canister.e'
     hdf_path = './src/mesh/output_test_lr/mesh.h5'
     sideset_dataset_path = ['/Regions/Sideset1', '/Regions/Sideset2']
-    # sideset_dataset_path = []
     ascii_file_path = ['./src/mesh/output_test_lr/sideset1.ss', './src/mesh/output_test_lr/sideset2.ss']
-    # ascii_file_path = []
     material_dataset_path = '/Materials/Material Ids'
     
     exodus_to_pflotran_mesh(exodus_path, hdf_path)
