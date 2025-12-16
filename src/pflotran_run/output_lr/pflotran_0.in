@@ -454,6 +454,10 @@ REGION east
   FILE ../../mesh/output_test_lr/sideset2.ss
 END
 
+REGION canister
+  FILE ../../mesh/output_test_hr/material_4.txt
+END
+
 REGION source 
   FILE ../../mesh/output_test_lr/material_3.txt
 END
