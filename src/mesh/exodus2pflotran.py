@@ -258,11 +258,11 @@ def exodus_to_pflotran_mesh(infilename, outfilename):
 
 if __name__ == "__main__":
     
-    exodus_path = './src/mesh/mesh_full_hr_canister.e'
-    hdf_path = './src/mesh/output_test_hr/mesh.h5'
+    exodus_path = './src/mesh/mesh_full_canister.e'
+    hdf_path = './src/mesh/output_test_lr/mesh.h5'
     sideset_dataset_path = ['/Regions/Sideset1', '/Regions/Sideset2']
     # sideset_dataset_path = []
-    ascii_file_path = ['./src/mesh/output_test_hr/sideset1.ss', './src/mesh/output_test_hr/sideset2.ss']
+    ascii_file_path = ['./src/mesh/output_test_lr/sideset1.ss', './src/mesh/output_test_lr/sideset2.ss']
     # ascii_file_path = []
     material_dataset_path = '/Materials/Material Ids'
     
@@ -283,5 +283,5 @@ if __name__ == "__main__":
 
     for key in material_dic.keys():
         writer = ASCIIWriterMaterial(material_dic[key])
-        writer.save_to_file(f'./src/mesh/output_test_hr/{key}.txt')
+        writer.save_to_file(f'./src/mesh/output_test_lr/{key}.txt')
 
