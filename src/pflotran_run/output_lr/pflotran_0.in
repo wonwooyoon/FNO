@@ -436,7 +436,7 @@ OUTPUT
 END
 
 TIME
-  FINAL_TIME 50 yr
+  FINAL_TIME 2000 yr
 END
 
 REGION all
@@ -455,7 +455,7 @@ REGION east
 END
 
 REGION canister
-  FILE ../../mesh/output_test_hr/material_4.txt
+  FILE ../../mesh/output_test_lr/material_4.txt
 END
 
 REGION source 
@@ -640,7 +640,7 @@ CONSTRAINT source_conc
   /
   MINERALS
     Smectite_MX80 	0.0	0.0 	m^2/m^3
-    InertMineral 0.94 0.0 m^2/m^3
+    InertMineral 0.90 0.0 m^2/m^3
     Quartz		0.0	0.0 	m^2/m^3	
     Gypsum		0.0	0.0 	m^2/m^3
     Pyrite		0.0	0.0 	m^2/m^3
@@ -671,7 +671,7 @@ CONSTRAINT canister_conc
   /
   MINERALS
     Smectite_MX80 	0.0	0.0 	m^2/m^3
-    InertMineral 0.94 0.0 m^2/m^3
+    InertMineral 0.95 0.0 m^2/m^3
     Quartz		0.0	0.0 	m^2/m^3	
     Gypsum		0.0	0.0 	m^2/m^3
     Pyrite		0.0	0.0 	m^2/m^3
