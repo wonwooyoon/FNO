@@ -250,7 +250,7 @@ CHEMISTRY
     /         
        
     UO2:2H2O(am)
-      RATE_CONSTANT 1e-9
+      RATE_CONSTANT 1e-12
     / 
   /
   
