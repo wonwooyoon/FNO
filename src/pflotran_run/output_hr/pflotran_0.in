@@ -250,7 +250,7 @@ CHEMISTRY
     /         
        
     UO2:2H2O(am)
-      RATE_CONSTANT 1e-12
+      RATE_CONSTANT 1e-15
     / 
   /
   
@@ -385,7 +385,7 @@ END
 
 MATERIAL_PROPERTY bentonite
   ID 2
-  POROSITY 0.05
+  POROSITY 0.2
   TORTUOSITY 1.0
   LONGITUDINAL_DISPERSIVITY 0.1
   PERMEABILITY
@@ -608,7 +608,7 @@ CONSTRAINT bentonite_conc
   /
   MINERALS
     Smectite_MX80 	0.1978883811653056	8.5 	m^2/g
-    InertMineral		0.44972072727272728	0.0 	m^2/m^3
+    InertMineral		0.29972072727272728	0.0 	m^2/m^3
     Quartz		0.028392727272727274	0.05 	m^2/g
     Gypsum		0.004549818181818182	0.05 	m^2/g
     Pyrite		0.00010472727272727273	0.05 	m^2/g
