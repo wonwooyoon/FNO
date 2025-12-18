@@ -61,13 +61,13 @@ class RatioEquilibrium:
 #!/bin/bash
 base_dir="$(pwd)"
 
-for i in {1..3000}; do
-  infile="${base_dir}/src/initial_seawater/output_hr/mixing_${i}.in"
+for i in {1..2}; do
+  infile="${base_dir}/src/initial_seawater/output_test/mixing_${i}.in"
   echo "Running pflotran on $infile..."
   mpirun -n 1 /home/geofluids/pflotran/src/pflotran/pflotran -input_prefix "${infile%.*}"
 done
 
-echo "All simulations completed and results moved to ./src/initial_seawater/output_hr/"
+echo "All simulations completed and results moved to ./src/initial_seawater/output_test/"
 """
 
         subprocess.run(['bash', '-c', bash_code], check=True)
@@ -105,15 +105,15 @@ echo "All simulations completed and results moved to ./src/initial_seawater/outp
             
 if __name__ == '__main__':
 
-    ratio_dir = './src/initial_others/output_hr/others.csv'
+    ratio_dir = './src/initial_others/output_test/others.csv'
     default_script_dir = './src/initial_seawater/PFLOTRAN_mixing.in'
-    ratio_results_dir = './src/initial_seawater/output_hr'
+    ratio_results_dir = './src/initial_seawater/output_test'
     components = ['pH', 'pe', 'Al+++', 'CO3--', 'Ca++', 'Cl-', 'Fe++', 'H4(SiO4)', 'K+', 'Mg++', 'Na+', 'SO4--', 'UO2++']
     
     ratio_calculation = RatioEquilibrium(ratio_dir, default_script_dir, ratio_results_dir)
 
     ratio_calculation.read_ratio()
     ratio_calculation.write_script()
-    # ratio_calculation.run_pflotran_ratio()
+    ratio_calculation.run_pflotran_ratio()
     ratio_calculation.read_pflotran_result(components)
 
