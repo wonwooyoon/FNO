@@ -242,7 +242,9 @@ CHEMISTRY
     /         
        
     UO2:2H2O(am)
-      RATE_CONSTANT 1e-15
+      SURFACE_AREA_FUNCTION VOLUME_FRACTION_RATIO
+      SURFACE_AREA_VOL_FRAC_POWER 0.66667
+      RATE_CONSTANT 1e-9
     / 
   /
   
@@ -377,7 +379,7 @@ END
 
 MATERIAL_PROPERTY bentonite
   ID 2
-  POROSITY 0.2
+  POROSITY 0.05
   TORTUOSITY 1.0
   LONGITUDINAL_DISPERSIVITY 0.1
   PERMEABILITY
@@ -428,7 +430,7 @@ OUTPUT
 END
 
 TIME
-  FINAL_TIME 1000 yr
+  FINAL_TIME 500 yr
 END
 
 REGION all
@@ -600,7 +602,7 @@ CONSTRAINT bentonite_conc
   /
   MINERALS
     Smectite_MX80 	0.1978883811653056	8.5 	m^2/g
-    InertMineral		0.29972072727272728	0.0 	m^2/m^3
+    InertMineral		0.44972072727272728	0.0 	m^2/m^3
     Quartz		0.028392727272727274	0.05 	m^2/g
     Gypsum		0.004549818181818182	0.05 	m^2/g
     Pyrite		0.00010472727272727273	0.05 	m^2/g
@@ -657,12 +659,12 @@ CONSTRAINT canister_conc
     SO4--	0.01793532	T
     H4(SiO4)	0.0002337517	T
     Al+++	0.00000001109302			T
-    UO2++	9.931716E-17			T
+    UO2++	9.931716E-17			M UO2:2H2O(am)
     O2(aq)	-2.574846		PE
   /
   MINERALS
     Smectite_MX80 	0.0	0.0 	m^2/m^3
-    InertMineral 0.7 0.0 m^2/m^3
+    InertMineral 0.85 0.0 m^2/m^3
     Quartz		0.0	0.0 	m^2/m^3	
     Gypsum		0.0	0.0 	m^2/m^3
     Pyrite		0.0	0.0 	m^2/m^3
@@ -670,7 +672,7 @@ CONSTRAINT canister_conc
     Dolomite		0.0	0.0 	m^2/m^3
     Siderite		0.0	0.0 	m^2/m^3
     Clinochlore  0.0	0.0 	m^2/m^3
-    UO2:2H2O(am)		0.2 0.05 m^2/g
+    UO2:2H2O(am)		0.05 0.05 m^2/g
   /
 /
 
