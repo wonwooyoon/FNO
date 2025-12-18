@@ -389,7 +389,7 @@ OUTPUT
 END
 
 TIME
-  FINAL_TIME 100 yr
+  FINAL_TIME 1000 yr
 END
 
 REGION all
@@ -583,7 +583,7 @@ CONSTRAINT source_conc
     Dolomite		0.0	0.0 	m^2/m^3
     Siderite		0.0	0.0 	m^2/m^3
     Clinochlore  0.0	0.0 	m^2/m^3
-    UO2:2H2O(am)		0.2 0.05 m^2/g
+    UO2:2H2O(am)		0.2 1e2 m^2/m^3
   /
 /
 
