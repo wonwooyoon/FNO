@@ -234,7 +234,7 @@ def main():
 
     # LR processing
     lr_input_dir = os.path.join(base_dir, "output_lr")
-    lr_mesh_file = "/home/geofluids/research/FNO/src/mesh/output_test_lr/mesh.h5"
+    lr_mesh_file = "/home/geofluids/research/FNO/src/mesh/output_64/mesh.h5"
     lr_output_dir = lr_input_dir
 
     if os.path.exists(lr_mesh_file):
@@ -245,7 +245,7 @@ def main():
 
     # HR processing
     hr_input_dir = os.path.join(base_dir, "output_hr")
-    hr_mesh_file = "/home/geofluids/research/FNO/src/mesh/output_test_hr/mesh.h5"
+    hr_mesh_file = "/home/geofluids/research/FNO/src/mesh/output_128/mesh.h5"
     hr_output_dir = hr_input_dir
 
     if os.path.exists(hr_mesh_file):
