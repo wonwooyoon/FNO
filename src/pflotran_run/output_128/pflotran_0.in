@@ -611,11 +611,11 @@ CONSTRAINT source_conc
     O2(aq)	-2.574846		PE
   /
   MINERALS
-    Smectite_MX80 	0.0	8.5 	m^2/g
+    Smectite_MX80 	0.0	1e2 	m^2/m^3
     InertMineral		0.85	0.0 	m^2/m^3
-    Quartz		0.0	0.05 	m^2/g
-    Gypsum		0.004549818181818182	0.05 	m^2/g
-    Pyrite		0.00010472727272727273	0.05 	m^2/g
+    Quartz		0.0	1e2	m^2/m^3
+    Gypsum		0.0	1e2 m^2/m^3
+    Pyrite		0.0	1e2 m^2/m^3
     Calcite		0.0	1e2 	m^2/m^3
     Dolomite		0.0	1e2 	m^2/m^3
     Siderite		0.0	1e2 	m^2/m^3
