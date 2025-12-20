@@ -21,8 +21,8 @@ def generate_scp_field_v2(N, b, size_x, size_y, level_max, density_map_ratio, it
     - Consistent DC gain
     """
 
-    np.random.seed(42)
-    random.seed(42)
+    # np.random.seed(42)
+    # random.seed(42)
 
     # Base resolution (always 256×128)
     base_size_x = 256
@@ -224,9 +224,9 @@ def generate_scp_field_v2(N, b, size_x, size_y, level_max, density_map_ratio, it
     # 4. Generate permeability maps
     generate_perm_map(density_map, iteration)
 
-    # Print verification info
-    stride = int(base_size_x / target_size[0])
-    print(f"[{iteration}] Generated: {density_map.shape}, stride={stride}, ratio={density_map_ratio}")
+    # # Print verification info
+    # stride = int(base_size_x / target_size[0])
+    # print(f"[{iteration}] Generated: {density_map.shape}, stride={stride}, ratio={density_map_ratio}")
 
 
 if __name__ == '__main__':
@@ -250,13 +250,13 @@ if __name__ == '__main__':
 
     # HR generation (ratio=0.5, stride=2 → 128×64)
     
-    map_num = 1
+    map_num = 100
     N = 9
     b = 2.64
     size_x = 256
     size_y = 128
     level_max = 5
-    density_map_ratio = 0.25
+    density_map_ratio = 0.5
     
     with Pool(30) as p:
         p.starmap(generate_scp_field_v2,

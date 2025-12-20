@@ -325,7 +325,7 @@ CHEMISTRY
 END
 
 GRID
-  TYPE UNSTRUCTURED ../../mesh/output/mesh.h5
+  TYPE UNSTRUCTURED ../../mesh/output_64/mesh.h5
 END
 
 FLUID_PROPERTY
@@ -364,7 +364,7 @@ END
 
 MATERIAL_PROPERTY source
   ID 3
-  POROSITY 0.01
+  POROSITY 0.10
   TORTUOSITY 1.0
   LONGITUDINAL_DISPERSIVITY 0.1
   PERMEABILITY
@@ -375,7 +375,7 @@ END
 
 MATERIAL_PROPERTY bentonite
   ID 2
-  POROSITY 0.4181818181818182
+  POROSITY 0.05
   TORTUOSITY 1.0
   LONGITUDINAL_DISPERSIVITY 0.1
   PERMEABILITY
@@ -437,23 +437,23 @@ REGION all
 END
 
 REGION west
-  FILE ../../mesh/output/sideset1.ss
+  FILE ../../mesh/output_64/sideset1.ss
 END
 
 REGION east
-  FILE ../../mesh/output/sideset2.ss
+  FILE ../../mesh/output_64/sideset2.ss
 END
 
 REGION source 
-  FILE ../../mesh/output/material_3.txt
+  FILE ../../mesh/output_64/material_3.txt
 END
 
 REGION bentonite
-  FILE ../../mesh/output/material_2.txt
+  FILE ../../mesh/output_64/material_2.txt
 END
 
 REGION granite_fracture
-  FILE ../../mesh/output/material_1.txt
+  FILE ../../mesh/output_64/material_1.txt
 END
 
 FLOW_CONDITION initial_pressure
@@ -582,7 +582,7 @@ CONSTRAINT bentonite_conc
   MINERALS
     Smectite_MX80 	0.3296920513660692	8.5 	m^2/g
 
-    InertMineral		0.07972072727272728	0.0 	m^2/m^3
+    InertMineral		0.44972072727272728	0.0 	m^2/m^3
     Quartz		0.028392727272727274	0.05 	m^2/g
     Gypsum		0.004549818181818182	0.05 	m^2/g
     Pyrite		0.00010472727272727273	0.05 	m^2/g
@@ -612,16 +612,16 @@ CONSTRAINT source_conc
     O2(aq)	-2.574846		PE
   /
   MINERALS
-    Smectite_MX80 	0.0	0.0 	m^2/m^3
-    InertMineral 0.94 0.0 m^2/m^3
-    Quartz		0.0	0.0 	m^2/m^3	
-    Gypsum		0.0	0.0 	m^2/m^3
-    Pyrite		0.0	0.0 	m^2/m^3
-    Calcite		0.0	0.0 	m^2/m^3
-    Dolomite		0.0	0.0 	m^2/m^3
-    Siderite		0.0	0.0 	m^2/m^3
-    Clinochlore  0.0	0.0 	m^2/m^3
-    UO2:2H2O(am)		0.05 0.05 m^2/g
+    Smectite_MX80 	0.0	1e2 	m^2/m^3
+    InertMineral		0.85	0.0 	m^2/m^3
+    Quartz		0.0	1e2	m^2/m^3
+    Gypsum		0.0	1e2 m^2/m^3
+    Pyrite		0.0	1e2 m^2/m^3
+    Calcite		0.0	1e2 	m^2/m^3
+    Dolomite		0.0	1e2 	m^2/m^3
+    Siderite		0.0	1e2 	m^2/m^3
+    Clinochlore  0.0 1e2 m^2/m^3
+    UO2:2H2O(am)		0.05 1e2 	m^2/m^3
   /
 /
 
@@ -644,5 +644,5 @@ UO2++ 1.0001346460564883e-16 T
 /
   
 STRATA
-  FILE ../../mesh/output/mesh.h5
+  FILE ../../mesh/output_64/mesh.h5
 END

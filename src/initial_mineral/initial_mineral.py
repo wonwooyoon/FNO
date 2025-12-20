@@ -1,10 +1,10 @@
 import numpy as np
 import h5py
 
-def generate_gaussian_field_direct_cov(X, Y, nX, nY, x_corr, y_corr, mean, std):
-    
-    x = np.linspace(0, X, nX)
-    y = np.linspace(0, Y, nY)
+def generate_gaussian_field_direct_cov(nX, nY, x_corr, y_corr, mean, std):
+
+    x = np.arange(nX)
+    y = np.arange(nY)
     xx, yy = np.meshgrid(x, y)
     points = np.vstack([xx.ravel(), yy.ravel()]).T
 
@@ -17,11 +17,11 @@ def generate_gaussian_field_direct_cov(X, Y, nX, nY, x_corr, y_corr, mean, std):
     Z_map = Z.reshape(nY, nX)
     return xx, yy, Z_map
 
-def generate_gaussian_field_fft_anisotropic(X, Y, nX, nY, x_corr, y_corr, mean, std):
-    dx = X / (nX-1)
-    dy = Y / (nY-1)
-    x = np.linspace(0, X, nX)
-    y = np.linspace(0, Y, nY)
+def generate_gaussian_field_fft_anisotropic(nX, nY, x_corr, y_corr, mean, std):
+    dx = 1.0
+    dy = 1.0
+    x = np.arange(nX)
+    y = np.arange(nY)
     xx, yy = np.meshgrid(x, y, indexing='ij')
 
     kx = np.fft.fftfreq(nX, d=dx)
@@ -30,7 +30,7 @@ def generate_gaussian_field_fft_anisotropic(X, Y, nX, nY, x_corr, y_corr, mean, 
     k2 = (kxx * x_corr)**2 + (kyy * y_corr)**2
 
     spectrum = np.exp(-2 * np.pi ** 2 * k2)
-    
+
     noise = np.random.normal(size=(nX, nY)) + 1j * np.random.normal(size=(nX, nY))
     field_fft = noise * np.sqrt(spectrum)
 
@@ -58,7 +58,7 @@ def generate_calcite_map(Z, mu, sigma, output_dir, i):
         data_dataset[:, :] = Z
         calcite_group.attrs.create('Dimension', ['XY'], dtype=h5py.string_dtype(encoding='ascii', length=10))
         calcite_group.attrs.create('Space Interpolation Method', ['STEP'], dtype=h5py.string_dtype(encoding='ascii', length=10))
-        calcite_group.attrs['Discretization'] = [0.125, 0.125]
+        calcite_group.attrs['Discretization'] = [0.25, 0.25]
         calcite_group.attrs['Origin'] = [-8.0, -4.0]
         calcite_group.attrs['Cell Centered'] = [True]
 
@@ -79,7 +79,7 @@ def generate_clinochlore_map(Z, mu, sigma, output_dir, n):
         data_dataset[:, :] = Z
         clinochlore_group.attrs.create('Dimension', ['XY'], dtype=h5py.string_dtype(encoding='ascii', length=10))
         clinochlore_group.attrs.create('Space Interpolation Method', ['STEP'], dtype=h5py.string_dtype(encoding='ascii', length=10))
-        clinochlore_group.attrs['Discretization'] = [0.125, 0.125]
+        clinochlore_group.attrs['Discretization'] = [0.25, 0.25]
         clinochlore_group.attrs['Origin'] = [-8.0, -4.0]
         clinochlore_group.attrs['Cell Centered'] = [True]
 
@@ -100,22 +100,20 @@ def generate_pyrite_map(Z, mu, sigma, output_dir, n):
         data_dataset[:, :] = Z
         pyrite_group.attrs.create('Dimension', ['XY'], dtype=h5py.string_dtype(encoding='ascii', length=10))
         pyrite_group.attrs.create('Space Interpolation Method', ['STEP'], dtype=h5py.string_dtype(encoding='ascii', length=10))
-        pyrite_group.attrs['Discretization'] = [0.125, 0.125]
+        pyrite_group.attrs['Discretization'] = [0.25, 0.25]
         pyrite_group.attrs['Origin'] = [-8.0, -4.0]
         pyrite_group.attrs['Cell Centered'] = [True]
 
 if __name__ == "__main__":
-    
+
     n = 100
-    X = 128
-    Y = 64
     nX = 128
     nY = 64
     mean = 0.0
     std = 1.0
 
     for i in range(n):
-        
+
         x_corr1 = np.random.uniform(4.0, 20.0)
         y_corr1 = np.random.uniform(4.0, 20.0)
         x_corr2 = np.random.uniform(4.0, 20.0)
@@ -126,15 +124,15 @@ if __name__ == "__main__":
         print(f"Iteration {i}: x_corr1={x_corr1}, y_corr1={y_corr1}, x_corr2={x_corr2}, y_corr2={y_corr2}, x_corr3={x_corr3}, y_corr3={y_corr3}")
 
         xx, yy, Z1 = generate_gaussian_field_fft_anisotropic(
-            X, Y, nX, nY, x_corr1, y_corr1, mean, std
+            nX, nY, x_corr1, y_corr1, mean, std
         )
-        
+
         xx, yy, Z2 = generate_gaussian_field_fft_anisotropic(
-            X, Y, nX, nY, x_corr2, y_corr2, mean, std
+            nX, nY, x_corr2, y_corr2, mean, std
         )
 
         xx, yy, Z3 = generate_gaussian_field_fft_anisotropic(
-            X, Y, nX, nY, x_corr3, y_corr3, mean, std
+            nX, nY, x_corr3, y_corr3, mean, std
         )
 
         output_dir1 = f"/home/geofluids/research/FNO/src/initial_mineral/output_hr/calcite_{i}.h5"
