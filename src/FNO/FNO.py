@@ -51,7 +51,7 @@ from preprocessing_normalize import ChannelNormalizer
 # ==============================================================================
 CONFIG = {
     # Data paths - ensure these match your preprocessing output mode (raw/log/delta)
-    'MERGED_PT_PATH': './src/preprocessing/merged_normalized_hr.pt',  # Pre-normalized data
+    'MERGED_PT_PATH': './src/preprocessing/merged_normalized.pt',  # Pre-normalized data
     'CHANNEL_NORMALIZER_PATH': './src/preprocessing/normalizer_delta.pkl',  # Normalizer (must match output mode)
     'OUTPUT_DIR': './src/FNO/output_pure',
     'N_EPOCHS': 100,  
@@ -74,14 +74,14 @@ CONFIG = {
         'T_max': 40,
         'T_mult': 2,
         'eta_min': 1e-5,
-        'step_size': 10,
+        'step_size': 30,
         'gamma': 0.5,
-        'initial_lr': 1e-3,
+        'initial_lr': 1e-2,
     },
     'OUTPUT': {
         'ENABLED': True,  # Master switch for all output generation
         'OUTPUT_DIR': './src/FNO/output_pure',  # Base output directory
-        'SAMPLE_INDICES': [0],  # Samples to visualize
+        'SAMPLE_INDICES': [0, 5, 10, 15],  # Samples to visualize
         'TIME_INDICES': [4, 9, 14, 19],  # Time indices to visualize
         'DPI': 200,  # Resolution for all images
 
@@ -143,11 +143,11 @@ CONFIG = {
         'channel_mlp_skip_options': ['linear', 'soft-gating']  # categorical options
     },
     'SINGLE_PARAMS': {
-        "n_modes_1": 16,
-        "n_modes_2": 8,
+        "n_modes_1": 8,
+        "n_modes_2": 4,
         "n_modes_3": 4,
-        "hidden_channels": 48,
-        "n_layers": 6,
+        "hidden_channels": 24,
+        "n_layers": 3,
         "domain_padding": (0.1,0.1,0.1),
         "train_batch_size": 32,
         "l2_weight": 2.5e-8,
