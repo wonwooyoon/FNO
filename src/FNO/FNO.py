@@ -53,7 +53,7 @@ CONFIG = {
     # Data paths - ensure these match your preprocessing output mode (raw/log/delta)
     'MERGED_PT_PATH': './src/preprocessing/merged_normalized.pt',  # Pre-normalized data
     'CHANNEL_NORMALIZER_PATH': './src/preprocessing/normalizer_delta.pkl',  # Normalizer (must match output mode)
-    'OUTPUT_DIR': './src/FNO/output_pure',
+    'OUTPUT_DIR': './src/FNO/output_pure/',
     'N_EPOCHS': 100,  
     'EVAL_INTERVAL': 1,
     'VAL_SIZE': 0.1,  # Validation set size
@@ -124,7 +124,7 @@ CONFIG = {
         'l2_p': 2,  # Power for L2 loss
     },
     'TRAINING_CONFIG': {
-        'mode': 'eval',  # Options: 'single', 'optuna', 'eval'
+        'mode': 'single',  # Options: 'single', 'optuna', 'eval'
         'optuna_n_trials': 100,
         'optuna_seed': 42,
         'optuna_n_startup_trials': 10,

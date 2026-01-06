@@ -48,7 +48,8 @@ CONFIG = {
         'meta_csv': PROJECT_ROOT / 'src/initial_others/output/others.csv',
         'preprocessing_script': 'preprocessing_collect.py',
         'output_prefix': 'input_output_com',
-        'output_file': SCRIPT_DIR / 'merged_raw.pt'  # Always save to src/preprocessing/
+        'output_file': SCRIPT_DIR / 'merged_raw.pt',  # Always save to src/preprocessing/
+        'final_timestep': '2000.0000yr'  # Final timestep to verify simulation completion
     },
     'hr': {
         'mode': 'hr',
@@ -56,7 +57,8 @@ CONFIG = {
         'meta_csv': PROJECT_ROOT / 'src/initial_others/output_hr/others.csv',
         'preprocessing_script': 'preprocessing_collect.py',
         'output_prefix': 'input_output_hr_com',
-        'output_file': SCRIPT_DIR / 'merged_raw_hr.pt'  # Always save to src/preprocessing/
+        'output_file': SCRIPT_DIR / 'merged_raw_hr.pt',  # Always save to src/preprocessing/
+        'final_timestep': '2000.0000yr'  # Final timestep to verify simulation completion
     }
 }
 
@@ -174,15 +176,19 @@ def read_pflotran_h5(h5_path: Path, meta_value: float) -> Tuple:
         return x, y, (xc_unique.astype(np.float32), yc_unique.astype(np.float32)), t_labels
 
 
-def get_available_ids(base_dir: str) -> List[int]:
+def get_available_ids(base_dir: str, final_timestep: str = '2000.0000yr') -> List[int]:
     """
     Automatically detect available pflotran simulation IDs
 
+    Only includes simulations that have completed to the final timestep,
+    preventing data size mismatch errors from incomplete simulations.
+
     Args:
         base_dir: PFLOTRAN output directory
+        final_timestep: Final timestep filename suffix (e.g., '2000.0000yr')
 
     Returns:
-        Sorted list of available simulation IDs
+        Sorted list of available simulation IDs that completed successfully
     """
     base_path = Path(base_dir)
     if not base_path.exists():
@@ -190,16 +196,30 @@ def get_available_ids(base_dir: str) -> List[int]:
         return []
 
     available_ids = []
+    incomplete_ids = []
+
     for item in base_path.iterdir():
         if item.is_dir() and item.name.startswith("pflotran_"):
             match = re.match(r"pflotran_(\d+)", item.name)
             if match:
                 id_num = int(match.group(1))
                 h5_file = item / f"pflotran_{id_num}.h5"
-                if h5_file.exists():
+                final_h5_file = item / f"pflotran_{id_num}-{final_timestep}.h5"
+
+                # Check if simulation completed (has final timestep file)
+                if h5_file.exists() and final_h5_file.exists():
                     available_ids.append(id_num)
+                elif h5_file.exists():
+                    incomplete_ids.append(id_num)
 
     available_ids.sort()
+
+    # Report incomplete simulations
+    if incomplete_ids:
+        incomplete_ids.sort()
+        print(f"[WARNING] Found {len(incomplete_ids)} incomplete simulation(s) (missing final timestep): {incomplete_ids}")
+        print(f"          These simulations will be skipped to prevent data size mismatch errors.")
+
     return available_ids
 
 
@@ -230,7 +250,8 @@ def process_local_data(config: dict) -> Path:
 
     # Get available IDs
     print(f"\nScanning {pflotran_dir}...")
-    available_ids = get_available_ids(pflotran_dir)
+    final_timestep = config['final_timestep']
+    available_ids = get_available_ids(pflotran_dir, final_timestep)
 
     if not available_ids:
         
