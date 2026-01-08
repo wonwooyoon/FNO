@@ -67,17 +67,19 @@ CONFIG = {
 # PFLOTRAN HDF5 Reader
 # ============================================================================
 
-def read_pflotran_h5(h5_path: Path, meta_value: float) -> Tuple:
+def read_pflotran_h5(h5_path: Path, meta_value: float, sim_id: int) -> Tuple:
     """
-    Read PFLOTRAN HDF5 output and convert to RAW tensor
+    Read PFLOTRAN HDF5 output and mass balance data
 
     Args:
         h5_path: Path to HDF5 file
         meta_value: Meta parameter value (added as 11th channel)
+        sim_id: Simulation ID (e.g., 0 for pflotran_0)
 
     Returns:
         x: Input tensor (11, nx, ny, nt) - includes meta
         y: Output tensor (1, nx, ny, nt) - RAW uranium concentration
+        y_outlet: Outlet tensor (nt,) - OUTLET UO2++ [mol] (absolute)
         coords: (xc_unique, yc_unique) coordinate arrays
         t_labels: List of time labels
     """
@@ -173,7 +175,90 @@ def read_pflotran_h5(h5_path: Path, meta_value: float) -> Tuple:
         meta_channel = np.full((1, nx, ny, nt), meta_value, dtype=np.float32)
         x = np.concatenate([x, meta_channel], axis=0)  # (11, nx, ny, nt)
 
-        return x, y, (xc_unique.astype(np.float32), yc_unique.astype(np.float32)), t_labels
+    # Read outlet data from mas.dat
+    mas_dat_path = h5_path.parent / f"pflotran_{sim_id}-mas.dat"
+
+    # Extract time points: [0, 100, 200, ..., 2000] = 21 points
+    time_points = [float(X) for X in range(0, 2001, 100)]
+
+    if mas_dat_path.exists():
+        y_outlet = read_outlet_from_mas_dat(mas_dat_path, time_points)
+    else:
+        print(f"[WARNING] mas.dat not found: {mas_dat_path}, using zeros")
+        y_outlet = np.zeros(len(time_points), dtype=np.float32)
+
+    # Validate dimensions
+    if x.shape[3] != y.shape[3] or x.shape[3] != y_outlet.shape[0]:
+        raise RuntimeError(
+            f"Time dimension mismatch in {h5_path.name}: "
+            f"x={x.shape[3]}, y={y.shape[3]}, outlet={y_outlet.shape[0]}"
+        )
+
+    return x, y, y_outlet, (xc_unique.astype(np.float32), yc_unique.astype(np.float32)), t_labels
+
+
+def read_outlet_from_mas_dat(
+    mas_dat_path: Path,
+    time_points: List[float]
+) -> np.ndarray:
+    """
+    Read OUTLET UO2++ data from PFLOTRAN mass balance file
+
+    Args:
+        mas_dat_path: Path to pflotran_n-mas.dat file
+        time_points: Target time points in years [0, 100, 200, ..., 2000]
+                    (NOTE: includes t=0, total 21 points)
+
+    Returns:
+        outlet_data: (nt,) numpy array of OUTLET UO2++ values (absolute)
+    """
+    import csv
+
+    # Parse space-delimited file (header is comma-delimited, data is space-delimited)
+    with open(mas_dat_path, 'r') as f:
+        # Read header (comma-delimited)
+        header_line = f.readline().strip()
+        header = [col.strip('"') for col in header_line.split(',')]
+
+        # Find column index for "OUTLET UO2++ [mol]"
+        try:
+            outlet_idx = header.index('OUTLET UO2++ [mol]')
+        except ValueError:
+            raise ValueError(f"Column 'OUTLET UO2++ [mol]' not found in {mas_dat_path}")
+
+        # Read data rows (space-delimited)
+        time_outlet_map = {}
+        for line in f:
+            try:
+                row = line.strip().split()
+                time = float(row[0])
+                outlet = float(row[outlet_idx])
+                time_outlet_map[time] = outlet
+            except (ValueError, IndexError) as e:
+                # Skip malformed rows
+                continue
+
+    # Extract values at target time points
+    outlet_values = []
+    for t in time_points:
+        # Special case: t=0 has no outlet (simulation just started)
+        if t == 0.0:
+            outlet_values.append(0.0)
+            continue
+
+        # Find nearest time (tolerance ±0.5 yr)
+        if len(time_outlet_map) == 0:
+            raise ValueError(f"No data found in {mas_dat_path}")
+
+        nearest = min(time_outlet_map.keys(), key=lambda x: abs(x - t))
+        if abs(nearest - t) > 0.5:
+            raise ValueError(f"No matching time for {t}yr in {mas_dat_path} (nearest: {nearest}yr)")
+
+        value = time_outlet_map[nearest]
+        # Convert to absolute value (outlet is recorded as negative)
+        outlet_values.append(abs(value))
+
+    return np.array(outlet_values, dtype=np.float32)
 
 
 def get_available_ids(base_dir: str, final_timestep: str = '2000.0000yr') -> List[int]:
@@ -279,7 +364,7 @@ def process_local_data(config: dict) -> Path:
         print(f"Meta values: {len(meta_values)} simulations")
 
         # Process each simulation
-        xs, ys = [], []
+        xs, ys, ys_outlet = [], [], []
         coords_saved, times_saved = None, None
 
         for idx, sim_id in enumerate(available_ids):
@@ -287,9 +372,10 @@ def process_local_data(config: dict) -> Path:
             meta_val = meta_values[idx]
             print(f"  Processing {h5_path.name} (meta={meta_val:.6f})...")
 
-            x, y, coords, tlabels = read_pflotran_h5(h5_path, meta_value=meta_val)
+            x, y, y_outlet, coords, tlabels = read_pflotran_h5(h5_path, meta_value=meta_val, sim_id=sim_id)
             xs.append(x[np.newaxis, ...])
             ys.append(y[np.newaxis, ...])
+            ys_outlet.append(y_outlet[np.newaxis, ...])
 
             if coords_saved is None:
                 coords_saved = coords
@@ -301,9 +387,11 @@ def process_local_data(config: dict) -> Path:
         # Concatenate and save
         X = torch.from_numpy(np.concatenate(xs, axis=0))
         Y = torch.from_numpy(np.concatenate(ys, axis=0))
+        Y_outlet = torch.from_numpy(np.concatenate(ys_outlet, axis=0))
 
         payload = {
             "x": X, "y": Y,
+            "y_outlet": Y_outlet,
             "xc": torch.from_numpy(coords_saved[0]),
             "yc": torch.from_numpy(coords_saved[1]),
             "time_keys": times_saved,
@@ -315,7 +403,7 @@ def process_local_data(config: dict) -> Path:
         torch.save(payload, output_file)
 
         print(f"\n✓ Saved: {output_file}")
-        print(f"  Shape: x{tuple(X.shape)} y{tuple(Y.shape)}")
+        print(f"  Shape: x{tuple(X.shape)} y{tuple(Y.shape)} y_outlet{tuple(Y_outlet.shape)}")
 
         return output_file
 
@@ -521,14 +609,18 @@ def merge_data_shards(shard_files: List[Path], output_path: Path):
                 raise RuntimeError(f"time_keys mismatch at shard {i}")
             if sh['x'].shape[1:] != ref['x'].shape[1:] or sh['y'].shape[1:] != ref['y'].shape[1:]:
                 raise RuntimeError(f"Shape mismatch at shard {i}")
+            if sh['y_outlet'].shape[1:] != ref['y_outlet'].shape[1:]:
+                raise RuntimeError(f"Outlet shape mismatch at shard {i}")
 
     # Merge
     print("Merging...")
     X = torch.cat([sh['x'] for sh in shards], dim=0).contiguous()
     Y = torch.cat([sh['y'] for sh in shards], dim=0).contiguous()
+    Y_outlet = torch.cat([sh['y_outlet'] for sh in shards], dim=0).contiguous()
 
     payload = {
         'x': X, 'y': Y,
+        'y_outlet': Y_outlet,
         'xc': ref['xc'], 'yc': ref['yc'],
         'time_keys': ref['time_keys'],
     }
@@ -537,7 +629,7 @@ def merge_data_shards(shard_files: List[Path], output_path: Path):
     torch.save(payload, output_path)
 
     print(f"\n✓ Merge complete: {output_path}")
-    print(f"  Final shape: x{tuple(X.shape)} y{tuple(Y.shape)}")
+    print(f"  Final shape: x{tuple(X.shape)} y{tuple(Y.shape)} y_outlet{tuple(Y_outlet.shape)}")
     print(f"  Total samples: {X.shape[0]}")
     print(f"  Spatial: {X.shape[2]} × {X.shape[3]}")
     print(f"  Time steps: {X.shape[4]}")

@@ -27,7 +27,7 @@ from pathlib import Path
 import torch
 import pickle
 
-from normalizer_core import ChannelNormalizer
+from normalizer_core import ChannelNormalizer, OutletNormalizer
 from normalizer_utils import (
     compute_normalization_stats,
     save_stats_csv,
@@ -128,38 +128,56 @@ def normalize_lr(
     print("\nStep 1: Loading raw data...")
     data = torch.load(raw_data_path, map_location='cpu')
 
-    required_keys = ['x', 'y', 'xc', 'yc', 'time_keys']
+    required_keys = ['x', 'y', 'y_outlet', 'xc', 'yc', 'time_keys']
     missing = [k for k in required_keys if k not in data]
     if missing:
         raise KeyError(f"Missing required keys in data: {missing}")
 
-    x_raw = data['x']  # (N, 11, nx, ny, nt)
-    y_raw = data['y']  # (N, 1, nx, ny, nt)
+    x_raw = data['x']              # (N, 11, nx, ny, nt)
+    y_raw = data['y']              # (N, 1, nx, ny, nt)
+    y_outlet_raw = data['y_outlet']  # (N, nt)
 
-    print(f"  Raw input shape:  {tuple(x_raw.shape)}")
-    print(f"  Raw output shape: {tuple(y_raw.shape)}")
+    print(f"  Raw input shape:   {tuple(x_raw.shape)}")
+    print(f"  Raw output shape:  {tuple(y_raw.shape)}")
+    print(f"  Raw outlet shape:  {tuple(y_outlet_raw.shape)}")
     print(f"  Samples: {x_raw.shape[0]}")
     print(f"  Spatial: {x_raw.shape[2]} × {x_raw.shape[3]}")
     print(f"  Time steps: {x_raw.shape[4]}")
 
-    # 2. Create normalizer
-    print("\nStep 2: Creating ChannelNormalizer...")
+    # 2. Create normalizers
+    print("\nStep 2: Creating normalizers...")
+    print("  2.1 Creating spatial normalizer...")
     normalizer = ChannelNormalizer(
         input_config=CHANNEL_CONFIG,
         output_mode=output_mode,
         output_config=OUTPUT_TRANSFORM_CONFIG[output_mode]
     )
 
-    # 3. Fit normalizer
-    print("\nStep 3: Fitting normalizer on data...")
+    print("  2.2 Creating outlet normalizer...")
+    outlet_normalizer = OutletNormalizer()
+
+    # 3. Fit normalizers
+    print("\nStep 3: Fitting normalizers on data...")
+    print("  3.1 Fitting spatial normalizer...")
     normalizer.fit(x_raw, y_raw, verbose=True)
+
+    print("  3.2 Fitting outlet normalizer...")
+    outlet_normalizer.fit(y_outlet_raw, verbose=True)
 
     # 4. Transform data
     print("\nStep 4: Applying transformations and normalization...")
+    print("  4.1 Transforming spatial data...")
     x_norm, y_norm = normalizer.transform(x_raw, y_raw)
+
+    print("  4.2 Transforming outlet data...")
+    y_outlet_norm = outlet_normalizer.transform(y_outlet_raw)
+
+    # Remove t=0 from outlet to match input (input removes t=0 in normalizer)
+    y_outlet_norm = y_outlet_norm[:, 1:]  # (N, nt) → (N, nt-1)
 
     print(f"  Normalized input shape:  {tuple(x_norm.shape)}")
     print(f"  Normalized output shape: {tuple(y_norm.shape)}")
+    print(f"  Normalized outlet shape: {tuple(y_outlet_norm.shape)}")
 
     # 5. Save results
     print("\nStep 5: Saving results...")
@@ -172,6 +190,7 @@ def normalize_lr(
     torch.save({
         'x': x_norm,
         'y': y_norm,
+        'y_outlet': y_outlet_norm,
         'xc': data['xc'],
         'yc': data['yc'],
         'time_keys': data['time_keys']
@@ -180,19 +199,28 @@ def normalize_lr(
     print(f"  ✓ Saved normalized data: {output_path}")
     print(f"    File size: {output_path.stat().st_size / 1024 / 1024:.2f} MB")
 
-    # Save normalizer (always in src/preprocessing/)
+    # Save normalizers (always in src/preprocessing/)
     normalizer_path = PREPROC_DIR / f'normalizer_{output_mode}.pkl'
+    outlet_normalizer_path = PREPROC_DIR / f'normalizer_out_{output_mode}.pkl'
+
     normalizer_cpu = normalizer.cpu()  # Move to CPU before saving
+    outlet_normalizer_cpu = outlet_normalizer.cpu()
 
     with open(normalizer_path, 'wb') as f:
         pickle.dump(normalizer_cpu, f)
 
-    print(f"  ✓ Saved normalizer: {normalizer_path}")
+    with open(outlet_normalizer_path, 'wb') as f:
+        pickle.dump(outlet_normalizer_cpu, f)
+
+    print(f"  ✓ Saved spatial normalizer: {normalizer_path}")
     print(f"    File size: {normalizer_path.stat().st_size / 1024:.2f} KB")
+    print(f"  ✓ Saved outlet normalizer: {outlet_normalizer_path}")
+    print(f"    File size: {outlet_normalizer_path.stat().st_size / 1024:.2f} KB")
 
     result_paths = {
         'normalized_data': output_path,
-        'normalizer': normalizer_path
+        'normalizer': normalizer_path,
+        'outlet_normalizer': outlet_normalizer_path
     }
 
     # 6. Optional: Statistical analysis
@@ -281,6 +309,7 @@ def normalize_lr(
 def normalize_hr(
     raw_data_path: str,
     normalizer_path: str,
+    outlet_normalizer_path: str,
     output_path: str
 ):
     """
@@ -288,13 +317,14 @@ def normalize_hr(
 
     흐름:
     1. Raw HR 데이터 로드
-    2. LR normalizer 로드
+    2. LR normalizers 로드 (spatial + outlet)
     3. Transform만 수행 (fit 안 함)
     4. 결과 저장 (normalized data만)
 
     Args:
         raw_data_path: Path to raw HR data
-        normalizer_path: Path to LR normalizer pickle
+        normalizer_path: Path to LR spatial normalizer pickle
+        outlet_normalizer_path: Path to LR outlet normalizer pickle
         output_path: Path to save normalized HR data
 
     Returns:
@@ -306,13 +336,15 @@ def normalize_hr(
     # Process paths
     raw_data_path = PREPROC_DIR / raw_data_path
     normalizer_path = PREPROC_DIR / normalizer_path
+    outlet_normalizer_path = PREPROC_DIR / outlet_normalizer_path
 
     print(f"\n{'='*70}")
-    print(f"HR Mode: Applying Existing Normalizer")
+    print(f"HR Mode: Applying Existing Normalizers")
     print(f"{'='*70}")
-    print(f"HR data:    {raw_data_path}")
-    print(f"Normalizer: {normalizer_path}")
-    print(f"Output:     {output_path}")
+    print(f"HR data:           {raw_data_path}")
+    print(f"Spatial normalizer: {normalizer_path}")
+    print(f"Outlet normalizer:  {outlet_normalizer_path}")
+    print(f"Output:            {output_path}")
     print(f"{'='*70}\n")
 
     # Validate paths
@@ -320,35 +352,47 @@ def normalize_hr(
         raise FileNotFoundError(f"Raw HR data not found: {raw_data_path}")
 
     if not normalizer_path.exists():
-        raise FileNotFoundError(f"Normalizer not found: {normalizer_path}")
+        raise FileNotFoundError(f"Spatial normalizer not found: {normalizer_path}")
+
+    if not outlet_normalizer_path.exists():
+        raise FileNotFoundError(f"Outlet normalizer not found: {outlet_normalizer_path}")
 
     # 1. Load HR data
     print("Step 1: Loading HR data...")
     data = torch.load(raw_data_path, map_location='cpu')
 
-    required_keys = ['x', 'y', 'xc', 'yc', 'time_keys']
+    required_keys = ['x', 'y', 'y_outlet', 'xc', 'yc', 'time_keys']
     missing = [k for k in required_keys if k not in data]
     if missing:
         raise KeyError(f"Missing required keys in HR data: {missing}")
 
-    x_raw = data['x']  # (N, 11, nx_hr, ny_hr, nt)
-    y_raw = data['y']  # (N, 1, nx_hr, ny_hr, nt)
+    x_raw = data['x']              # (N, 11, nx_hr, ny_hr, nt)
+    y_raw = data['y']              # (N, 1, nx_hr, ny_hr, nt)
+    y_outlet_raw = data['y_outlet']  # (N, nt)
 
-    print(f"  HR input shape:  {tuple(x_raw.shape)}")
-    print(f"  HR output shape: {tuple(y_raw.shape)}")
+    print(f"  HR input shape:   {tuple(x_raw.shape)}")
+    print(f"  HR output shape:  {tuple(y_raw.shape)}")
+    print(f"  HR outlet shape:  {tuple(y_outlet_raw.shape)}")
     print(f"  Samples: {x_raw.shape[0]}")
     print(f"  Spatial resolution: {x_raw.shape[2]} × {x_raw.shape[3]}")
     print(f"  Time steps: {x_raw.shape[4]}")
 
-    # 2. Load LR normalizer
-    print("\nStep 2: Loading LR normalizer...")
+    # 2. Load LR normalizers
+    print("\nStep 2: Loading LR normalizers...")
     with open(normalizer_path, 'rb') as f:
         normalizer = pickle.load(f)
+
+    with open(outlet_normalizer_path, 'rb') as f:
+        outlet_normalizer = pickle.load(f)
 
     if not isinstance(normalizer, ChannelNormalizer):
         raise TypeError(f"Expected ChannelNormalizer, got {type(normalizer).__name__}")
 
-    print(f"  Normalizer type: ChannelNormalizer")
+    if not isinstance(outlet_normalizer, OutletNormalizer):
+        raise TypeError(f"Expected OutletNormalizer, got {type(outlet_normalizer).__name__}")
+
+    print(f"  Spatial normalizer type: ChannelNormalizer")
+    print(f"  Outlet normalizer type:  OutletNormalizer")
     print(f"  Output mode: {normalizer.output_mode}")
     print(f"  Input channels: {len(normalizer.input_config)}")
 
@@ -364,10 +408,16 @@ def normalize_hr(
     print("\nStep 3: Applying transformations and normalization...")
     print("  (Using SAME statistics as LR training data)")
 
+    print("  3.1 Transforming spatial data...")
     x_norm, y_norm = normalizer.transform(x_raw, y_raw)
+
+    print("  3.2 Transforming outlet data...")
+    y_outlet_norm = outlet_normalizer.transform(y_outlet_raw)
+    y_outlet_norm = y_outlet_norm[:, 1:]  # Remove t=0
 
     print(f"  Normalized HR input shape:  {tuple(x_norm.shape)}")
     print(f"  Normalized HR output shape: {tuple(y_norm.shape)}")
+    print(f"  Normalized HR outlet shape: {tuple(y_outlet_norm.shape)}")
 
     # Check normalization quality with detailed statistics
     print(f"\nStep 3.5: Normalization quality check...")
@@ -398,6 +448,7 @@ def normalize_hr(
     torch.save({
         'x': x_norm,
         'y': y_norm,
+        'y_outlet': y_outlet_norm,
         'xc': data['xc'],
         'yc': data['yc'],
         'time_keys': data['time_keys']
@@ -410,14 +461,16 @@ def normalize_hr(
     print("HR Normalization Complete!")
     print(f"{'='*70}")
     print(f"\n⚠️  IMPORTANT:")
-    print(f"  - Use {normalizer_path} for inverse transform")
-    print(f"  - DO NOT create a new normalizer for this HR data")
+    print(f"  - Use {normalizer_path} for spatial inverse transform")
+    print(f"  - Use {outlet_normalizer_path} for outlet inverse transform")
+    print(f"  - DO NOT create new normalizers for this HR data")
     print(f"  - The resolution difference is handled by FNO architecture")
     print(f"{'='*70}\n")
 
     return {
         'normalized_data': output_path,
-        'normalizer': normalizer_path
+        'normalizer': normalizer_path,
+        'outlet_normalizer': outlet_normalizer_path
     }
 
 
@@ -465,7 +518,9 @@ Examples:
 
     # HR-specific arguments
     parser.add_argument('--normalizer',
-                        help='Path to LR normalizer pickle (required for HR mode)')
+                        help='Path to LR spatial normalizer pickle (required for HR mode)')
+    parser.add_argument('--outlet-normalizer',
+                        help='Path to LR outlet normalizer pickle (required for HR mode)')
 
     args = parser.parse_args()
 
@@ -485,24 +540,27 @@ Examples:
 
             print("Generated files:")
             print(f"  - Normalized data: {result['normalized_data']}")
-            print(f"  - Normalizer: {result['normalizer']}")
+            print(f"  - Spatial normalizer: {result['normalizer']}")
+            print(f"  - Outlet normalizer: {result['outlet_normalizer']}")
             if 'stats_dir' in result:
                 print(f"  - Statistics: {result['stats_dir']}/")
 
         else:  # hr mode
             # HR mode: use existing normalizer
-            if not args.normalizer:
-                parser.error("HR mode requires --normalizer")
+            if not args.normalizer or not args.outlet_normalizer:
+                parser.error("HR mode requires --normalizer and --outlet-normalizer")
 
             result = normalize_hr(
                 raw_data_path=args.input,
                 normalizer_path=args.normalizer,
+                outlet_normalizer_path=args.outlet_normalizer,
                 output_path=args.output
             )
 
             print("Generated files:")
             print(f"  - Normalized HR data: {result['normalized_data']}")
-            print(f"  - Normalizer used: {result['normalizer']}")
+            print(f"  - Spatial normalizer used: {result['normalizer']}")
+            print(f"  - Outlet normalizer used: {result['outlet_normalizer']}")
 
         return 0
 

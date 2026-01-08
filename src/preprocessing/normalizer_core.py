@@ -401,3 +401,120 @@ class ChannelNormalizer:
     def cuda(self):
         """Move all normalizers to CUDA"""
         return self.to('cuda')
+
+
+# ============================================================================
+# Outlet Normalizer
+# ============================================================================
+
+class OutletNormalizer:
+    """
+    Outlet 데이터 전용 normalizer
+
+    Transformation pipeline:
+    1. Take absolute value (outlet is negative in PFLOTRAN)
+    2. Apply log10(x + eps)
+    3. Gaussian normalization (zero mean, unit variance)
+
+    Usage:
+        normalizer = OutletNormalizer()
+        normalizer.fit(y_outlet_raw)
+        y_outlet_norm = normalizer.transform(y_outlet_raw)
+        y_outlet_recovered = normalizer.inverse_transform(y_outlet_norm)
+    """
+
+    def __init__(self, device='cpu'):
+        """
+        Initialize OutletNormalizer
+
+        Args:
+            device: Device to run on ('cpu' or 'cuda')
+        """
+        self.mean = None
+        self.std = None
+        self.eps = 1e-20
+        self.device = device
+
+    def fit(self, y_outlet: torch.Tensor, verbose: bool = True) -> 'OutletNormalizer':
+        """
+        Fit normalizer on outlet data
+
+        Args:
+            y_outlet: (N, nt) raw outlet data (negative values from PFLOTRAN)
+            verbose: Print statistics
+
+        Returns:
+            self
+        """
+        if y_outlet.dim() != 2:
+            raise ValueError(f"Expected 2D tensor (N, nt), got shape {y_outlet.shape}")
+
+        # Transform: absolute → log10
+        y_abs = torch.abs(y_outlet)
+        y_log = torch.log10(y_abs + self.eps)
+
+        # Compute statistics
+        self.mean = y_log.mean().item()
+        self.std = y_log.std().item()
+
+        if verbose:
+            print(f"  Outlet normalizer fitted:")
+            print(f"    Original range: [{y_outlet.min():.2e}, {y_outlet.max():.2e}]")
+            print(f"    After abs+log:  [{y_log.min():.4f}, {y_log.max():.4f}]")
+            print(f"    Mean: {self.mean:.4f}, Std: {self.std:.4f}")
+
+        return self
+
+    def transform(self, y_outlet: torch.Tensor) -> torch.Tensor:
+        """
+        Apply transformation and normalization
+
+        Args:
+            y_outlet: (N, nt) raw outlet data
+
+        Returns:
+            y_outlet_norm: (N, nt) normalized outlet data
+        """
+        if self.mean is None or self.std is None:
+            raise RuntimeError("Normalizer not fitted. Call fit() first.")
+
+        y_abs = torch.abs(y_outlet)
+        y_log = torch.log10(y_abs + self.eps)
+        y_norm = (y_log - self.mean) / self.std
+
+        return y_norm
+
+    def inverse_transform(self, y_outlet_norm: torch.Tensor) -> torch.Tensor:
+        """
+        Reverse normalization and transformation
+
+        Args:
+            y_outlet_norm: (N, nt) normalized outlet data
+
+        Returns:
+            y_outlet: (N, nt) raw outlet data (negative values)
+        """
+        if self.mean is None or self.std is None:
+            raise RuntimeError("Normalizer not fitted. Call fit() first.")
+
+        y_log = y_outlet_norm * self.std + self.mean
+        y_abs = 10 ** y_log - self.eps
+        y_outlet = -y_abs  # Restore negative sign
+
+        return y_outlet
+
+    def cpu(self):
+        """Move to CPU (for consistency with ChannelNormalizer)"""
+        self.device = 'cpu'
+        return self
+
+    def to(self, device):
+        """Move to device (for consistency with ChannelNormalizer)"""
+        self.device = device
+        return self
+
+    def __repr__(self):
+        """String representation"""
+        if self.mean is None:
+            return "OutletNormalizer(not fitted)"
+        return f"OutletNormalizer(mean={self.mean:.4f}, std={self.std:.4f}, eps={self.eps})"
