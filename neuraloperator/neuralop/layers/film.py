@@ -44,7 +44,7 @@ class FiLMLayer(nn.Module):
     meta : (B, meta_dim)
     out  : (B, C, *spatial)
     """
-
+#
     def __init__(self,
                  meta_dim: int,
                  feature_channels: int,

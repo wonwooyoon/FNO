@@ -349,7 +349,7 @@ class FNOBlocks(nn.Module):
                 x = ctanh(x)
             else:
                 x = torch.tanh(x)
-
+#
         x_fno = self.convs[index](x, output_shape=output_shape)
 
         x = x_fno + x_skip_fno

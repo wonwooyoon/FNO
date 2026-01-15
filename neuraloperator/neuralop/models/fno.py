@@ -374,7 +374,7 @@ class FNO(BaseModel, name='FNO'):
         ----------
         x : tensor
             input tensor
-
+#
         output_shape : {tuple, tuple list, None}, default is None
             Gives the option of specifying the exact output shape for odd shaped inputs.
 

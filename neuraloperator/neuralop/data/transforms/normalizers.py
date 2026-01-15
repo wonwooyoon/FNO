@@ -312,6 +312,7 @@ class MinMaxNormalizer(Transform):
             else:
                 self.update_min_max(samples)
             count += batch_size
+            #
 
     def update_min_max(self, data_batch):
         """Compute min/max over the given batch (with mask support)"""
