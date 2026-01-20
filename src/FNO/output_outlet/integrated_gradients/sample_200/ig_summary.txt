@@ -1,0 +1,35 @@
+Integrated Gradients Analysis Summary
+==================================================
+
+Sample Index: 200
+Time Indices Analyzed: [4, 9, 14, 19]
+Integration Steps: 50
+
+Time 4:
+  Output (baseline): 2.444177e-06
+  Output (actual): 2.941044e-08
+  Output change: -2.414766e-06
+  Total |IG|: 5.910627e-06
+  IG sum: -2.403936e-06
+
+Time 9:
+  Output (baseline): 8.503829e-06
+  Output (actual): 2.720543e-07
+  Output change: -8.231775e-06
+  Total |IG|: 1.506707e-05
+  IG sum: -8.154149e-06
+
+Time 14:
+  Output (baseline): 1.236417e-05
+  Output (actual): 1.547683e-06
+  Output change: -1.081649e-05
+  Total |IG|: 2.099942e-05
+  IG sum: -1.074314e-05
+
+Time 19:
+  Output (baseline): 1.832987e-05
+  Output (actual): 4.083473e-06
+  Output change: -1.424639e-05
+  Total |IG|: 2.658429e-05
+  IG sum: -1.419672e-05
+

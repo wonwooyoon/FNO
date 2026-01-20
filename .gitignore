@@ -6,6 +6,7 @@
 !/nerualoperator/neuralop/**
 /src/FNO/output_pure/**
 /src/CNN/output_pure/**
+/src/FNO/output_outlet/**
 /src/pflotran_run/output/**
 /src/pflotran_code/output/*.h5
 /src/pflotran_code/output/*.xmf

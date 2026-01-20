@@ -1,0 +1,18 @@
+Outlet Prediction Statistics
+==================================================
+
+Error Metrics:
+  mean_absolute_error: 2.335403e-05
+  std_absolute_error: 5.577097e-05
+  mean_relative_error: 8.116282e+02
+  std_relative_error: 1.937254e+04
+  max_absolute_error: 5.683557e-04
+  max_relative_error: 8.187876e+05
+
+RMSE Metrics:
+  rmse: 6.046331e-05
+  nrmse: 1.052897e-01
+
+Data Range:
+  data_min: 4.770338e-19
+  data_max: 5.742568e-04

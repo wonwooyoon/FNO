@@ -666,13 +666,13 @@ def generate_parity_csv(
                       label=f't={t_idx}', edgecolors='none')
 
     # Plot 1:1 line
-    ax.plot([0, 1e-6], [0, 1e-6], 'y--', linewidth=2, label='1:1 line')
+    ax.plot([0, 4e-6], [0, 4e-6], 'y--', linewidth=2, label='1:1 line')
 
     # Set axis range and ticks
-    ax.set_xlim(0, 1e-6)
-    ax.set_ylim(0, 1e-6)
-    ax.set_xticks(np.arange(0, 1.2e-6, 0.2e-6))
-    ax.set_yticks(np.arange(0, 1.2e-6, 0.2e-6))
+    ax.set_xlim(0, 4e-6)
+    ax.set_ylim(0, 4e-6)
+    ax.set_xticks(np.arange(0, 4e-6, 1e-6))
+    ax.set_yticks(np.arange(0, 4e-6, 1e-6))
 
     # Set labels with larger font (no Arial specification)
     ax.set_xlabel('Ground Truth', fontweight='bold', fontsize=16)
@@ -1234,6 +1234,7 @@ def visualize_ig_attributions(
     ]
 
     # Compute global ranges for each channel (across all time indices)
+    # Using symmetric colorbar centered at 0 for better interpretation
     n_channels = ig_results[list(ig_results.keys())[0]].shape[0]
     ig_ranges = {}
 
@@ -1243,28 +1244,20 @@ def visualize_ig_attributions(
             all_ig_values.append(ig_spatial[ch].flatten())
         combined_ig = np.concatenate(all_ig_values)
 
-        ig_pos = combined_ig[combined_ig > 0]
-        ig_neg = combined_ig[combined_ig < 0]
+        # Use absolute maximum to create symmetric range around 0
+        # This ensures:
+        # - 0 is always at the center (white in RdBu_r colormap)
+        # - Red (positive) and Blue (negative) have equal scale
+        # - Small contributions are visible as light colors
+        abs_max = np.abs(combined_ig).max()
 
-        if len(ig_pos) > 0:
-            ig_vmax = np.percentile(ig_pos, 99)
-        else:
-            ig_vmax = combined_ig.max()
+        # Handle edge case where all values are zero
+        if abs_max < 1e-20:
+            abs_max = 1e-20
 
-        if len(ig_neg) > 0:
-            ig_vmin = np.percentile(ig_neg, 1)
-        else:
-            ig_vmin = combined_ig.min()
-
-        # Handle edge case
-        if abs(ig_vmax - ig_vmin) < 1e-20:
-            if abs(ig_vmax) < 1e-20:
-                ig_vmax = 1e-20
-                ig_vmin = -1e-20
-            else:
-                max_abs = max(abs(ig_vmax), abs(ig_vmin))
-                ig_vmax = max_abs
-                ig_vmin = -max_abs
+        # Symmetric range: [-abs_max, +abs_max]
+        ig_vmin = -abs_max
+        ig_vmax = abs_max
 
         ig_ranges[ch] = (ig_vmin, ig_vmax)
 

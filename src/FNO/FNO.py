@@ -25,11 +25,8 @@ from typing import Dict, List, Tuple, Any, Optional
 import numpy as np
 import pandas as pd
 import torch
-import torch.nn as nn
-import torch.nn
 import optuna
 import matplotlib.pyplot as plt
-import matplotlib.colors as colors
 from torch.utils.data import DataLoader, Dataset
 from sklearn.model_selection import train_test_split
 
@@ -39,6 +36,12 @@ from neuraloperator.neuralop.training import AdamW
 
 # Import unified output utility
 from util_output import generate_all_outputs
+
+# Import common utilities (refactored from duplicate code)
+from util_common import LpLoss, LRStepScheduler, CappedCosineAnnealingWarmRestarts
+
+# Import common training utilities (refactored from duplicate code)
+from util_training import train_model_generic, model_evaluation_generic
 
 # Import preprocessing normalizer (needed for loading channel_normalizer from pickle)
 preprocessing_path = Path(__file__).parent.parent / 'preprocessing'
@@ -54,7 +57,7 @@ CONFIG = {
     'MERGED_PT_PATH': './src/preprocessing/merged_normalized.pt',  # Pre-normalized data
     'CHANNEL_NORMALIZER_PATH': './src/preprocessing/normalizer_delta.pkl',  # Normalizer (must match output mode)
     'OUTPUT_DIR': './src/FNO/output_pure/',
-    'N_EPOCHS': 100,  
+    'N_EPOCHS': 3,  
     'EVAL_INTERVAL': 1,
     'VAL_SIZE': 0.1,  # Validation set size
     'TEST_SIZE': 0.1,  # Test set size
@@ -81,7 +84,7 @@ CONFIG = {
     'OUTPUT': {
         'ENABLED': True,  # Master switch for all output generation
         'OUTPUT_DIR': './src/FNO/output_pure',  # Base output directory
-        'SAMPLE_INDICES': [0, 5, 10, 15],  # Samples to visualize
+        'SAMPLE_INDICES': [0, 1, 5, 10, 15],  # Samples to visualize
         'TIME_INDICES': [4, 9, 14, 19],  # Time indices to visualize
         'DPI': 200,  # Resolution for all images
 
@@ -96,14 +99,14 @@ CONFIG = {
 
         # GIF generation configuration
         'GIF_OUTPUT': {
-            'ENABLED': False,  # Generate animated GIFs
+            'ENABLED': True,  # Generate animated GIFs
             'FPS': 2,  # Frames per second
             # Always uses all time steps (GIF_ALL_TIMES removed)
         },
 
         # Detailed evaluation configuration
         'DETAIL_EVAL': {
-            'ENABLED': False,  # Compute RMSE/SSIM per time
+            'ENABLED': True,  # Compute RMSE/SSIM per time
             'METRICS': ['RMSE', 'SSIM'],  # Metrics to compute
             'COMPUTE_NRMSE': True,  # Compute normalized RMSE (MinMax-based)
             'PARITY_PLOT': True,  # Generate parity plot CSV
@@ -144,14 +147,14 @@ CONFIG = {
     },
     'SINGLE_PARAMS': {
         "n_modes_1": 8,
-        "n_modes_2": 4,
+        "n_modes_2": 8,
         "n_modes_3": 4,
         "hidden_channels": 24,
         "n_layers": 3,
         "domain_padding": (0.1,0.1,0.1),
         "train_batch_size": 32,
-        "l2_weight": 2.5e-8,
-        "channel_mlp_expansion": 1.0,
+        "l2_weight": 0.0,
+        "channel_mlp_expansion": 0.5,
         "channel_mlp_skip": 'soft-gating'
     }
 }
@@ -316,101 +319,9 @@ def preprocessing(config: Dict, verbose: bool = True) -> Tuple:
     return (channel_normalizer, train_dataset, val_dataset, test_dataset, device)
 
 # ==============================================================================
-# Loss Function Options
+# Note: Loss functions and schedulers moved to util_common.py
 # ==============================================================================
-
-class LpLoss(nn.Module):
-    """Lp Loss function for neural operators.
-
-    Computes the relative Lp norm between prediction and ground truth:
-    ||pred - y||_p / ||y||_p
-
-    Args:
-        d: Spatial dimensions to compute norm over (e.g., 2 for 2D, 3 for 3D)
-        p: Power for Lp norm (e.g., 2 for L2 norm)
-        reduction: Reduction method ('mean' or 'sum')
-    """
-
-    def __init__(self, d=2, p=2, reduction='mean'):
-        super().__init__()
-        self.d = d
-        self.p = p
-        self.reduction = reduction
-
-    def forward(self, pred, y):
-        # Get spatial dimensions (skip batch and channel dimensions)
-        if len(pred.shape) == 5:  # (N, C, nx, ny, nt)
-            dims = [2, 3, 4]  # spatial and temporal dimensions
-        elif len(pred.shape) == 4:  # (N, C, nx, ny)
-            dims = [2, 3]  # spatial dimensions
-        else:
-            dims = list(range(2, len(pred.shape)))
-
-        # Compute relative Lp norm: ||pred - y||_p / ||y||_p
-        diff_norm = torch.norm(pred - y, p=self.p, dim=dims, keepdim=False)
-        y_norm = torch.norm(y, p=self.p, dim=dims, keepdim=False)
-        relative_error = diff_norm / (y_norm + 1e-12)  # Add small epsilon to avoid division by zero
-
-        if self.reduction == 'mean':
-            return relative_error.mean()
-        elif self.reduction == 'sum':
-            return relative_error.sum()
-        else:
-            return relative_error
-
-
-# ==============================================================================
-# Scheduler Options
-# ==============================================================================
-
-class LRStepScheduler(torch.optim.lr_scheduler.StepLR):
-    """Learning rate step scheduler wrapper."""
-    
-    def __init__(self, optimizer: torch.optim.Optimizer, step_size: int, 
-                 gamma: float = 0.1, last_epoch: int = -1):
-        super().__init__(optimizer, step_size, gamma, last_epoch)
-
-class CappedCosineAnnealingWarmRestarts(torch.optim.lr_scheduler._LRScheduler):
-    """Cosine annealing warm restarts scheduler with maximum period cap.
-    
-    Args:
-        optimizer: Wrapped optimizer
-        T_0: Number of iterations for the first restart
-        T_max: Maximum period length
-        T_mult: Factor to increase period after restart
-        eta_min: Minimum learning rate
-        last_epoch: Index of last epoch
-    """
-    
-    def __init__(self, optimizer: torch.optim.Optimizer, T_0: int, T_max: int, 
-                 T_mult: int = 1, eta_min: float = 0, last_epoch: int = -1):
-        self.T_0 = T_0
-        self.T_max = T_max
-        self.T_mult = T_mult
-        self.eta_min = eta_min
-        self.T_i = T_0
-        self.last_restart = 0
-        super().__init__(optimizer, last_epoch)
-    
-    def get_lr(self):
-        if self.last_epoch == 0:
-            return self.base_lrs
-        
-        epoch_in_cycle = (self.last_epoch - self.last_restart) % self.T_i
-        cycle_num = self.last_epoch // self.T_i + 1
-        progress = epoch_in_cycle / self.T_i
-        
-        lrs = []
-        for base_lr in self.base_lrs:
-            lr = self.eta_min + ((base_lr - self.eta_min) * (1 + math.cos(math.pi * progress)) / 2) / cycle_num
-            lrs.append(lr)
-        
-        # Check for restart
-        if (self.last_epoch - self.last_restart) == self.T_i:
-            self.last_restart = self.last_epoch
-            self.T_i = min(self.T_i * self.T_mult, self.T_max)
-        
-        return lrs
+# LpLoss, LRStepScheduler, CappedCosineAnnealingWarmRestarts are now imported from util_common
 
 
 # ==============================================================================
@@ -528,11 +439,15 @@ def create_model(config: Dict, train_dataset, val_dataset, test_dataset, device:
 # ==============================================================================
 # Training Functions
 # ==============================================================================
+# Note: Training logic moved to util_training.py
+# Wrapper functions are provided below for compatibility
 
 def train_model(config: Dict, device: str, model, train_loader, val_loader, test_loader,
                 optimizer, scheduler, loss_fn, verbose: bool = True):
     """
     Train the FNO model with early stopping and loss tracking.
+
+    This is a wrapper around train_model_generic() from util_training.py.
 
     Args:
         config: Configuration dictionary
@@ -540,7 +455,7 @@ def train_model(config: Dict, device: str, model, train_loader, val_loader, test
         model: TFNO model to train
         train_loader: Training data loader
         val_loader: Validation data loader
-        test_loader: Test data loader
+        test_loader: Test data loader (unused, kept for compatibility)
         optimizer: Optimizer
         scheduler: Learning rate scheduler
         loss_fn: Loss function
@@ -549,124 +464,26 @@ def train_model(config: Dict, device: str, model, train_loader, val_loader, test
     Returns:
         Trained model
     """
-
-    if verbose:
-        print(f"\nStarting model training for {config['N_EPOCHS']} epochs...")
-
-    # Training setup
-    best_val_loss = float('inf')
-    patience = 0
-    early_stopping_patience = config['SCHEDULER_CONFIG']['early_stopping']
-
-    # Track losses for each epoch
-    train_losses = []
-    val_losses = []
-
-    # Create output directory for saving best model
     output_dir = Path(config['OUTPUT_DIR']) / 'final'
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    for epoch in range(config['N_EPOCHS']):
-        # Training phase
-        model.train()
-        total_train_loss = 0
-        train_count = 0
-
-        for batch in train_loader:
-            x = batch['x'].to(device)  # Already normalized
-            y = batch['y'].to(device)  # Already normalized
-
-            optimizer.zero_grad()
-            pred = model(x)
-            loss = loss_fn(pred, y)
-            loss.backward()
-            optimizer.step()
-
-            total_train_loss += loss.item()
-            train_count += 1
-
-        train_loss = total_train_loss / train_count
-        train_losses.append(train_loss)
-
-        # Validation phase - compute validation loss every epoch
-        model.eval()
-        total_val_loss = 0
-        val_count = 0
-
-        with torch.no_grad():
-            for batch in val_loader:
-                x = batch['x'].to(device)  # Already normalized
-                y = batch['y'].to(device)  # Already normalized
-
-                pred = model(x)
-                loss = loss_fn(pred, y)
-                total_val_loss += loss.item()
-                val_count += 1
-
-        val_loss = total_val_loss / val_count
-        val_losses.append(val_loss)
-        
-        # Print losses for every epoch
-        if verbose:
-            print(f"Epoch {epoch:3d}: Train Loss={train_loss:.6f}, Val Loss={val_loss:.6f}")
-        
-        # Save best model based on validation loss
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
-            torch.save(model.state_dict(), output_dir / 'best_model_state_dict.pt')
-            patience = 0
-            if verbose:
-                print(f"    New best model saved! Val loss: {val_loss:.6f}")
-        else:
-            patience += 1
-        
-        # Early stopping
-        if patience >= early_stopping_patience:
-            if verbose:
-                print(f"Early stopping after {epoch} epochs")
-            break
-        
-        # Update learning rate
-        scheduler.step()
-    
-    # Save loss history
-    loss_history = {
-        'train_losses': train_losses,
-        'val_losses': val_losses,
-        'epochs': list(range(len(train_losses)))
-    }
-    torch.save(loss_history, output_dir / 'loss_history.pt')
-    
-    # Plot training curves
-    plt.figure(figsize=(10, 6))
-    epochs_range = range(len(train_losses))
-    plt.plot(epochs_range, train_losses, 'b-', label='Train Loss', linewidth=2)
-    plt.plot(epochs_range, val_losses, 'r-', label='Validation Loss', linewidth=2)
-    plt.xlabel('Epoch')
-    plt.ylabel('Loss')
-    plt.title('FNO Training and Validation Loss Over Time')
-    plt.legend()
-    plt.grid(True, alpha=0.3)
-    plt.yscale('log')
-    
-    loss_plot_path = output_dir / 'loss_curves.png'
-    plt.savefig(loss_plot_path, dpi=150, bbox_inches='tight')
-    plt.close()
-    
-    if verbose:
-        print(f"\nTraining completed!")
-        print(f"Best Validation Loss: {best_val_loss:.6f}")
-        print(f"Loss history saved to: {output_dir / 'loss_history.pt'}")
-        print(f"Loss curves saved to: {loss_plot_path}")
-    
-    # Load and return best model
-    model.load_state_dict(torch.load(output_dir / 'best_model_state_dict.pt', map_location=device, weights_only=False))
-    return model
+    return train_model_generic(
+        config=config,
+        device=device,
+        model=model,
+        train_loader=train_loader,
+        val_loader=val_loader,
+        optimizer=optimizer,
+        scheduler=scheduler,
+        loss_fn=loss_fn,
+        output_dir=output_dir,
+        verbose=verbose
+    )
 
 
 def model_evaluation(config: Dict, device: str, model, test_loader, loss_fn, verbose: bool = True):
     """
     Evaluate the trained model on test set and print detailed results.
+
+    This is a wrapper around model_evaluation_generic() from util_training.py.
 
     Args:
         config: Configuration dictionary
@@ -679,63 +496,19 @@ def model_evaluation(config: Dict, device: str, model, test_loader, loss_fn, ver
     Returns:
         Dictionary containing evaluation results
     """
-    
-    if verbose:
-        print(f"\nEvaluating model on test set...")
-    
-    # Test evaluation
-    model.eval()
-    total_test_loss = 0
-    total_test_mse_loss = 0
-    test_count = 0
-    
-    # Create MSE loss function for additional metric when using LpLoss
-    mse_loss_fn = torch.nn.MSELoss() if isinstance(loss_fn, LpLoss) else None
-    
-    with torch.no_grad():
-        for batch in test_loader:
-            x = batch['x'].to(device)  # Already normalized
-            y = batch['y'].to(device)  # Already normalized
-
-            pred = model(x)
-            loss = loss_fn(pred, y)
-            total_test_loss += loss.item()
-
-            # Calculate MSE loss additionally when using LpLoss
-            if mse_loss_fn is not None:
-                mse_loss = mse_loss_fn(pred, y)
-                total_test_mse_loss += mse_loss.item()
-
-            test_count += 1
-    
-    final_test_loss = total_test_loss / test_count
-    final_test_mse_loss = total_test_mse_loss / test_count if mse_loss_fn is not None else None
-    
-    # Create evaluation results
-    eval_results = {
-        'test_loss': final_test_loss,
-        'test_mse_loss': final_test_mse_loss if final_test_mse_loss is not None else None
-    }
-    
-    # Save evaluation results
     output_dir = Path(config['OUTPUT_DIR']) / 'final'
-    eval_results_path = output_dir / 'evaluation_results.pt'
-    torch.save(eval_results, eval_results_path)
-    
-    if verbose:
-        print(f"Model Evaluation Results:")
-        loss_type = config['LOSS_CONFIG']['loss_type']
-        if loss_type == 'l2' and final_test_mse_loss is not None:
-            print(f"  Test Loss (L{config['LOSS_CONFIG']['l2_p']}): {final_test_loss:.6f}")
-            print(f"  Test Loss (MSE): {final_test_mse_loss:.6f}")
-        else:
-            print(f"  Test Loss: {final_test_loss:.6f}")
-        print(f"Evaluation results saved to: {eval_results_path}")
+    compute_mse = isinstance(loss_fn, LpLoss)  # Compute MSE when using LpLoss
 
-    # Note: Detailed evaluation (RMSE/SSIM) is now handled by
-    # visualization() function via generate_all_outputs()
-
-    return eval_results
+    return model_evaluation_generic(
+        config=config,
+        device=device,
+        model=model,
+        test_loader=test_loader,
+        loss_fn=loss_fn,
+        output_dir=output_dir,
+        compute_mse=compute_mse,
+        verbose=verbose
+    )
 
 # ==============================================================================
 # Optuna Optimization Functions
