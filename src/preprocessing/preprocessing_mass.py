@@ -331,25 +331,81 @@ def process_local_data() -> Optional[Path]:
 # ============================================================================
 
 def sync_script_on_server(host: str, user: str, port: int, script_name: str) -> bool:
-    """Sync preprocessing script from git repository on remote server"""
-    sync_command = (
+    """
+    Sync preprocessing script from git repository on remote server
+
+    Only downloads if there are changes in the remote repository.
+
+    Args:
+        host: Remote server hostname
+        user: SSH username
+        port: SSH port
+        script_name: Name of the script to sync (e.g., 'preprocessing_mass.py')
+
+    Returns:
+        True if sync successful or no changes needed, False on error
+    """
+    # Step 1: Check if there are remote changes
+    check_command = (
         "cd research/FNO && "
-        "git fetch origin && "
-        f"git checkout origin/master -- src/preprocessing/{script_name}"
+        "git fetch origin --quiet && "
+        f"git diff --quiet HEAD origin/master -- src/preprocessing/{script_name}"
     )
 
-    ssh_cmd = [
+    ssh_check = [
         'ssh', '-p', str(port), '-o', 'StrictHostKeyChecking=no',
-        f'{user}@{host}', sync_command
+        f'{user}@{host}', check_command
     ]
 
-    print(f"  Syncing {script_name} on {host}...")
+    print(f"  Checking for updates to {script_name} on {host}...")
 
     try:
-        result = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=60)
-        return result.returncode == 0 or True  # Allow warnings
+        check_result = subprocess.run(ssh_check, capture_output=True, text=True, timeout=30)
+
+        # git diff --quiet returns:
+        # - 0 if no differences (files are identical)
+        # - 1 if there are differences
+        # - >1 on error
+
+        if check_result.returncode == 0:
+            print(f"    ✓ No changes detected, using existing version")
+            return True
+        elif check_result.returncode == 1:
+            print(f"    → Changes detected, downloading update...")
+
+            # Step 2: Download the updated file
+            sync_command = (
+                "cd research/FNO && "
+                f"git checkout origin/master -- src/preprocessing/{script_name}"
+            )
+
+            ssh_sync = [
+                'ssh', '-p', str(port), '-o', 'StrictHostKeyChecking=no',
+                f'{user}@{host}', sync_command
+            ]
+
+            sync_result = subprocess.run(ssh_sync, capture_output=True, text=True, timeout=30)
+
+            if sync_result.returncode == 0:
+                print(f"    ✓ Successfully updated {script_name}")
+                return True
+            else:
+                print(f"    ✗ Failed to download update (code: {sync_result.returncode})")
+                if sync_result.stderr.strip():
+                    print(f"      Error: {sync_result.stderr.strip()}")
+                return False
+        else:
+            print(f"    ✗ Error checking for changes (code: {check_result.returncode})")
+            if check_result.stderr.strip():
+                print(f"      Error: {check_result.stderr.strip()}")
+            # Continue anyway with existing version
+            return True
+
+    except subprocess.TimeoutExpired:
+        print(f"    ✗ Timeout while checking for updates")
+        return False
     except Exception as e:
-        print(f"  Warning: Sync failed - {e}")
+        print(f"    ✗ Error: {e}")
         return False
 
 
