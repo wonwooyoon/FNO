@@ -48,7 +48,10 @@ CONFIG = {
         'meta_csv': PROJECT_ROOT / 'src/initial_others/output/others.csv',
         'preprocessing_script': 'preprocessing_collect.py',
         'output_prefix': 'input_output_com',
-        'output_file': SCRIPT_DIR / 'merged_raw.pt',  # Always save to src/preprocessing/
+        'output_file_u': SCRIPT_DIR / 'merged_raw_U.pt',  # UO2++ concentration
+        'output_file_ca': SCRIPT_DIR / 'merged_raw_Ca.pt',  # Ca++ concentration
+        'output_file_c': SCRIPT_DIR / 'merged_raw_C.pt',  # CO3-- concentration
+        'output_file_out': SCRIPT_DIR / 'merged_raw_out.pt',  # Outlet data
         'final_timestep': '2000.0000yr'  # Final timestep to verify simulation completion
     },
     'hr': {
@@ -57,7 +60,10 @@ CONFIG = {
         'meta_csv': PROJECT_ROOT / 'src/initial_others/output_hr/others.csv',
         'preprocessing_script': 'preprocessing_collect.py',
         'output_prefix': 'input_output_hr_com',
-        'output_file': SCRIPT_DIR / 'merged_raw_hr.pt',  # Always save to src/preprocessing/
+        'output_file_u': SCRIPT_DIR / 'merged_raw_U_hr.pt',  # UO2++ concentration
+        'output_file_ca': SCRIPT_DIR / 'merged_raw_Ca_hr.pt',  # Ca++ concentration
+        'output_file_c': SCRIPT_DIR / 'merged_raw_C_hr.pt',  # CO3-- concentration
+        'output_file_out': SCRIPT_DIR / 'merged_raw_out_hr.pt',  # Outlet data
         'final_timestep': '2000.0000yr'  # Final timestep to verify simulation completion
     }
 }
@@ -78,7 +84,9 @@ def read_pflotran_h5(h5_path: Path, meta_value: float, sim_id: int) -> Tuple:
 
     Returns:
         x: Input tensor (11, nx, ny, nt) - includes meta
-        y: Output tensor (1, nx, ny, nt) - RAW uranium concentration
+        y_u: Output tensor (1, nx, ny, nt) - RAW UO2++ concentration
+        y_ca: Output tensor (1, nx, ny, nt) - RAW Ca++ concentration
+        y_c: Output tensor (1, nx, ny, nt) - RAW CO3-- concentration
         y_outlet: Outlet tensor (nt,) - OUTLET UO2++ [mol] (absolute)
         coords: (xc_unique, yc_unique) coordinate arrays
         t_labels: List of time labels
@@ -153,22 +161,33 @@ def read_pflotran_h5(h5_path: Path, meta_value: float, sim_id: int) -> Tuple:
 
         times_sorted = sorted(available.keys())
         t_labels = []
-        in_slices, out_slices = [], []
+        in_slices, out_u_slices, out_ca_slices, out_c_slices = [], [], [], []
 
         # Collect all timesteps
         for tnum in times_sorted:
             key = available[tnum]
 
-            # Load RAW UO2 concentration
+            # Load RAW concentrations for 3 species
             total_uo2_raw = np.array(f[key]["Total UO2++ [M]"][:])[zc_mask]
+            total_ca_raw = np.array(f[key]["Total Ca++ [M]"][:])[zc_mask]
+            total_co3_raw = np.array(f[key]["Total CO3-- [M]"][:])[zc_mask]
 
-            out_grid = to_grid(total_uo2_raw)
-            out_slices.append(out_grid[np.newaxis, :, :, np.newaxis])  # (1,nx,ny,1)
+            # Convert to grids
+            out_u_grid = to_grid(total_uo2_raw)
+            out_ca_grid = to_grid(total_ca_raw)
+            out_c_grid = to_grid(total_co3_raw)
+
+            # Append to separate lists
+            out_u_slices.append(out_u_grid[np.newaxis, :, :, np.newaxis])  # (1,nx,ny,1)
+            out_ca_slices.append(out_ca_grid[np.newaxis, :, :, np.newaxis])
+            out_c_slices.append(out_c_grid[np.newaxis, :, :, np.newaxis])
             in_slices.append(input_base)  # (10,nx,ny,1)
             t_labels.append(key.strip())
 
         x = np.concatenate(in_slices, axis=3).astype(np.float32)  # (10,nx,ny,nt)
-        y = np.concatenate(out_slices, axis=3).astype(np.float32)  # (1,nx,ny,nt)
+        y_u = np.concatenate(out_u_slices, axis=3).astype(np.float32)  # (1,nx,ny,nt)
+        y_ca = np.concatenate(out_ca_slices, axis=3).astype(np.float32)  # (1,nx,ny,nt)
+        y_c = np.concatenate(out_c_slices, axis=3).astype(np.float32)  # (1,nx,ny,nt)
 
         # Add meta as 11th channel
         nt = x.shape[3]
@@ -188,13 +207,14 @@ def read_pflotran_h5(h5_path: Path, meta_value: float, sim_id: int) -> Tuple:
         y_outlet = np.zeros(len(time_points), dtype=np.float32)
 
     # Validate dimensions
-    if x.shape[3] != y.shape[3] or x.shape[3] != y_outlet.shape[0]:
+    if not (x.shape[3] == y_u.shape[3] == y_ca.shape[3] == y_c.shape[3] == y_outlet.shape[0]):
         raise RuntimeError(
             f"Time dimension mismatch in {h5_path.name}: "
-            f"x={x.shape[3]}, y={y.shape[3]}, outlet={y_outlet.shape[0]}"
+            f"x={x.shape[3]}, y_u={y_u.shape[3]}, y_ca={y_ca.shape[3]}, "
+            f"y_c={y_c.shape[3]}, outlet={y_outlet.shape[0]}"
         )
 
-    return x, y, y_outlet, (xc_unique.astype(np.float32), yc_unique.astype(np.float32)), t_labels
+    return x, y_u, y_ca, y_c, y_outlet, (xc_unique.astype(np.float32), yc_unique.astype(np.float32)), t_labels
 
 
 def read_outlet_from_mas_dat(
@@ -312,15 +332,16 @@ def get_available_ids(base_dir: str, final_timestep: str = '2000.0000yr') -> Lis
 # Local Data Processing
 # ============================================================================
 
-def process_local_data(config: dict) -> Path:
+def process_local_data(config: dict, data_type: str) -> Path:
     """
-    Process local PFLOTRAN data
+    Process local PFLOTRAN data for specific data type
 
     Args:
         config: Configuration dictionary for current mode
+        data_type: Data type to collect ('u', 'ca', 'c', 'out')
 
     Returns:
-        Path to generated .pt file
+        Path to generated .pt file for specified data type
     """
     print(f"\n{'='*70}")
     print("Processing Local Data")
@@ -364,7 +385,7 @@ def process_local_data(config: dict) -> Path:
         print(f"Meta values: {len(meta_values)} simulations")
 
         # Process each simulation
-        xs, ys, ys_outlet = [], [], []
+        xs, ys_u, ys_ca, ys_c, ys_outlet = [], [], [], [], []
         coords_saved, times_saved = None, None
 
         for idx, sim_id in enumerate(available_ids):
@@ -372,9 +393,11 @@ def process_local_data(config: dict) -> Path:
             meta_val = meta_values[idx]
             print(f"  Processing {h5_path.name} (meta={meta_val:.6f})...")
 
-            x, y, y_outlet, coords, tlabels = read_pflotran_h5(h5_path, meta_value=meta_val, sim_id=sim_id)
+            x, y_u, y_ca, y_c, y_outlet, coords, tlabels = read_pflotran_h5(h5_path, meta_value=meta_val, sim_id=sim_id)
             xs.append(x[np.newaxis, ...])
-            ys.append(y[np.newaxis, ...])
+            ys_u.append(y_u[np.newaxis, ...])
+            ys_ca.append(y_ca[np.newaxis, ...])
+            ys_c.append(y_c[np.newaxis, ...])
             ys_outlet.append(y_outlet[np.newaxis, ...])
 
             if coords_saved is None:
@@ -384,26 +407,41 @@ def process_local_data(config: dict) -> Path:
         if len(xs) == 0:
             raise RuntimeError("No simulations were processed successfully")
 
-        # Concatenate and save
+        # Concatenate
         X = torch.from_numpy(np.concatenate(xs, axis=0))
-        Y = torch.from_numpy(np.concatenate(ys, axis=0))
+        Y_U = torch.from_numpy(np.concatenate(ys_u, axis=0))
+        Y_Ca = torch.from_numpy(np.concatenate(ys_ca, axis=0))
+        Y_C = torch.from_numpy(np.concatenate(ys_c, axis=0))
         Y_outlet = torch.from_numpy(np.concatenate(ys_outlet, axis=0))
 
+        # Select data based on data_type
+        data_map = {
+            'u': ('y_u', Y_U),
+            'ca': ('y_ca', Y_Ca),
+            'c': ('y_c', Y_C),
+            'out': ('y_out', Y_outlet)
+        }
+
+        if data_type not in data_map:
+            raise ValueError(f"Invalid data_type: {data_type}. Must be one of {list(data_map.keys())}")
+
+        y_key, Y_data = data_map[data_type]
+
         payload = {
-            "x": X, "y": Y,
-            "y_outlet": Y_outlet,
+            "x": X,
+            y_key: Y_data,
             "xc": torch.from_numpy(coords_saved[0]),
             "yc": torch.from_numpy(coords_saved[1]),
             "time_keys": times_saved,
         }
 
         # Save to script directory (src/preprocessing/)
-        output_file = SCRIPT_DIR / f"{output_prefix}localhost.pt"
+        output_file = SCRIPT_DIR / f"{output_prefix}localhost_{data_type}.pt"
         output_file.parent.mkdir(parents=True, exist_ok=True)
         torch.save(payload, output_file)
 
         print(f"\n✓ Saved: {output_file}")
-        print(f"  Shape: x{tuple(X.shape)} y{tuple(Y.shape)} y_outlet{tuple(Y_outlet.shape)}")
+        print(f"  Shape: x{tuple(X.shape)} {y_key}{tuple(Y_data.shape)}")
 
         return output_file
 
@@ -440,13 +478,16 @@ def execute_remote_preprocessing(
     user: str,
     port: int,
     script_name: str,
-    mode: str
+    mode: str,
+    data_type: str
 ) -> bool:
     """Execute preprocessing script on remote server via SSH"""
+    # Note: Remote preprocessing needs to be executed once per data type
+    # Since the script now processes all data types, we just pass mode
     remote_command = (
         "cd research/FNO && "
         "source .venv_FNO/bin/activate && "
-        f"python3 src/preprocessing/{script_name} --mode {mode} --local-only"
+        f"python3 src/preprocessing/{script_name} --mode {mode} --local-only --data-type {data_type}"
     )
 
     ssh_cmd = [
@@ -481,12 +522,13 @@ def download_result_file(
     user: str,
     port: int,
     output_suffix: str,
-    output_prefix: str
+    output_prefix: str,
+    data_type: str
 ) -> Optional[Path]:
     """Download generated .pt file from remote server using SCP"""
-    remote_file = f"research/FNO/src/preprocessing/{output_prefix}localhost.pt"
+    remote_file = f"research/FNO/src/preprocessing/{output_prefix}localhost_{data_type}.pt"
     # Always save to script directory (src/preprocessing/)
-    local_file = SCRIPT_DIR / f"{output_prefix}{output_suffix}.pt"
+    local_file = SCRIPT_DIR / f"{output_prefix}{output_suffix}_{data_type}.pt"
 
     local_file.parent.mkdir(parents=True, exist_ok=True)
 
@@ -498,7 +540,7 @@ def download_result_file(
     print(f"  Downloading result from {host}...")
 
     try:
-        result = subprocess.run(scp_cmd, capture_output=True, text=True, timeout=600)
+        result = subprocess.run(scp_cmd, capture_output=True, text=True, timeout=6000)
 
         if result.returncode == 0:
             print(f"  ✓ Downloaded: {local_file.name}")
@@ -515,19 +557,20 @@ def download_result_file(
         return None
 
 
-def process_remote_data(server_config: dict, mode_config: dict) -> List[Path]:
+def process_remote_data(server_config: dict, mode_config: dict, data_type: str) -> List[Path]:
     """
-    Process data on remote servers via SSH
+    Process data on remote servers via SSH for specific data type
 
     Args:
         server_config: Server configuration from YAML
         mode_config: Configuration for current mode (lr/hr)
+        data_type: Data type to collect ('u', 'ca', 'c', 'out')
 
     Returns:
         List of paths to downloaded .pt files
     """
     print(f"\n{'='*70}")
-    print("Processing Remote Servers")
+    print(f"Processing Remote Servers - Data Type: {data_type.upper()}")
     print(f"{'='*70}\n")
 
     if 'servers' not in server_config or len(server_config['servers']) == 0:
@@ -551,14 +594,14 @@ def process_remote_data(server_config: dict, mode_config: dict) -> List[Path]:
         sync_script_on_server(host, user, port, script_name)
 
         # Step 2: Execute preprocessing
-        success = execute_remote_preprocessing(host, user, port, script_name, mode_config['mode'])
+        success = execute_remote_preprocessing(host, user, port, script_name, mode_config['mode'], data_type)
 
         if not success:
             print(f"✗ Failed to process {host}")
             sys.exit(1)
 
         # Step 3: Download result
-        local_file = download_result_file(host, user, port, output_suffix, output_prefix)
+        local_file = download_result_file(host, user, port, output_suffix, output_prefix, data_type)
 
         if local_file is None:
             print(f"✗ Failed to download from {host}")
@@ -573,13 +616,14 @@ def process_remote_data(server_config: dict, mode_config: dict) -> List[Path]:
 # Data Merging
 # ============================================================================
 
-def merge_data_shards(shard_files: List[Path], output_path: Path):
+def merge_data_shards(shard_files: List[Path], output_path: Path, data_key: str):
     """
-    Merge multiple .pt files into a single file
+    Merge multiple .pt files into a single file for specific data type
 
     Args:
         shard_files: List of .pt file paths
         output_path: Output merged file path
+        data_key: Data key to merge ('y_u', 'y_ca', 'y_c', 'y_out')
     """
     print(f"\n{'='*70}")
     print("Merging Data Shards")
@@ -607,20 +651,21 @@ def merge_data_shards(shard_files: List[Path], output_path: Path):
                 raise RuntimeError(f"yc mismatch at shard {i}")
             if ref['time_keys'] != sh['time_keys']:
                 raise RuntimeError(f"time_keys mismatch at shard {i}")
-            if sh['x'].shape[1:] != ref['x'].shape[1:] or sh['y'].shape[1:] != ref['y'].shape[1:]:
-                raise RuntimeError(f"Shape mismatch at shard {i}")
-            if sh['y_outlet'].shape[1:] != ref['y_outlet'].shape[1:]:
-                raise RuntimeError(f"Outlet shape mismatch at shard {i}")
+            if sh['x'].shape[1:] != ref['x'].shape[1:]:
+                raise RuntimeError(f"Input shape mismatch at shard {i}")
+            if data_key not in sh:
+                raise RuntimeError(f"Missing data key '{data_key}' in shard {i}")
+            if sh[data_key].shape[1:] != ref[data_key].shape[1:]:
+                raise RuntimeError(f"Output shape mismatch at shard {i} for key '{data_key}'")
 
     # Merge
-    print("Merging...")
+    print(f"Merging data key: {data_key}...")
     X = torch.cat([sh['x'] for sh in shards], dim=0).contiguous()
-    Y = torch.cat([sh['y'] for sh in shards], dim=0).contiguous()
-    Y_outlet = torch.cat([sh['y_outlet'] for sh in shards], dim=0).contiguous()
+    Y = torch.cat([sh[data_key] for sh in shards], dim=0).contiguous()
 
     payload = {
-        'x': X, 'y': Y,
-        'y_outlet': Y_outlet,
+        'x': X,
+        data_key: Y,
         'xc': ref['xc'], 'yc': ref['yc'],
         'time_keys': ref['time_keys'],
     }
@@ -629,7 +674,7 @@ def merge_data_shards(shard_files: List[Path], output_path: Path):
     torch.save(payload, output_path)
 
     print(f"\n✓ Merge complete: {output_path}")
-    print(f"  Final shape: x{tuple(X.shape)} y{tuple(Y.shape)} y_outlet{tuple(Y_outlet.shape)}")
+    print(f"  Final shape: x{tuple(X.shape)} {data_key}{tuple(Y.shape)}")
     print(f"  Total samples: {X.shape[0]}")
     print(f"  Spatial: {X.shape[2]} × {X.shape[3]}")
     print(f"  Time steps: {X.shape[4]}")
@@ -663,12 +708,14 @@ Examples:
                         help='Path to server configuration YAML file')
     parser.add_argument('--local-only', action='store_true',
                         help='Process local data only, skip remote servers')
+    parser.add_argument('--data-type', type=str, choices=['u', 'ca', 'c', 'out'],
+                        help='Process single data type only (used for remote processing)')
 
     args = parser.parse_args()
 
     # Validate arguments
-    if not args.local_only and not args.config:
-        parser.error("--config is required unless --local-only is specified")
+    if not args.local_only and not args.config and not args.data_type:
+        parser.error("--config is required unless --local-only or --data-type is specified")
 
     # Get mode configuration
     mode_config = CONFIG[args.mode]
@@ -678,37 +725,67 @@ Examples:
     print(f"{'='*70}")
     print(f"Mode: {args.mode}")
     print(f"Local only: {args.local_only}")
-    print(f"Output: {mode_config['output_file']}")
     print(f"{'='*70}")
 
-    # Collect shard files
-    shard_files = []
+    # Define data types to process
+    all_data_types = [
+        ('u', 'y_u', mode_config['output_file_u']),
+        ('ca', 'y_ca', mode_config['output_file_ca']),
+        ('c', 'y_c', mode_config['output_file_c']),
+        ('out', 'y_out', mode_config['output_file_out'])
+    ]
 
-    # 1. Process local data
-    local_file = process_local_data(mode_config)
-    
-    if local_file is not None:
-        shard_files.append(local_file)
+    # If --data-type is specified, process only that type (for remote execution)
+    if args.data_type:
+        data_types = [dt for dt in all_data_types if dt[0] == args.data_type]
+        if not data_types:
+            print(f"Error: Invalid data type {args.data_type}")
+            return 1
+    else:
+        data_types = all_data_types
 
-    # 2. Process remote data (if not local-only)
-    if not args.local_only:
-        # Load server config
-        with open(args.config, 'r') as f:
-            server_config = yaml.safe_load(f)
+    # Process each data type separately
+    for data_type, data_key, output_file in data_types:
+        print(f"\n{'='*70}")
+        print(f"Processing Data Type: {data_type.upper()} ({data_key})")
+        print(f"{'='*70}")
 
-        remote_files = process_remote_data(server_config, mode_config)
-        shard_files.extend(remote_files)
+        # Collect shard files for this data type
+        shard_files = []
 
-    # 3. Merge all shards
-    output_path = Path(mode_config['output_file'])
-    merge_data_shards(shard_files, output_path)
+        # 1. Process local data
+        local_file = process_local_data(mode_config, data_type)
+
+        if local_file is not None:
+            shard_files.append(local_file)
+
+        # 2. Process remote data (if not local-only)
+        if not args.local_only:
+            # Load server config
+            with open(args.config, 'r') as f:
+                server_config = yaml.safe_load(f)
+
+            remote_files = process_remote_data(server_config, mode_config, data_type)
+            shard_files.extend(remote_files)
+
+        # 3. Merge all shards for this data type
+        output_path = Path(output_file)
+        merge_data_shards(shard_files, output_path, data_key)
+
+        print(f"\n✓ Completed {data_type.upper()}: {output_path}")
 
     print(f"\n{'='*70}")
     print("Data Collection Complete!")
     print(f"{'='*70}")
-    print(f"\nOutput file: {output_path}")
-    print("\nNext step: Run normalization")
-    print(f"  python preprocessing_normalize.py --mode {args.mode} --input {output_path} ...")
+    if args.data_type:
+        print(f"\nGenerated file for {args.data_type.upper()}:")
+        for data_type, data_key, output_file in data_types:
+            print(f"  - {output_file}")
+    else:
+        print("\nGenerated files:")
+        for data_type, data_key, output_file in data_types:
+            print(f"  - {data_type.upper()}: {output_file}")
+        print("\nNext step: Run normalization on each file")
     print(f"{'='*70}\n")
 
     return 0
