@@ -339,12 +339,15 @@ class ChannelNormalizer:
     # Inverse transform
     # ========================================================================
 
-    def inverse_transform_output(self, y_norm: torch.Tensor) -> torch.Tensor:
+    def inverse_transform_output(self, y_norm: torch.Tensor, y_initial: torch.Tensor = None) -> torch.Tensor:
         """
         Complete inverse transform: normalized → transformed → raw
 
         Args:
             y_norm: (N, 1, nx, ny, nt) - normalized output
+            y_initial: (N, 1, nx, ny, 1) - initial values at t=0 (required for delta mode reconstruction)
+                       If provided in delta mode, delta values will be added to initial values
+                       to reconstruct absolute concentrations for visualization
 
         Returns:
             y_raw: (N, 1, nx, ny, nt) - raw physical values
@@ -369,9 +372,23 @@ class ChannelNormalizer:
             y_raw = torch.pow(10, y_trans)
 
         elif transform_type == 'delta':
-            # Delta mode: cannot fully reverse without t=0 reference
-            # Return in transformed space (delta values)
-            y_raw = y_trans
+            # Delta mode: denormalized values are delta (changes from t=0)
+            delta_values = y_trans  # (N, 1, nx, ny, nt)
+
+            # If y_initial is provided, reconstruct absolute concentrations
+            if y_initial is not None:
+                # Move y_initial to same device as delta_values
+                if y_initial.device != device:
+                    y_initial = y_initial.to(device)
+
+                # Expand y_initial to match time dimension: (N, 1, nx, ny, 1) → (N, 1, nx, ny, nt)
+                y_initial_expanded = y_initial.expand(-1, -1, -1, -1, delta_values.shape[-1])
+
+                # Reconstruct: absolute = initial + delta
+                y_raw = y_initial_expanded + delta_values
+            else:
+                # Fallback: return delta values only (backward compatibility)
+                y_raw = delta_values
 
         elif transform_type == 'none':
             # No transformation, already in raw space

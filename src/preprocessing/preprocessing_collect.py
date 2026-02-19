@@ -48,10 +48,10 @@ CONFIG = {
         'meta_csv': PROJECT_ROOT / 'src/initial_others/output/others.csv',
         'preprocessing_script': 'preprocessing_collect.py',
         'output_prefix': 'input_output_com',
-        'output_file_u': SCRIPT_DIR / 'merged_raw_U.pt',  # UO2++ concentration
-        'output_file_ca': SCRIPT_DIR / 'merged_raw_Ca.pt',  # Ca++ concentration
-        'output_file_c': SCRIPT_DIR / 'merged_raw_C.pt',  # CO3-- concentration
-        'output_file_out': SCRIPT_DIR / 'merged_raw_out.pt',  # Outlet data
+        'output_file_u': SCRIPT_DIR / 'data/raw/lr/merged_raw_U.pt',  # UO2++ concentration
+        'output_file_ca': SCRIPT_DIR / 'data/raw/lr/merged_raw_Ca.pt',  # Ca++ concentration
+        'output_file_c': SCRIPT_DIR / 'data/raw/lr/merged_raw_C.pt',  # CO3-- concentration
+        'output_file_out': SCRIPT_DIR / 'data/raw/lr/merged_raw_out.pt',  # Outlet data
         'final_timestep': '2000.0000yr'  # Final timestep to verify simulation completion
     },
     'hr': {
@@ -60,10 +60,10 @@ CONFIG = {
         'meta_csv': PROJECT_ROOT / 'src/initial_others/output_hr/others.csv',
         'preprocessing_script': 'preprocessing_collect.py',
         'output_prefix': 'input_output_hr_com',
-        'output_file_u': SCRIPT_DIR / 'merged_raw_U_hr.pt',  # UO2++ concentration
-        'output_file_ca': SCRIPT_DIR / 'merged_raw_Ca_hr.pt',  # Ca++ concentration
-        'output_file_c': SCRIPT_DIR / 'merged_raw_C_hr.pt',  # CO3-- concentration
-        'output_file_out': SCRIPT_DIR / 'merged_raw_out_hr.pt',  # Outlet data
+        'output_file_u': SCRIPT_DIR / 'data/raw/hr/merged_raw_U_hr.pt',  # UO2++ concentration
+        'output_file_ca': SCRIPT_DIR / 'data/raw/hr/merged_raw_Ca_hr.pt',  # Ca++ concentration
+        'output_file_c': SCRIPT_DIR / 'data/raw/hr/merged_raw_C_hr.pt',  # CO3-- concentration
+        'output_file_out': SCRIPT_DIR / 'data/raw/hr/merged_raw_out_hr.pt',  # Outlet data
         'final_timestep': '2000.0000yr'  # Final timestep to verify simulation completion
     }
 }
