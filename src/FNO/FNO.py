@@ -54,10 +54,10 @@ from preprocessing_normalize import ChannelNormalizer
 # ==============================================================================
 CONFIG = {
     # Data paths - ensure these match your preprocessing output mode (raw/log/delta)
-    'MERGED_PT_PATH': './src/preprocessing/merged_normalized.pt',  # Pre-normalized data
-    'CHANNEL_NORMALIZER_PATH': './src/preprocessing/normalizer_delta.pkl',  # Normalizer (must match output mode)
+    'MERGED_PT_PATH': './src/preprocessing/data/normalized/lr/delta/merged_normalized_U.pt',  # Pre-normalized data
+    'CHANNEL_NORMALIZER_PATH': './src/preprocessing/normalizers/lr/delta/normalizer_u_delta.pkl',  # Normalizer (must match output mode)
     'OUTPUT_DIR': './src/FNO/output_pure/',
-    'N_EPOCHS': 3,  
+    'N_EPOCHS': 100,  
     'EVAL_INTERVAL': 1,
     'VAL_SIZE': 0.1,  # Validation set size
     'TEST_SIZE': 0.1,  # Test set size
@@ -77,14 +77,14 @@ CONFIG = {
         'T_max': 40,
         'T_mult': 2,
         'eta_min': 1e-5,
-        'step_size': 30,
+        'step_size': 10,
         'gamma': 0.5,
         'initial_lr': 1e-2,
     },
     'OUTPUT': {
         'ENABLED': True,  # Master switch for all output generation
         'OUTPUT_DIR': './src/FNO/output_pure',  # Base output directory
-        'SAMPLE_INDICES': [0, 1, 5, 10, 15],  # Samples to visualize
+        'SAMPLE_INDICES': [8],  # Samples to visualize
         'TIME_INDICES': [4, 9, 14, 19],  # Time indices to visualize
         'DPI': 200,  # Resolution for all images
 
@@ -115,10 +115,13 @@ CONFIG = {
 
         # Integrated Gradients configuration
         'IG_ANALYSIS': {
-            'ENABLED': False,  # Perform IG analysis
-            'SAMPLE_IDX': 260,  # Sample to analyze
+            'ENABLED': True,  # Perform IG analysis
+            'SAMPLE_IDX': 8,  # Sample to analyze
             'TIME_INDICES': [4, 9, 14, 19],  # Target times
             'N_STEPS': 50,  # Integration steps
+            'USE_MULTI_BASELINE': True,  # Use multiple real samples as baselines (instead of mean)
+            'N_BASELINES': 20,  # Number of baseline samples (only used if USE_MULTI_BASELINE=True)
+            'BASELINE_SEED': 42,  # Random seed for baseline selection (reproducibility)
         },
     },
     'LOSS_CONFIG': {
@@ -127,7 +130,7 @@ CONFIG = {
         'l2_p': 2,  # Power for L2 loss
     },
     'TRAINING_CONFIG': {
-        'mode': 'single',  # Options: 'single', 'optuna', 'eval'
+        'mode': 'eval',  # Options: 'single', 'optuna', 'eval'
         'optuna_n_trials': 100,
         'optuna_seed': 42,
         'optuna_n_startup_trials': 10,
@@ -146,15 +149,15 @@ CONFIG = {
         'channel_mlp_skip_options': ['linear', 'soft-gating']  # categorical options
     },
     'SINGLE_PARAMS': {
-        "n_modes_1": 8,
-        "n_modes_2": 8,
-        "n_modes_3": 4,
-        "hidden_channels": 24,
-        "n_layers": 3,
+        "n_modes_1": 15,
+        "n_modes_2": 12,
+        "n_modes_3": 5,
+        "hidden_channels": 67,
+        "n_layers": 6,
         "domain_padding": (0.1,0.1,0.1),
-        "train_batch_size": 32,
-        "l2_weight": 0.0,
-        "channel_mlp_expansion": 0.5,
+        "train_batch_size": 16,
+        "l2_weight": 9.338206141357252e-08,
+        "channel_mlp_expansion": 1.0,
         "channel_mlp_skip": 'soft-gating'
     }
 }
@@ -165,27 +168,35 @@ CONFIG = {
 
 class CustomDatasetPure(Dataset):
     """Custom dataset for Pure FNO training with meta data already combined as uniform spatial channels.
-    
+
     Note: This version expects input_tensor to already have meta channels combined,
     unlike the original version that combines them internally.
-    
+
     Args:
         input_tensor: Combined input tensor of shape (N, original_channels + meta_channels, nx, ny, nt)
         output_tensor: Output tensor of shape (N, 1, nx, ny, nt)
+        initial_tensor: Initial values at t=0 of shape (N, 1, nx, ny, 1) - optional, used for delta mode reconstruction
     """
-    
-    def __init__(self, input_tensor: torch.Tensor, output_tensor: torch.Tensor):
+
+    def __init__(self, input_tensor: torch.Tensor, output_tensor: torch.Tensor, initial_tensor: torch.Tensor = None):
         self.input_tensor = input_tensor
         self.output_tensor = output_tensor
-        
+        self.initial_tensor = initial_tensor
+
     def __len__(self) -> int:
         return self.input_tensor.shape[0]
-        
+
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
-        return {
-            'x': self.input_tensor[idx], 
+        item = {
+            'x': self.input_tensor[idx],
             'y': self.output_tensor[idx]
         }
+
+        # Add initial values if available (for delta mode reconstruction)
+        if self.initial_tensor is not None:
+            item['y_initial'] = self.initial_tensor[idx]
+
+        return item
 
 # ==============================================================================
 # Data Processing Functions
@@ -227,14 +238,21 @@ def preprocessing(config: Dict, verbose: bool = True) -> Tuple:
 
         bundle = torch.load(config['MERGED_PT_PATH'], map_location="cpu", weights_only=False)
 
-        required_keys = ["x", "y"]
+        required_keys = ["x", "y_u"]
         missing_keys = [key for key in required_keys if key not in bundle]
         if missing_keys:
             raise KeyError(f"Missing required keys in normalized data: {missing_keys}")
 
         # Data is already normalized and combined (includes meta channel)
         combined_input = bundle["x"].float()   # (N, 11, nx, ny, nt) - already normalized
-        out_data = bundle["y"].float()          # (N, 1, nx, ny, nt) - already normalized
+        out_data = bundle["y_u"].float()          # (N, 1, nx, ny, nt) - already normalized
+
+        # Load initial values if available (for delta mode reconstruction)
+        y_initial = None
+        if "y_initial" in bundle:
+            y_initial = bundle["y_initial"].float()  # (N, 1, nx, ny, 1)
+            if verbose:
+                print(f"   Loaded initial values for delta mode reconstruction: {tuple(y_initial.shape)}")
 
         if verbose:
             print(f"   Loaded normalized tensors - Input: {tuple(combined_input.shape)}, Output: {tuple(out_data.shape)}")
@@ -281,26 +299,46 @@ def preprocessing(config: Dict, verbose: bool = True) -> Tuple:
         if verbose:
             print("Step 3: Creating train/val/test datasets...")
 
-        # First split: separate test set (final 10%)
-        train_temp_combined, test_combined, train_temp_out, test_out = train_test_split(
-            combined_input, out_data,
-            test_size=config['TEST_SIZE'],
-            random_state=config['RANDOM_STATE']
-        )
+        # Perform split on combined_input and out_data
+        # If y_initial exists, split it as well to maintain consistency
+        if y_initial is not None:
+            # First split: separate test set (final 10%)
+            train_temp_combined, test_combined, train_temp_out, test_out, train_temp_initial, test_initial = train_test_split(
+                combined_input, out_data, y_initial,
+                test_size=config['TEST_SIZE'],
+                random_state=config['RANDOM_STATE']
+            )
 
-        # Second split: separate validation set from remaining data
-        # Val size relative to remaining data: 0.1 / (1 - 0.1) = ~0.111
-        val_size_relative = config['VAL_SIZE'] / (1 - config['TEST_SIZE'])
-        train_combined, val_combined, train_out, val_out = train_test_split(
-            train_temp_combined, train_temp_out,
-            test_size=val_size_relative,
-            random_state=config['RANDOM_STATE']
-        )
+            # Second split: separate validation set from remaining data
+            val_size_relative = config['VAL_SIZE'] / (1 - config['TEST_SIZE'])
+            train_combined, val_combined, train_out, val_out, train_initial, val_initial = train_test_split(
+                train_temp_combined, train_temp_out, train_temp_initial,
+                test_size=val_size_relative,
+                random_state=config['RANDOM_STATE']
+            )
+        else:
+            # First split: separate test set (final 10%)
+            train_temp_combined, test_combined, train_temp_out, test_out = train_test_split(
+                combined_input, out_data,
+                test_size=config['TEST_SIZE'],
+                random_state=config['RANDOM_STATE']
+            )
 
-        # Create datasets with already combined inputs
-        train_dataset = CustomDatasetPure(train_combined, train_out)
-        val_dataset = CustomDatasetPure(val_combined, val_out)
-        test_dataset = CustomDatasetPure(test_combined, test_out)
+            # Second split: separate validation set from remaining data
+            val_size_relative = config['VAL_SIZE'] / (1 - config['TEST_SIZE'])
+            train_combined, val_combined, train_out, val_out = train_test_split(
+                train_temp_combined, train_temp_out,
+                test_size=val_size_relative,
+                random_state=config['RANDOM_STATE']
+            )
+
+            # No initial values
+            train_initial, val_initial, test_initial = None, None, None
+
+        # Create datasets with already combined inputs (and initial values if available)
+        train_dataset = CustomDatasetPure(train_combined, train_out, train_initial)
+        val_dataset = CustomDatasetPure(val_combined, val_out, val_initial)
+        test_dataset = CustomDatasetPure(test_combined, test_out, test_initial)
 
         if verbose:
             print(f"   Train dataset size: {len(train_dataset)}")

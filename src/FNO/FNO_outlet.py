@@ -56,13 +56,13 @@ from preprocessing_normalize import ChannelNormalizer
 # ==============================================================================
 CONFIG = {
     # Data paths
-    'MERGED_PT_PATH': './src/preprocessing/merged_normalized.pt',
-    'SPATIAL_NORMALIZER_PATH': './src/preprocessing/normalizer_delta.pkl',
-    'OUTLET_NORMALIZER_PATH': './src/preprocessing/normalizer_out_delta.pkl',
+    'MERGED_PT_PATH': './src/preprocessing/data/normalized/lr/delta/merged_normalized_out.pt',
+    'SPATIAL_NORMALIZER_PATH': './src/preprocessing/normalizers/lr/delta/normalizer_u_delta.pkl',
+    'OUTLET_NORMALIZER_PATH': './src/preprocessing/normalizers/lr/delta/normalizer_out_delta.pkl',
     'OUTPUT_DIR': './src/FNO/output_outlet/',
 
     # Training parameters
-    'N_EPOCHS': 3,
+    'N_EPOCHS': 100,
     'VAL_SIZE': 0.1,
     'TEST_SIZE': 0.1,
     'RANDOM_STATE': 42,
@@ -88,12 +88,12 @@ CONFIG = {
 
     # Loss configuration
     'LOSS_CONFIG': {
-        'loss_type': 'mse',  # MSE for vector outputs
+        'loss_type': 'l2',  # MSE for vector outputs
     },
 
     # Training mode
     'TRAINING_CONFIG': {
-        'mode': 'single',  # Options: 'single', 'optuna', 'eval'
+        'mode': 'eval',  # Options: 'single', 'optuna', 'eval'
         'optuna_n_trials': 100,
         'optuna_seed': 42,
         'optuna_n_startup_trials': 10,
@@ -160,9 +160,12 @@ CONFIG = {
     # Integrated Gradients configuration
     'IG_ANALYSIS': {
         'ENABLED': True,  # Perform IG analysis
-        'SAMPLE_IDX': 200,  # Sample to analyze (test set index)
+        'SAMPLE_IDX': 6,  # Sample to analyze (test set index)
         'TIME_INDICES': [4, 9, 14, 19],  # Target times to analyze
         'N_STEPS': 50,  # Integration steps
+        'USE_MULTI_BASELINE': True,  # Use multiple real samples as baselines (instead of mean)
+        'N_BASELINES': 20,  # Number of baseline samples (only used if USE_MULTI_BASELINE=True)
+        'BASELINE_SEED': 42,  # Random seed for baseline selection (reproducibility)
     }
 }
 
@@ -995,6 +998,74 @@ def create_mean_baseline_outlet(train_dataset, val_dataset, test_dataset, verbos
     return baseline
 
 
+def create_multi_sample_baselines_outlet(
+    train_dataset,
+    val_dataset,
+    test_dataset,
+    n_baselines: int = 5,
+    random_seed: int = 42,
+    verbose: bool = True
+) -> List[torch.Tensor]:
+    """
+    Create multiple real sample baselines for IG analysis (outlet version).
+
+    Instead of using a single mean baseline (which may become homogeneous and outside
+    the training distribution for heterogeneous-only trained models), this function
+    selects n_baselines real samples from the datasets to use as baselines.
+
+    Args:
+        train_dataset: Training dataset
+        val_dataset: Validation dataset
+        test_dataset: Test dataset
+        n_baselines: Number of baseline samples to select
+        random_seed: Random seed for reproducibility
+        verbose: Whether to print progress
+
+    Returns:
+        List of baseline tensors, each of shape (1, C, nx, ny, nt)
+    """
+    if verbose:
+        print(f"Creating {n_baselines} real sample baselines from datasets...")
+
+    # Collect all samples
+    all_samples = []
+    for i in range(len(train_dataset)):
+        all_samples.append(train_dataset[i]['x'])
+    for i in range(len(val_dataset)):
+        all_samples.append(val_dataset[i]['x'])
+    for i in range(len(test_dataset)):
+        all_samples.append(test_dataset[i]['x'])
+
+    # Set random seed for reproducibility
+    rng = np.random.RandomState(random_seed)
+
+    # Randomly select n_baselines samples
+    total_samples = len(all_samples)
+    if n_baselines > total_samples:
+        if verbose:
+            print(f"  Warning: n_baselines ({n_baselines}) > total samples ({total_samples})")
+            print(f"  Using all {total_samples} samples as baselines")
+        selected_indices = list(range(total_samples))
+    else:
+        selected_indices = rng.choice(total_samples, size=n_baselines, replace=False)
+
+    # Create list of baseline tensors
+    baselines = []
+    for idx in selected_indices:
+        baseline = all_samples[int(idx)].unsqueeze(0)  # Add batch dimension: (1, C, nx, ny, nt)
+        baselines.append(baseline)
+
+    if verbose:
+        print(f"  Total samples available: {total_samples}")
+        print(f"  Selected {len(baselines)} baseline samples")
+        # Convert to list for sorting (handles both list and ndarray cases)
+        indices_list = selected_indices if isinstance(selected_indices, list) else selected_indices.tolist()
+        print(f"  Baseline indices: {sorted(indices_list)}")
+        print(f"  Each baseline shape: {baselines[0].shape}")
+
+    return baselines
+
+
 def compute_integrated_gradients_outlet(
     model: nn.Module,
     outlet_normalizer,
@@ -1094,6 +1165,125 @@ def compute_integrated_gradients_outlet(
         print(f"  IG sum: {info['ig_sum']:.4e}")
 
     return ig_spatial, info
+
+
+def compute_integrated_gradients_outlet_multi_baseline(
+    model: nn.Module,
+    outlet_normalizer,
+    device: str,
+    test_sample: torch.Tensor,
+    baselines: List[torch.Tensor],
+    target_t: int,
+    n_steps: int = 50,
+    verbose: bool = True
+) -> Tuple[np.ndarray, Dict]:
+    """
+    Compute Integrated Gradients using multiple real sample baselines for outlet prediction.
+
+    This approach addresses the issue where a single mean baseline becomes homogeneous
+    and falls outside the training distribution for models trained on heterogeneous inputs.
+    By using multiple real samples as baselines, we ensure that interpolation paths
+    remain within the learned distribution.
+
+    Args:
+        model: Trained outlet prediction model
+        outlet_normalizer: Outlet normalizer for inverse transform
+        device: Device to use
+        test_sample: Test sample tensor (1, C, nx, ny, nt)
+        baselines: List of baseline tensors, each of shape (1, C, nx, ny, nt)
+        target_t: Target time index
+        n_steps: Number of interpolation steps per baseline
+        verbose: Whether to print progress
+
+    Returns:
+        Tuple of (ig_spatial_avg, info_dict)
+        - ig_spatial_avg: Averaged IG attribution (C, nx, ny)
+        - info_dict: Dictionary with metadata including per-baseline statistics
+    """
+    if verbose:
+        print(f"\nComputing IG with {len(baselines)} baselines for time {target_t}...")
+        print(f"  Steps per baseline: {n_steps}")
+
+    # Storage for IG results from each baseline
+    ig_results = []
+    baseline_infos = []
+
+    # Compute IG for each baseline
+    for i, baseline in enumerate(baselines):
+        if verbose:
+            print(f"\n  Baseline {i+1}/{len(baselines)}:")
+
+        ig_spatial, info = compute_integrated_gradients_outlet(
+            model=model,
+            outlet_normalizer=outlet_normalizer,
+            device=device,
+            test_sample=test_sample,
+            baseline=baseline,
+            target_t=target_t,
+            n_steps=n_steps,
+            verbose=verbose
+        )
+
+        ig_results.append(ig_spatial)
+        baseline_infos.append(info)
+
+    # Convert to array for easier manipulation: (n_baselines, C, nx, ny)
+    ig_array = np.stack(ig_results, axis=0)
+
+    # Compute average IG across baselines
+    ig_spatial_avg = ig_array.mean(axis=0)  # (C, nx, ny)
+
+    # Compute statistics across baselines
+    ig_std = ig_array.std(axis=0)  # Standard deviation (C, nx, ny)
+    ig_min = ig_array.min(axis=0)  # Minimum (C, nx, ny)
+    ig_max = ig_array.max(axis=0)  # Maximum (C, nx, ny)
+
+    # Aggregate metadata
+    total_abs_igs = [info['total_abs_ig'] for info in baseline_infos]
+    ig_sums = [info['ig_sum'] for info in baseline_infos]
+    output_baselines = [info['output_baseline'] for info in baseline_infos]
+    output_actuals = [info['output_actual'] for info in baseline_infos]
+    output_changes = [info['output_change'] for info in baseline_infos]
+
+    info_avg = {
+        'target_t': target_t,
+        'n_steps': n_steps,
+        'n_baselines': len(baselines),
+        'total_abs_ig': float(np.abs(ig_spatial_avg).sum()),
+        'ig_sum': float(ig_spatial_avg.sum()),
+        'output_actual': float(np.mean(output_actuals)),  # Should be identical for all baselines
+        # Statistics across baselines
+        'baseline_stats': {
+            'total_abs_ig_mean': float(np.mean(total_abs_igs)),
+            'total_abs_ig_std': float(np.std(total_abs_igs)),
+            'total_abs_ig_min': float(np.min(total_abs_igs)),
+            'total_abs_ig_max': float(np.max(total_abs_igs)),
+            'ig_sum_mean': float(np.mean(ig_sums)),
+            'ig_sum_std': float(np.std(ig_sums)),
+            'output_baseline_mean': float(np.mean(output_baselines)),
+            'output_baseline_std': float(np.std(output_baselines)),
+            'output_change_mean': float(np.mean(output_changes)),
+            'output_change_std': float(np.std(output_changes)),
+        },
+        # Per-channel statistics
+        'channel_stats': {
+            'ig_std': ig_std,  # (C, nx, ny) - spatial standard deviation
+            'ig_min': ig_min,  # (C, nx, ny) - spatial minimum
+            'ig_max': ig_max,  # (C, nx, ny) - spatial maximum
+        }
+    }
+
+    if verbose:
+        print(f"\n  Multi-baseline IG completed:")
+        print(f"    Average Total |IG|: {info_avg['total_abs_ig']:.4e}")
+        print(f"    Average IG sum: {info_avg['ig_sum']:.4e}")
+        print(f"    Baseline variability (Total |IG|):")
+        print(f"      Mean: {info_avg['baseline_stats']['total_abs_ig_mean']:.4e}")
+        print(f"      Std:  {info_avg['baseline_stats']['total_abs_ig_std']:.4e}")
+        print(f"      Range: [{info_avg['baseline_stats']['total_abs_ig_min']:.4e}, "
+              f"{info_avg['baseline_stats']['total_abs_ig_max']:.4e}]")
+
+    return ig_spatial_avg, info_avg
 
 
 def visualize_baseline_channels_outlet(
@@ -1339,13 +1529,15 @@ def integrated_gradients_analysis_outlet(
     time_indices = ig_config.get('TIME_INDICES', [4, 9, 14, 19])
     n_steps = ig_config.get('N_STEPS', 50)
 
+    # Check if multi-baseline mode is enabled
+    use_multi_baseline = ig_config.get('USE_MULTI_BASELINE', False)
+    n_baselines = ig_config.get('N_BASELINES', 5)
+    baseline_seed = ig_config.get('BASELINE_SEED', 42)
+
     # Validate sample index
     if sample_idx >= len(test_dataset):
         print(f"Warning: sample_idx {sample_idx} out of range. Using sample 0.")
         sample_idx = 0
-
-    # Create baseline
-    baseline = create_mean_baseline_outlet(train_dataset, val_dataset, test_dataset, verbose)
 
     # Get test sample
     test_sample = test_dataset[sample_idx]['x'].unsqueeze(0)  # (1, C, nx, ny, nt)
@@ -1355,33 +1547,80 @@ def integrated_gradients_analysis_outlet(
     print(f"Test sample shape: {tuple(test_sample.shape)}")
     print(f"Test outlet shape: {tuple(test_outlet.shape)}")
 
-    # Compute IG for each time index
-    ig_results = {}
-    info_results = {}
-
-    for t in time_indices:
-        if t >= test_outlet.shape[0]:
-            print(f"  Skipping time {t} (out of range)")
-            continue
-
-        ig_spatial, info = compute_integrated_gradients_outlet(
-            model, outlet_normalizer, device,
-            test_sample, baseline, t,
-            n_steps=n_steps, verbose=verbose
+    # Create baseline(s) based on configuration
+    if use_multi_baseline:
+        # Multi-baseline mode: use multiple real samples
+        baselines = create_multi_sample_baselines_outlet(
+            train_dataset, val_dataset, test_dataset,
+            n_baselines=n_baselines,
+            random_seed=baseline_seed,
+            verbose=verbose
         )
-        ig_results[t] = ig_spatial
-        info_results[t] = info
+        baseline_data = None  # Will not visualize individual baselines
+
+        # Compute IG for each time index using multi-baseline approach
+        ig_results = {}
+        info_results = {}
+
+        for t in time_indices:
+            if t >= test_outlet.shape[0]:
+                print(f"  Skipping time {t} (out of range)")
+                continue
+
+            ig_spatial, info = compute_integrated_gradients_outlet_multi_baseline(
+                model=model,
+                outlet_normalizer=outlet_normalizer,
+                device=device,
+                test_sample=test_sample,
+                baselines=baselines,
+                target_t=t,
+                n_steps=n_steps,
+                verbose=verbose
+            )
+            ig_results[t] = ig_spatial
+            info_results[t] = info
+
+    else:
+        # Single baseline mode: use mean baseline (original behavior)
+        baseline = create_mean_baseline_outlet(train_dataset, val_dataset, test_dataset, verbose)
+        baseline_data = baseline[0].cpu().numpy()  # (C, nx, ny, nt) for visualization
+
+        # Compute IG for each time index
+        ig_results = {}
+        info_results = {}
+
+        for t in time_indices:
+            if t >= test_outlet.shape[0]:
+                print(f"  Skipping time {t} (out of range)")
+                continue
+
+            ig_spatial, info = compute_integrated_gradients_outlet(
+                model=model,
+                outlet_normalizer=outlet_normalizer,
+                device=device,
+                test_sample=test_sample,
+                baseline=baseline,
+                target_t=t,
+                n_steps=n_steps,
+                verbose=verbose
+            )
+            ig_results[t] = ig_spatial
+            info_results[t] = info
 
     # Generate visualizations
     output_dir = Path(config['OUTPUT_DIR']) / 'integrated_gradients' / f'sample_{sample_idx}'
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Visualize baseline channels
-    print("\nGenerating baseline channel images...")
-    baseline_data = baseline[0].cpu().numpy()  # (C, nx, ny, nt)
-    baseline_paths = visualize_baseline_channels_outlet(
-        baseline_data, output_dir, verbose
-    )
+    # Visualize baseline channels (only if using single mean baseline)
+    baseline_paths = []
+    if baseline_data is not None:
+        print("\nGenerating baseline channel images...")
+        baseline_paths = visualize_baseline_channels_outlet(
+            baseline_data, output_dir, verbose
+        )
+    else:
+        if verbose:
+            print("\nSkipping mean baseline visualization (using multi-baseline mode)")
 
     # Visualize input channels
     print("\nGenerating input channel images...")

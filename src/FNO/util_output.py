@@ -115,14 +115,14 @@ def visualize_combined_grid(
     for i, t_idx in enumerate(time_indices):
         # Plot Ground Truth (Row 1)
         ax_gt = axes[0, i]
-        im_gt = ax_gt.imshow(gt_sample[:, :, t_idx].T, cmap='jet',
+        im_gt = ax_gt.imshow(gt_sample[:, :, t_idx].T, cmap='RdBu_r',
                             vmin=vmin_gt_pred, vmax=vmax_gt_pred)
         ax_gt.set_title(f"Ground Truth (t={t_idx})")
         ax_gt.axis('off')
 
         # Plot Prediction (Row 2)
         ax_pred = axes[1, i]
-        im_pred = ax_pred.imshow(pred_sample[:, :, t_idx].T, cmap='jet',
+        im_pred = ax_pred.imshow(pred_sample[:, :, t_idx].T, cmap='RdBu_r',
                                 vmin=vmin_gt_pred, vmax=vmax_gt_pred)
         ax_pred.set_title(f"Prediction (t={t_idx})")
         ax_pred.axis('off')
@@ -194,7 +194,7 @@ def visualize_separated_images(
     for t_idx in time_indices:
         # Ground Truth
         fig, ax = plt.subplots(1, 1, figsize=(6, 5))
-        im = ax.imshow(gt_sample[:, :, t_idx].T, cmap='jet',
+        im = ax.imshow(gt_sample[:, :, t_idx].T, cmap='RdBu_r',
                       vmin=vmin_gt_pred, vmax=vmax_gt_pred)
         ax.set_title(f"Ground Truth (Sample {sample_idx}, t={t_idx})")
         ax.axis('off')
@@ -207,7 +207,7 @@ def visualize_separated_images(
 
         # Prediction
         fig, ax = plt.subplots(1, 1, figsize=(6, 5))
-        im = ax.imshow(pred_sample[:, :, t_idx].T, cmap='jet',
+        im = ax.imshow(pred_sample[:, :, t_idx].T, cmap='RdBu_r',
                       vmin=vmin_gt_pred, vmax=vmax_gt_pred)
         ax.set_title(f"Prediction (Sample {sample_idx}, t={t_idx})")
         ax.axis('off')
@@ -422,7 +422,7 @@ def create_all_gifs(
         output_dir=output_dir,
         vmin=vmin_gt_pred,
         vmax=vmax_gt_pred,
-        cmap='jet',
+        cmap='RdBu_r',
         config=config,
         verbose=verbose
     )
@@ -435,7 +435,7 @@ def create_all_gifs(
         output_dir=output_dir,
         vmin=vmin_gt_pred,
         vmax=vmax_gt_pred,
-        cmap='jet',
+        cmap='RdBu_r',
         config=config,
         verbose=verbose
     )
@@ -458,7 +458,7 @@ def create_all_gifs(
     output_paths['gt_pred_colorbar'] = create_colorbar_png(
         vmin=vmin_gt_pred,
         vmax=vmax_gt_pred,
-        cmap='jet',
+        cmap='RdBu_r',
         label='Concentration',
         output_path=colorbar_gt_pred_path,
         config=config,
@@ -665,14 +665,29 @@ def generate_parity_csv(
             ax.scatter(gt_t, pred_t, c=colors[i], alpha=0.3, s=10,
                       label=f't={t_idx}', edgecolors='none')
 
-    # Plot 1:1 line
-    ax.plot([0, 4e-6], [0, 4e-6], 'y--', linewidth=2, label='1:1 line')
+    # Determine axis limits from data
+    all_gt = np.array(all_gt)
+    all_pred = np.array(all_pred)
+    min_val = min(all_gt.min(), all_pred.min())
+    max_val = max(all_gt.max(), all_pred.max())
 
-    # Set axis range and ticks
-    ax.set_xlim(0, 4e-6)
-    ax.set_ylim(0, 4e-6)
-    ax.set_xticks(np.arange(0, 4e-6, 1e-6))
-    ax.set_yticks(np.arange(0, 4e-6, 1e-6))
+    # Add 5% margin for better visualization
+    margin = (max_val - min_val) * 0.05
+    plot_min = max(0, min_val - margin)  # Don't go below 0 for concentrations
+    plot_max = max_val + margin
+
+    # Plot 1:1 line
+    ax.plot([plot_min, plot_max], [plot_min, plot_max], 'y--', linewidth=2, label='1:1 line')
+
+    # Set axis range and ticks (dynamic)
+    ax.set_xlim(plot_min, plot_max)
+    ax.set_ylim(plot_min, plot_max)
+
+    # Create approximately 5 ticks
+    tick_interval = (plot_max - plot_min) / 5
+    ticks = np.arange(plot_min, plot_max + tick_interval/2, tick_interval)
+    ax.set_xticks(ticks)
+    ax.set_yticks(ticks)
 
     # Set labels with larger font (no Arial specification)
     ax.set_xlabel('Ground Truth', fontweight='bold', fontsize=16)
@@ -740,14 +755,19 @@ def detailed_evaluation(
             x = batch['x'].to(device)  # Already normalized
             y = batch['y'].to(device)  # Already normalized
 
+            # Get initial values if available (for delta mode reconstruction)
+            y_initial_batch = None
+            if 'y_initial' in batch:
+                y_initial_batch = batch['y_initial'].to(device)
+
             # Predict in normalized space
             pred = model(x)
 
-            # Convert prediction to raw physical values
-            pred_phys = channel_normalizer.inverse_transform_output(pred)
+            # Convert prediction to raw physical values (with initial values for delta mode)
+            pred_phys = channel_normalizer.inverse_transform_output(pred, y_initial=y_initial_batch)
 
-            # Convert ground truth to raw physical values
-            y_phys = channel_normalizer.inverse_transform_output(y)
+            # Convert ground truth to raw physical values (with initial values for delta mode)
+            y_phys = channel_normalizer.inverse_transform_output(y, y_initial=y_initial_batch)
 
             all_pred.append(pred_phys.cpu())
             all_gt.append(y_phys.cpu())
@@ -902,6 +922,74 @@ def create_mean_baseline(
     return baseline
 
 
+def create_multi_sample_baselines(
+    train_dataset,
+    val_dataset,
+    test_dataset,
+    n_baselines: int = 5,
+    random_seed: int = 42,
+    verbose: bool = True
+) -> List[torch.Tensor]:
+    """
+    Create multiple real sample baselines for IG analysis.
+
+    Instead of using a single mean baseline (which may become homogeneous and outside
+    the training distribution for heterogeneous-only trained models), this function
+    selects n_baselines real samples from the datasets to use as baselines.
+
+    Args:
+        train_dataset: Training dataset
+        val_dataset: Validation dataset
+        test_dataset: Test dataset
+        n_baselines: Number of baseline samples to select
+        random_seed: Random seed for reproducibility
+        verbose: Whether to print progress
+
+    Returns:
+        List of baseline tensors, each of shape (1, C, nx, ny, nt)
+    """
+    if verbose:
+        print(f"Creating {n_baselines} real sample baselines from datasets...")
+
+    # Collect all samples
+    all_samples = []
+    for i in range(len(train_dataset)):
+        all_samples.append(train_dataset[i]['x'])
+    for i in range(len(val_dataset)):
+        all_samples.append(val_dataset[i]['x'])
+    for i in range(len(test_dataset)):
+        all_samples.append(test_dataset[i]['x'])
+
+    # Set random seed for reproducibility
+    rng = np.random.RandomState(random_seed)
+
+    # Randomly select n_baselines samples
+    total_samples = len(all_samples)
+    if n_baselines > total_samples:
+        if verbose:
+            print(f"  Warning: n_baselines ({n_baselines}) > total samples ({total_samples})")
+            print(f"  Using all {total_samples} samples as baselines")
+        selected_indices = list(range(total_samples))
+    else:
+        selected_indices = rng.choice(total_samples, size=n_baselines, replace=False)
+
+    # Create list of baseline tensors
+    baselines = []
+    for idx in selected_indices:
+        baseline = all_samples[int(idx)].unsqueeze(0)  # Add batch dimension: (1, C, nx, ny, nt)
+        baselines.append(baseline)
+
+    if verbose:
+        print(f"  Total samples available: {total_samples}")
+        print(f"  Selected {len(baselines)} baseline samples")
+        # Convert to list for sorting (handles both list and ndarray cases)
+        indices_list = selected_indices if isinstance(selected_indices, list) else selected_indices.tolist()
+        print(f"  Baseline indices: {sorted(indices_list)}")
+        print(f"  Each baseline shape: {baselines[0].shape}")
+
+    return baselines
+
+
 def compute_integrated_gradients(
     model: nn.Module,
     channel_normalizer,
@@ -909,6 +997,7 @@ def compute_integrated_gradients(
     test_sample: torch.Tensor,
     baseline: torch.Tensor,
     target_t: int,
+    y_initial: torch.Tensor = None,
     n_steps: int = 50,
     verbose: bool = True
 ) -> Tuple[np.ndarray, Dict]:
@@ -922,6 +1011,7 @@ def compute_integrated_gradients(
         test_sample: Test sample tensor (1, C, nx, ny, nt)
         baseline: Baseline tensor (1, C, nx, ny, nt)
         target_t: Target time index
+        y_initial: Initial values at t=0 (1, 1, nx, ny, 1) - for delta mode reconstruction
         n_steps: Number of interpolation steps
         verbose: Whether to print progress
 
@@ -936,21 +1026,22 @@ def compute_integrated_gradients(
 
     # Wrapper model for sum-of-squares aggregation
     class SumSquaresWrapper(nn.Module):
-        def __init__(self, model, channel_normalizer, target_t):
+        def __init__(self, model, channel_normalizer, target_t, y_initial):
             super().__init__()
             self.model = model
             self.channel_normalizer = channel_normalizer
             self.target_t = target_t
+            self.y_initial = y_initial
 
         def forward(self, x):
             # x is already normalized
             pred = self.model(x)
-            # Convert to raw physical values
-            pred_phys = self.channel_normalizer.inverse_transform_output(pred)
+            # Convert to raw physical values (with initial values for delta mode)
+            pred_phys = self.channel_normalizer.inverse_transform_output(pred, y_initial=self.y_initial)
             output_slice = pred_phys[:, 0, :, :, self.target_t]
             return (output_slice ** 2).sum(dim=[1, 2])
 
-    wrapped = SumSquaresWrapper(model, channel_normalizer, target_t).to(device)
+    wrapped = SumSquaresWrapper(model, channel_normalizer, target_t, y_initial).to(device)
 
     # Compute gradients
     grads = []
@@ -993,6 +1084,125 @@ def compute_integrated_gradients(
         print(f"  IG sum: {info['ig_sum']:.4e}")
 
     return ig_spatial, info
+
+
+def compute_integrated_gradients_multi_baseline(
+    model: nn.Module,
+    channel_normalizer,
+    device: str,
+    test_sample: torch.Tensor,
+    baselines: List[torch.Tensor],
+    target_t: int,
+    y_initial: torch.Tensor = None,
+    n_steps: int = 50,
+    verbose: bool = True
+) -> Tuple[np.ndarray, Dict]:
+    """
+    Compute Integrated Gradients using multiple real sample baselines and average the results.
+
+    This approach addresses the issue where a single mean baseline becomes homogeneous
+    and falls outside the training distribution for models trained on heterogeneous inputs.
+    By using multiple real samples as baselines, we ensure that interpolation paths
+    remain within the learned distribution.
+
+    Args:
+        model: Trained model
+        channel_normalizer: Channel-wise normalizer for inverse transform
+        device: Device to use
+        test_sample: Test sample tensor (1, C, nx, ny, nt)
+        baselines: List of baseline tensors, each of shape (1, C, nx, ny, nt)
+        target_t: Target time index
+        y_initial: Initial values at t=0 (1, 1, nx, ny, 1) - for delta mode reconstruction
+        n_steps: Number of interpolation steps per baseline
+        verbose: Whether to print progress
+
+    Returns:
+        Tuple of (ig_spatial_avg, info_dict)
+        - ig_spatial_avg: Averaged IG attribution (C, nx, ny)
+        - info_dict: Dictionary with metadata including per-baseline statistics
+    """
+    if verbose:
+        print(f"\nComputing IG with {len(baselines)} baselines for time {target_t}...")
+        print(f"  Steps per baseline: {n_steps}")
+
+    # Storage for IG results from each baseline
+    ig_results = []
+    baseline_infos = []
+
+    # Compute IG for each baseline
+    for i, baseline in enumerate(baselines):
+        if verbose:
+            print(f"\n  Baseline {i+1}/{len(baselines)}:")
+
+        ig_spatial, info = compute_integrated_gradients(
+            model=model,
+            channel_normalizer=channel_normalizer,
+            device=device,
+            test_sample=test_sample,
+            baseline=baseline,
+            target_t=target_t,
+            y_initial=y_initial,
+            n_steps=n_steps,
+            verbose=verbose
+        )
+
+        ig_results.append(ig_spatial)
+        baseline_infos.append(info)
+
+    # Convert to array for easier manipulation: (n_baselines, C, nx, ny)
+    ig_array = np.stack(ig_results, axis=0)
+
+    # Compute average IG across baselines
+    ig_spatial_avg = ig_array.mean(axis=0)  # (C, nx, ny)
+
+    # Compute statistics across baselines
+    ig_std = ig_array.std(axis=0)  # Standard deviation (C, nx, ny)
+    ig_min = ig_array.min(axis=0)  # Minimum (C, nx, ny)
+    ig_max = ig_array.max(axis=0)  # Maximum (C, nx, ny)
+
+    # Aggregate metadata
+    total_abs_igs = [info['total_abs_ig'] for info in baseline_infos]
+    ig_sums = [info['ig_sum'] for info in baseline_infos]
+    output_baselines = [info['output_baseline'] for info in baseline_infos]
+    output_actuals = [info['output_actual'] for info in baseline_infos]
+
+    info_avg = {
+        'target_t': target_t,
+        'n_steps': n_steps,
+        'n_baselines': len(baselines),
+        'total_abs_ig': float(np.abs(ig_spatial_avg).sum()),
+        'ig_sum': float(ig_spatial_avg.sum()),
+        'output_actual': float(np.mean(output_actuals)),  # Should be identical for all baselines
+        # Statistics across baselines
+        'baseline_stats': {
+            'total_abs_ig_mean': float(np.mean(total_abs_igs)),
+            'total_abs_ig_std': float(np.std(total_abs_igs)),
+            'total_abs_ig_min': float(np.min(total_abs_igs)),
+            'total_abs_ig_max': float(np.max(total_abs_igs)),
+            'ig_sum_mean': float(np.mean(ig_sums)),
+            'ig_sum_std': float(np.std(ig_sums)),
+            'output_baseline_mean': float(np.mean(output_baselines)),
+            'output_baseline_std': float(np.std(output_baselines)),
+        },
+        # Per-channel statistics
+        'channel_stats': {
+            'ig_std': ig_std,  # (C, nx, ny) - spatial standard deviation
+            'ig_min': ig_min,  # (C, nx, ny) - spatial minimum
+            'ig_max': ig_max,  # (C, nx, ny) - spatial maximum
+        }
+    }
+
+    if verbose:
+        print(f"\n  Multi-baseline IG completed:")
+        print(f"    Average Total |IG|: {info_avg['total_abs_ig']:.4e}")
+        print(f"    Average IG sum: {info_avg['ig_sum']:.4e}")
+        print(f"    Baseline variability (Total |IG|):")
+        print(f"      Mean: {info_avg['baseline_stats']['total_abs_ig_mean']:.4e}")
+        print(f"      Std:  {info_avg['baseline_stats']['total_abs_ig_std']:.4e}")
+        print(f"      Range: [{info_avg['baseline_stats']['total_abs_ig_min']:.4e}, "
+              f"{info_avg['baseline_stats']['total_abs_ig_max']:.4e}]")
+
+    return ig_spatial_avg, info_avg
 
 
 def compute_global_ranges(
@@ -1462,35 +1672,88 @@ def integrated_gradients_analysis(
     time_indices = ig_config.get('TIME_INDICES', [5, 10, 15, 19])
     n_steps = ig_config.get('N_STEPS', 50)
 
-    # Create baseline
-    baseline = create_mean_baseline(train_dataset, val_dataset, test_dataset, verbose)
+    # Check if multi-baseline mode is enabled
+    use_multi_baseline = ig_config.get('USE_MULTI_BASELINE', False)
+    n_baselines = ig_config.get('N_BASELINES', 5)
+    baseline_seed = ig_config.get('BASELINE_SEED', 42)
 
     # Get test sample
-    test_sample = test_dataset[sample_idx]['x'].unsqueeze(0)  # (1, C, nx, ny, nt)
+    test_sample_dict = test_dataset[sample_idx]
+    test_sample = test_sample_dict['x'].unsqueeze(0)  # (1, C, nx, ny, nt)
     input_data = test_sample[0].cpu().numpy()  # (C, nx, ny, nt)
+
+    # Get initial values if available (for delta mode reconstruction)
+    y_initial = None
+    if 'y_initial' in test_sample_dict:
+        y_initial = test_sample_dict['y_initial'].unsqueeze(0)  # (1, 1, nx, ny, 1)
+        if verbose:
+            print(f"  Initial values loaded for delta mode: {tuple(y_initial.shape)}")
 
     print(f"\nAnalyzing sample {sample_idx} at times {time_indices}")
 
-    # Compute IG for each time index
-    ig_results = {}
-    for t in time_indices:
-        ig_spatial, info = compute_integrated_gradients(
-            model, channel_normalizer, device,
-            test_sample, baseline, t,
-            n_steps=n_steps, verbose=verbose
+    # Create baseline(s) based on configuration
+    if use_multi_baseline:
+        # Multi-baseline mode: use multiple real samples
+        baselines = create_multi_sample_baselines(
+            train_dataset, val_dataset, test_dataset,
+            n_baselines=n_baselines,
+            random_seed=baseline_seed,
+            verbose=verbose
         )
-        ig_results[t] = ig_spatial
+        baseline_data = None  # Will visualize individual baselines instead
+
+        # Compute IG for each time index using multi-baseline approach
+        ig_results = {}
+        for t in time_indices:
+            ig_spatial, info = compute_integrated_gradients_multi_baseline(
+                model=model,
+                channel_normalizer=channel_normalizer,
+                device=device,
+                test_sample=test_sample,
+                baselines=baselines,
+                target_t=t,
+                y_initial=y_initial,
+                n_steps=n_steps,
+                verbose=verbose
+            )
+            ig_results[t] = ig_spatial
+
+    else:
+        # Single baseline mode: use mean baseline (original behavior)
+        baseline = create_mean_baseline(train_dataset, val_dataset, test_dataset, verbose)
+        baseline_data = baseline[0].cpu().numpy()  # (C, nx, ny, nt) for visualization
+
+        # Compute IG for each time index
+        ig_results = {}
+        for t in time_indices:
+            ig_spatial, info = compute_integrated_gradients(
+                model=model,
+                channel_normalizer=channel_normalizer,
+                device=device,
+                test_sample=test_sample,
+                baseline=baseline,
+                target_t=t,
+                y_initial=y_initial,
+                n_steps=n_steps,
+                verbose=verbose
+            )
+            ig_results[t] = ig_spatial
 
     # Generate outputs
     print("\nGenerating outputs...")
 
     # Baseline channel visualizations (time-invariant)
-    print("\n  Generating baseline channel images...")
-    baseline_data = baseline[0].cpu().numpy()  # (C, nx, ny, nt)
-    baseline_viz_paths = visualize_baseline_channels(
-        baseline_data,
-        output_dirs['ig_sample'], config, verbose
-    )
+    # Only visualize if using single mean baseline
+    baseline_viz_paths = []
+    if baseline_data is not None:
+        print("\n  Generating baseline channel images...")
+        baseline_viz_paths = visualize_baseline_channels(
+            baseline_data,
+            output_dirs['ig_sample'], config, verbose
+        )
+    else:
+        if verbose:
+            print("\n  Skipping mean baseline visualization (using multi-baseline mode)")
 
     # Input channel visualizations (time-invariant)
     print("\n  Generating input channel images...")
@@ -1601,19 +1864,26 @@ def generate_all_outputs(
 
             x, y = batch['x'].to(device), batch['y'].to(device)  # Already normalized
 
+            # Get initial values if available (for delta mode reconstruction)
+            y_initial_batch = None
+            if 'y_initial' in batch:
+                y_initial_batch = batch['y_initial'].to(device)
+
             all_input.append(x.cpu())
 
             # Predict in normalized space
             pred = trained_model(x)
 
-            # Convert to raw physical values
-            pred_phys = channel_normalizer.inverse_transform_output(pred)
-            y_phys = channel_normalizer.inverse_transform_output(y)
+            # Convert to raw physical values (with initial values for delta mode)
+            pred_phys = channel_normalizer.inverse_transform_output(pred, y_initial=y_initial_batch)
+            y_phys = channel_normalizer.inverse_transform_output(y, y_initial=y_initial_batch)
 
             all_pred.append(pred_phys.cpu())
             all_gt.append(y_phys.cpu())
 
             del x, y, pred, pred_phys, y_phys
+            if y_initial_batch is not None:
+                del y_initial_batch
             if device == 'cuda':
                 torch.cuda.empty_cache()
 
