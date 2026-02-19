@@ -1642,16 +1642,40 @@ def integrated_gradients_analysis_outlet(
         f.write("="*50 + "\n\n")
         f.write(f"Sample Index: {sample_idx}\n")
         f.write(f"Time Indices Analyzed: {time_indices}\n")
-        f.write(f"Integration Steps: {n_steps}\n\n")
+        f.write(f"Integration Steps: {n_steps}\n")
+        f.write(f"Baseline Mode: {'Multi-baseline' if use_multi_baseline else 'Single mean baseline'}\n")
+        if use_multi_baseline:
+            f.write(f"Number of Baselines: {n_baselines}\n")
+            f.write(f"Baseline Seed: {baseline_seed}\n")
+        f.write("\n")
 
         for t in sorted(info_results.keys()):
             info = info_results[t]
             f.write(f"Time {t}:\n")
-            f.write(f"  Output (baseline): {info['output_baseline']:.6e}\n")
-            f.write(f"  Output (actual): {info['output_actual']:.6e}\n")
-            f.write(f"  Output change: {info['output_change']:.6e}\n")
-            f.write(f"  Total |IG|: {info['total_abs_ig']:.6e}\n")
-            f.write(f"  IG sum: {info['ig_sum']:.6e}\n\n")
+
+            # Handle different info structures based on baseline mode
+            if use_multi_baseline:
+                # Multi-baseline mode: info has 'baseline_stats' dict
+                f.write(f"  Output (actual): {info['output_actual']:.6e}\n")
+                f.write(f"  Output (baseline mean): {info['baseline_stats']['output_baseline_mean']:.6e}\n")
+                f.write(f"  Output (baseline std): {info['baseline_stats']['output_baseline_std']:.6e}\n")
+                f.write(f"  Output change (mean): {info['baseline_stats']['output_change_mean']:.6e}\n")
+                f.write(f"  Output change (std): {info['baseline_stats']['output_change_std']:.6e}\n")
+                f.write(f"  Total |IG|: {info['total_abs_ig']:.6e}\n")
+                f.write(f"  Total |IG| (mean): {info['baseline_stats']['total_abs_ig_mean']:.6e}\n")
+                f.write(f"  Total |IG| (std): {info['baseline_stats']['total_abs_ig_std']:.6e}\n")
+                f.write(f"  IG sum: {info['ig_sum']:.6e}\n")
+                f.write(f"  IG sum (mean): {info['baseline_stats']['ig_sum_mean']:.6e}\n")
+                f.write(f"  IG sum (std): {info['baseline_stats']['ig_sum_std']:.6e}\n")
+            else:
+                # Single baseline mode: info has direct keys
+                f.write(f"  Output (baseline): {info['output_baseline']:.6e}\n")
+                f.write(f"  Output (actual): {info['output_actual']:.6e}\n")
+                f.write(f"  Output change: {info['output_change']:.6e}\n")
+                f.write(f"  Total |IG|: {info['total_abs_ig']:.6e}\n")
+                f.write(f"  IG sum: {info['ig_sum']:.6e}\n")
+
+            f.write("\n")
 
     print(f"\n  Saved summary: {summary_path}")
     print("\nIntegrated Gradients analysis complete!")
