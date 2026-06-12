@@ -68,7 +68,7 @@ CONFIG = {
     'MERGED_PT_PATH': './src/preprocessing/data/normalized/lr/delta/merged_normalized_U.pt',  # Pre-normalized data
     'CHANNEL_NORMALIZER_PATH': './src/preprocessing/normalizers/lr/delta/normalizer_u_delta.pkl',  # Normalizer (must match output mode)
     'OUTPUT_DIR': './src/FNO/output_pure/',
-    'N_EPOCHS': 100,  
+    'N_EPOCHS': 2,  
     'EVAL_INTERVAL': 1,
     'VAL_SIZE': 0.1,  # Validation set size
     'TEST_SIZE': 0.1,  # Test set size
@@ -141,15 +141,15 @@ CONFIG = {
         'l2_p': 2,  # Power for L2 loss
     },
     'TRAINING_CONFIG': {
-        'mode': 'eval',  # Options: 'single', 'optuna', 'eval'
-        'optuna_n_trials': 100,
+        'mode': 'single',  # Options: 'single', 'optuna', 'eval'
+        'optuna_n_trials': 3,
         'optuna_seed': 42,
-        'optuna_n_startup_trials': 10,
+        'optuna_n_startup_trials': 1,
         'eval_model_path': './src/FNO/output_pure/final/best_model_state_dict.pt'
     },
     'ENSEMBLE': {
         'ENABLED': True,
-        'N_MODELS': 50,
+        'N_MODELS': 3,
         'BASE_SEED': 42,
         'SPLIT_SEED_STRATEGY': 'base_plus_member',
         'MEMBER_OUTPUT_PATTERN': 'ensemble/member_{member_id:03d}',
@@ -165,19 +165,21 @@ CONFIG = {
         'train_batch_size_options': [32, 64],
         'l2_weight_range': [1e-9, 1e-4],  # [min, max] for log uniform
         'channel_mlp_expansion_options': [0.5, 1.0, 2.0],  # categorical options
-        'channel_mlp_skip_options': ['linear', 'soft-gating']  # categorical options
+        'channel_mlp_skip_options': ['linear', 'soft-gating'],  # categorical options
+        'norm_options': [None, 'group_norm'],  # Options: None, GroupNorm via neuraloperator's 'group_norm'
     },
     'SINGLE_PARAMS': {
-        "n_modes_1": 15,
-        "n_modes_2": 12,
-        "n_modes_3": 5,
-        "hidden_channels": 67,
-        "n_layers": 6,
+        "n_modes_1": 8,
+        "n_modes_2": 8,
+        "n_modes_3": 4,
+        "hidden_channels": 12,
+        "n_layers": 3,
         "domain_padding": (0.1,0.1,0.1),
         "train_batch_size": 16,
         "l2_weight": 9.338206141357252e-08,
         "channel_mlp_expansion": 1.0,
-        "channel_mlp_skip": 'soft-gating'
+        "channel_mlp_skip": 'soft-gating',
+        "norm": None
     }
 }
 
@@ -373,7 +375,7 @@ def create_model(config: Dict, train_dataset, val_dataset, test_dataset, device:
                 n_modes: Tuple[int, ...], hidden_channels: int, n_layers: int,
                 domain_padding: List[float], train_batch_size: int,
                 l2_weight: float, channel_mlp_expansion: float,
-                channel_mlp_skip: str):
+                channel_mlp_skip: str, norm: Optional[str] = None):
     """
     Create complete model setup including DataLoaders, loss function, optimizer, 
     scheduler, and model architecture.
@@ -393,6 +395,7 @@ def create_model(config: Dict, train_dataset, val_dataset, test_dataset, device:
         l2_weight: L2 weight regularization
         channel_mlp_expansion: Expansion parameter for channel MLP
         channel_mlp_skip: Skip connection type for channel MLP
+        norm: FNO block normalization option (None or 'group_norm')
 
     Returns:
         Tuple containing (model, train_loader, val_loader, test_loader, optimizer, scheduler, loss_fn)
@@ -450,6 +453,7 @@ def create_model(config: Dict, train_dataset, val_dataset, test_dataset, device:
         use_channel_mlp=True,
         channel_mlp_expansion=channel_mlp_expansion,
         channel_mlp_skip=channel_mlp_skip,
+        norm=norm,
         fno_skip='linear',
     ).to(device)
 
@@ -507,6 +511,7 @@ def create_model_from_params(
         l2_weight=float(resolved['l2_weight']),
         channel_mlp_expansion=float(resolved['channel_mlp_expansion']),
         channel_mlp_skip=resolved['channel_mlp_skip'],
+        norm=resolved.get('norm'),
     )
 
 
@@ -711,6 +716,7 @@ def optuna_optimization(config: Dict, train_dataset, val_dataset, test_dataset, 
                                                           search_space['channel_mlp_expansion_options'])
         channel_mlp_skip = trial.suggest_categorical('channel_mlp_skip',
                                                      search_space['channel_mlp_skip_options'])
+        norm = trial.suggest_categorical('norm', search_space['norm_options'])
         
         try:
             # Create model with sampled parameters
@@ -727,7 +733,8 @@ def optuna_optimization(config: Dict, train_dataset, val_dataset, test_dataset, 
                 train_batch_size=train_batch_size,
                 l2_weight=l2_weight,
                 channel_mlp_expansion=channel_mlp_expansion,
-                channel_mlp_skip=channel_mlp_skip
+                channel_mlp_skip=channel_mlp_skip,
+                norm=norm
             )
 
             # Train model and get best validation loss
