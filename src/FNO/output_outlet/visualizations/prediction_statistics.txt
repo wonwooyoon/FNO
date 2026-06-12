@@ -1,18 +1,13 @@
-Outlet Prediction Statistics
+Outlet Prediction Statistics (Log Scale)
 ==================================================
 
-Error Metrics:
-  mean_absolute_error: 2.335403e-05
-  std_absolute_error: 5.577097e-05
-  mean_relative_error: 8.116282e+02
-  std_relative_error: 1.937254e+04
-  max_absolute_error: 5.683557e-04
-  max_relative_error: 8.187876e+05
+RMSE Metrics (Log Scale):
+  rmse_log: 4.149034e-01
+  nrmse_log: 2.544778e-02
 
-RMSE Metrics:
-  rmse: 6.046331e-05
-  nrmse: 1.052897e-01
+R² Score (Log Scale):
+  r2_log: 0.977905
 
-Data Range:
-  data_min: 4.770338e-19
-  data_max: 5.742568e-04
+Data Range (Log Scale):
+  log_data_min: -1.915269e+01
+  log_data_max: -2.848585e+00

@@ -75,12 +75,19 @@ def visualize_outlet_predictions(config: Dict, device: str, model, test_loader,
     all_y_pred = torch.cat(all_y_pred, dim=0)
 
     # Denormalize outlet data
-    all_y_true_denorm = outlet_normalizer.inverse_transform(all_y_true)
-    all_y_pred_denorm = outlet_normalizer.inverse_transform(all_y_pred)
+    all_y_true_denorm_torch = outlet_normalizer.inverse_transform(all_y_true)
+    all_y_pred_denorm_torch = outlet_normalizer.inverse_transform(all_y_pred)
 
     # Convert to numpy and take absolute values for plotting (original values are negative)
-    all_y_true_denorm = torch.abs(all_y_true_denorm).numpy()
-    all_y_pred_denorm = torch.abs(all_y_pred_denorm).numpy()
+    all_y_true_denorm = torch.abs(all_y_true_denorm_torch).numpy()
+    all_y_pred_denorm = torch.abs(all_y_pred_denorm_torch).numpy()
+
+    # Extract log-scale data for metric calculation (matches training scale)
+    # OutletNormalizer pipeline: abs() → log10(x + eps) → Gaussian normalization
+    # We need: abs() → log10(x + eps) only (before Gaussian normalization)
+    # Apply to denormalized data to get back to log scale
+    all_y_true_log = torch.log10(torch.abs(all_y_true_denorm_torch) + outlet_normalizer.eps).numpy()
+    all_y_pred_log = torch.log10(torch.abs(all_y_pred_denorm_torch) + outlet_normalizer.eps).numpy()
 
     # Time points (years): [100, 200, ..., 2000] (20 points, t=0 removed during normalization)
     time_points = np.arange(100, 2001, 100)
@@ -208,53 +215,57 @@ def visualize_outlet_predictions(config: Dict, device: str, model, test_loader,
     parity_df.to_csv(parity_csv_path, index=False, float_format='%.6e')
     print(f"  ✓ Saved: {parity_csv_path}")
 
-    # 3. Compute and save statistics
-    # Compute RMSE (Root Mean Square Error)
-    rmse = np.sqrt(np.mean(abs_errors ** 2))
+    # 3. Compute and save statistics on log scale (consistent with training)
+    # Compute RMSE on log scale
+    log_errors = all_y_pred_log - all_y_true_log
+    rmse_log = np.sqrt(np.mean(log_errors ** 2))
 
-    # Compute NRMSE (Normalized RMSE using MinMax normalization)
-    # MinMax normalization: NRMSE = RMSE / (max - min)
-    data_min = all_y_true_denorm.min()
-    data_max = all_y_true_denorm.max()
-    data_range = data_max - data_min
-    nrmse = rmse / data_range if data_range > 0 else 0.0
+    # Compute NRMSE on log scale (MinMax normalization)
+    log_min = all_y_true_log.min()
+    log_max = all_y_true_log.max()
+    log_range = log_max - log_min
+    nrmse_log = rmse_log / log_range if log_range > 0 else 0.0
+
+    # Compute R² score on log scale
+    # R² = 1 - (SS_res / SS_tot)
+    # SS_res = sum((y_true - y_pred)^2)
+    # SS_tot = sum((y_true - y_mean)^2)
+    gt_flat = all_y_true_log.flatten()
+    pred_flat = all_y_pred_log.flatten()
+
+    ss_res = np.sum((gt_flat - pred_flat) ** 2)
+    ss_tot = np.sum((gt_flat - gt_flat.mean()) ** 2)
+
+    if ss_tot > 0:
+        r2_log = 1.0 - (ss_res / ss_tot)
+    else:
+        r2_log = 0.0
 
     stats = {
-        'mean_absolute_error': float(abs_errors.mean()),
-        'std_absolute_error': float(abs_errors.std()),
-        'mean_relative_error': float(rel_errors.mean()),
-        'std_relative_error': float(rel_errors.std()),
-        'max_absolute_error': float(abs_errors.max()),
-        'max_relative_error': float(rel_errors.max()),
-        'rmse': float(rmse),
-        'nrmse': float(nrmse),
-        'data_min': float(data_min),
-        'data_max': float(data_max),
+        'rmse_log': float(rmse_log),
+        'nrmse_log': float(nrmse_log),
+        'r2_log': float(r2_log),
+        'log_data_min': float(log_min),
+        'log_data_max': float(log_max),
     }
 
     stats_path = output_dir / 'prediction_statistics.txt'
     with open(stats_path, 'w') as f:
-        f.write("Outlet Prediction Statistics\n")
+        f.write("Outlet Prediction Statistics (Log Scale)\n")
         f.write("="*50 + "\n\n")
-        f.write("Error Metrics:\n")
-        f.write(f"  mean_absolute_error: {stats['mean_absolute_error']:.6e}\n")
-        f.write(f"  std_absolute_error: {stats['std_absolute_error']:.6e}\n")
-        f.write(f"  mean_relative_error: {stats['mean_relative_error']:.6e}\n")
-        f.write(f"  std_relative_error: {stats['std_relative_error']:.6e}\n")
-        f.write(f"  max_absolute_error: {stats['max_absolute_error']:.6e}\n")
-        f.write(f"  max_relative_error: {stats['max_relative_error']:.6e}\n\n")
-        f.write("RMSE Metrics:\n")
-        f.write(f"  rmse: {stats['rmse']:.6e}\n")
-        f.write(f"  nrmse: {stats['nrmse']:.6e}\n\n")
-        f.write("Data Range:\n")
-        f.write(f"  data_min: {stats['data_min']:.6e}\n")
-        f.write(f"  data_max: {stats['data_max']:.6e}\n")
+        f.write("RMSE Metrics (Log Scale):\n")
+        f.write(f"  rmse_log: {stats['rmse_log']:.6e}\n")
+        f.write(f"  nrmse_log: {stats['nrmse_log']:.6e}\n\n")
+        f.write("R² Score (Log Scale):\n")
+        f.write(f"  r2_log: {stats['r2_log']:.6f}\n\n")
+        f.write("Data Range (Log Scale):\n")
+        f.write(f"  log_data_min: {stats['log_data_min']:.6e}\n")
+        f.write(f"  log_data_max: {stats['log_data_max']:.6e}\n")
 
     print(f"  ✓ Saved: {stats_path}")
     print(f"\nVisualization complete!")
-    print(f"  Mean Absolute Error: {stats['mean_absolute_error']:.6e} mol")
-    print(f"  Mean Relative Error: {stats['mean_relative_error']:.4f}")
-    print(f"  RMSE: {stats['rmse']:.6e} mol")
-    print(f"  NRMSE: {stats['nrmse']:.6e}")
+    print(f"  RMSE (log scale): {stats['rmse_log']:.6e}")
+    print(f"  NRMSE (log scale): {stats['nrmse_log']:.6e}")
+    print(f"  R² (log scale): {stats['r2_log']:.6f}")
 
     return stats

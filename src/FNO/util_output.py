@@ -4,7 +4,7 @@ Unified Output Utility for FNO Models
 This module consolidates all output-related functions including:
 - Image visualization (combined grids and separated images)
 - GIF generation for temporal evolution
-- Detailed evaluation metrics (RMSE, SSIM, parity plots)
+- Detailed evaluation metrics (Relative L2, SSIM, parity plots)
 - Integrated Gradients attribution analysis
 
 All outputs are organized into subdirectories for better file management.
@@ -489,56 +489,6 @@ def create_all_gifs(
 # Section 3: Detailed Evaluation (Metrics) Functions
 # ==============================================================================
 
-def compute_rmse_per_time(
-    pred: np.ndarray,
-    gt: np.ndarray,
-    normalize: bool = False,
-    min_per_time: Optional[np.ndarray] = None,
-    max_per_time: Optional[np.ndarray] = None
-) -> np.ndarray:
-    """
-    Compute RMSE for each time index of a single sample.
-
-    Args:
-        pred: Prediction array of shape (nx, ny, nt)
-        gt: Ground truth array of shape (nx, ny, nt)
-        normalize: If True, apply MinMax normalization before computing RMSE
-        min_per_time: Min values across all samples for each time (nt,).
-                      Required if normalize=True.
-        max_per_time: Max values across all samples for each time (nt,).
-                      Required if normalize=True.
-
-    Returns:
-        Array of RMSE (or NRMSE if normalized) values of shape (nt,)
-    """
-    nx, ny, nt = pred.shape
-    rmse_values = np.zeros(nt)
-
-    for t in range(nt):
-        pred_t = pred[:, :, t]
-        gt_t = gt[:, :, t]
-
-        if normalize:
-            if min_per_time is None or max_per_time is None:
-                raise ValueError("min_per_time and max_per_time must be provided when normalize=True")
-
-            # MinMax normalization
-            min_t = min_per_time[t]
-            max_t = max_per_time[t]
-            range_t = max_t - min_t
-
-            pred_t_norm = (pred_t - min_t) / range_t
-            gt_t_norm = (gt_t - min_t) / range_t
-
-            # RMSE on normalized values
-            rmse_values[t] = np.sqrt(np.mean((pred_t_norm - gt_t_norm) ** 2))
-        else:
-            # Absolute RMSE
-            rmse_values[t] = np.sqrt(np.mean((pred_t - gt_t) ** 2))
-
-    return rmse_values
-
-
 def compute_ssim_per_time(pred: np.ndarray, gt: np.ndarray) -> np.ndarray:
     """
     Compute SSIM for each time index of a single sample.
@@ -573,6 +523,158 @@ def compute_ssim_per_time(pred: np.ndarray, gt: np.ndarray) -> np.ndarray:
             )
 
     return ssim_values
+
+
+def compute_case_relative_l2(
+    pred: np.ndarray,
+    gt: np.ndarray
+) -> float:
+    """
+    Compute case-wise Relative L2 error on physical values.
+
+    Matches the training loss definition for p=2:
+        ||pred - gt||_2 / (||gt||_2 + eps)
+
+    Args:
+        pred: Prediction array of shape (nx, ny, nt)
+        gt: Ground truth array of shape (nx, ny, nt)
+
+    Returns:
+        Relative L2 value for the case (scalar in range [0, ∞))
+    """
+    eps = 0
+    diff_norm = np.sqrt(np.sum((pred - gt) ** 2))
+    gt_norm = np.sqrt(np.sum(gt ** 2))
+    return float(diff_norm / (gt_norm + eps))
+
+
+def compute_relative_l2_per_time(
+    pred: np.ndarray,
+    gt: np.ndarray
+) -> np.ndarray:
+    """
+    Compute time-wise Relative L2 on physical values.
+
+    For each time t:
+        RelL2_t = ||pred_t - gt_t||_2 / (||gt_t||_2 + eps)
+
+    Args:
+        pred: Prediction array of shape (nx, ny, nt)
+        gt: Ground truth array of shape (nx, ny, nt)
+
+    Returns:
+        Array RelL2_t of shape (nt,)
+    """
+    eps = 0
+    diff_norm_per_time = np.sqrt(np.sum((pred - gt) ** 2, axis=(0, 1)))
+    gt_norm_per_time = np.sqrt(np.sum(gt ** 2, axis=(0, 1)))
+    return diff_norm_per_time / (gt_norm_per_time + eps)
+
+
+def compute_r2_score(pred: np.ndarray, gt: np.ndarray) -> float:
+    """
+    Compute R² (coefficient of determination) score.
+
+    R² measures the proportion of variance in the ground truth that is
+    predictable from the model. It is a standard metric for regression
+    model quality.
+
+    Formula:
+        R² = 1 - (SS_res / SS_tot)
+        where:
+            SS_res = Σ(y_true - y_pred)²  (residual sum of squares)
+            SS_tot = Σ(y_true - y_mean)²  (total sum of squares)
+
+    Args:
+        pred: Prediction array of shape (nx, ny, nt)
+        gt: Ground truth array of shape (nx, ny, nt)
+
+    Returns:
+        R² score (scalar, typically in range (-∞, 1])
+        - R² = 1.0: Perfect prediction (all variance explained)
+        - R² = 0.0: Model as good as mean baseline
+        - R² < 0.0: Model worse than mean baseline
+    """
+    # Flatten arrays for scalar computation
+    pred_flat = pred.flatten()
+    gt_flat = gt.flatten()
+
+    # Compute mean of ground truth
+    gt_mean = np.mean(gt_flat)
+
+    # Sum of squared residuals (prediction error)
+    ss_res = np.sum((gt_flat - pred_flat) ** 2)
+
+    # Total sum of squares (variance in ground truth)
+    ss_tot = np.sum((gt_flat - gt_mean) ** 2)
+
+    # Handle edge case: zero variance in ground truth
+    if ss_tot < 1e-20:
+        # If ground truth is constant and prediction matches, R² = 1
+        return 1.0 if ss_res < 1e-20 else 0.0
+
+    # Compute R² score
+    r2 = 1.0 - (ss_res / ss_tot)
+
+    return r2
+
+
+def compute_global_r2_score(
+    pred_phys: np.ndarray,
+    gt_phys: np.ndarray
+) -> float:
+    """
+    Compute global R² score across ALL samples.
+
+    Unlike computing R² per sample and averaging them, this function
+    computes a single R² value by treating all samples as one large
+    dataset. This is mathematically correct for evaluating overall
+    model performance across the entire test set.
+
+    Mathematical difference:
+        Method 1 (incorrect): Mean(R²_i) = (1/N) Σ R²_i
+        Method 2 (correct):   R²_global = 1 - (Σ SS_res_i / Σ SS_tot_i)
+
+    These are NOT equivalent because:
+        - SS_res is linear: Σ SS_res_i = SS_res_global ✓
+        - SS_tot is NOT linear: Σ SS_tot_i ≠ SS_tot_global ✗
+          (each sample has different mean)
+
+    Args:
+        pred_phys: Predictions of shape (N, nx, ny, nt)
+        gt_phys: Ground truth of shape (N, nx, ny, nt)
+
+    Returns:
+        Global R² score (scalar, typically in range (-∞, 1])
+        - R² = 1.0: Perfect prediction across all samples
+        - R² = 0.0: Model as good as global mean baseline
+        - R² < 0.0: Model worse than global mean baseline
+
+    Note:
+        This value is typically higher than the mean of per-sample R²
+        values because it also accounts for inter-sample variance.
+    """
+    # Flatten ALL data (concatenate all samples into one long vector)
+    pred_all = pred_phys.flatten()  # (N×nx×ny×nt,)
+    gt_all = gt_phys.flatten()
+
+    # Compute GLOBAL mean (mean of all data points across all samples)
+    gt_mean_global = np.mean(gt_all)
+
+    # Global sum of squared residuals
+    ss_res_global = np.sum((gt_all - pred_all) ** 2)
+
+    # Global total sum of squares
+    ss_tot_global = np.sum((gt_all - gt_mean_global) ** 2)
+
+    # Handle edge case: zero variance in ground truth
+    if ss_tot_global < 1e-20:
+        return 1.0 if ss_res_global < 1e-20 else 0.0
+
+    # Compute global R² score
+    r2_global = 1.0 - (ss_res_global / ss_tot_global)
+
+    return r2_global
 
 
 def add_mean_column(df: pd.DataFrame, exclude_col: str = 'time') -> pd.DataFrame:
@@ -727,7 +829,7 @@ def detailed_evaluation(
     verbose: bool = True
 ) -> Dict:
     """
-    Perform detailed evaluation computing RMSE, NRMSE, and SSIM per time index.
+    Perform detailed evaluation computing Relative-L2-based metrics and optional SSIM.
 
     Args:
         config: Configuration dictionary
@@ -784,78 +886,120 @@ def detailed_evaluation(
     n_samples = pred_phys.shape[0]
     n_time = pred_phys.shape[-1]
 
-    # Check if NRMSE computation is enabled
-    compute_nrmse = config.get('OUTPUT', {}).get('DETAIL_EVAL', {}).get('COMPUTE_NRMSE', False)
+    # Check metric toggles
+    compute_relative_l2 = config.get('OUTPUT', {}).get('DETAIL_EVAL', {}).get('COMPUTE_RELATIVE_L2', False)
+    compute_ssim = config.get('OUTPUT', {}).get('DETAIL_EVAL', {}).get('COMPUTE_SSIM', True)
 
-    # Compute min/max values if NRMSE is enabled
-    min_per_time = None
-    max_per_time = None
-    if compute_nrmse:
-        gt_np = gt_phys[:, 0].numpy()  # (N, nx, ny, nt)
-        min_per_time = np.zeros(n_time)
-        max_per_time = np.zeros(n_time)
-        for t in range(n_time):
-            min_per_time[t] = gt_np[:, :, :, t].min()
-            max_per_time[t] = gt_np[:, :, :, t].max()
+    if compute_relative_l2:
+        if verbose:
+            print("  Relative L2 metrics are enabled (physical-value basis).")
+    if compute_ssim:
+        if verbose:
+            print("  SSIM metrics are enabled.")
 
-    # Compute RMSE and optionally NRMSE per time for each sample
-    rmse_data = {'time': list(range(n_time))}
-    nrmse_data = {'time': list(range(n_time))} if compute_nrmse else None
-    ssim_data = {'time': list(range(n_time))}
+    # Compute time-wise Relative L2 and optional SSIM per sample
+    relative_l2_data = {'time': list(range(n_time))} if compute_relative_l2 else None
+    ssim_data = {'time': list(range(n_time))} if compute_ssim else None
 
     for sample_idx in range(n_samples):
         pred_sample = pred_phys[sample_idx, 0].numpy()  # (nx, ny, nt)
         gt_sample = gt_phys[sample_idx, 0].numpy()
 
-        # Compute absolute RMSE
-        rmse_values = compute_rmse_per_time(pred_sample, gt_sample, normalize=False)
-        rmse_data[f'sample_{sample_idx}'] = rmse_values
+        # Compute time-wise Relative L2 if enabled
+        if compute_relative_l2:
+            relative_l2_values = compute_relative_l2_per_time(pred_sample, gt_sample)
+            relative_l2_data[f'sample_{sample_idx}'] = relative_l2_values
 
-        # Compute normalized RMSE (NRMSE) if enabled
-        if compute_nrmse:
-            nrmse_values = compute_rmse_per_time(
-                pred_sample, gt_sample,
-                normalize=True,
-                min_per_time=min_per_time,
-                max_per_time=max_per_time
-            )
-            nrmse_data[f'sample_{sample_idx}'] = nrmse_values
+        # Compute SSIM if enabled
+        if compute_ssim:
+            ssim_values = compute_ssim_per_time(pred_sample, gt_sample)
+            ssim_data[f'sample_{sample_idx}'] = ssim_values
 
-        # Compute SSIM
-        ssim_values = compute_ssim_per_time(pred_sample, gt_sample)
-        ssim_data[f'sample_{sample_idx}'] = ssim_values
+    # Create DataFrames for per-time metrics
+    relative_l2_df = pd.DataFrame(relative_l2_data) if compute_relative_l2 else None
+    ssim_df = pd.DataFrame(ssim_data) if compute_ssim else None
 
-    # Create DataFrames
-    rmse_df = pd.DataFrame(rmse_data)
-    nrmse_df = pd.DataFrame(nrmse_data) if compute_nrmse else None
-    ssim_df = pd.DataFrame(ssim_data)
-
-    # Add mean columns
+    # Add mean columns to per-time metrics
     add_mean = config.get('OUTPUT', {}).get('DETAIL_EVAL', {}).get('ADD_MEAN_COLUMN', True)
     if add_mean:
-        rmse_df = add_mean_column(rmse_df, exclude_col='time')
-        if compute_nrmse and nrmse_df is not None:
-            nrmse_df = add_mean_column(nrmse_df, exclude_col='time')
-        ssim_df = add_mean_column(ssim_df, exclude_col='time')
+        if compute_relative_l2 and relative_l2_df is not None:
+            relative_l2_df = add_mean_column(relative_l2_df, exclude_col='time')
+        if compute_ssim and ssim_df is not None:
+            ssim_df = add_mean_column(ssim_df, exclude_col='time')
 
-    # Save RMSE and SSIM
-    rmse_path = output_dir / 'rmse_evolution.csv'
-    ssim_path = output_dir / 'ssim_evolution.csv'
-
-    rmse_df.to_csv(rmse_path, index=False)
-    ssim_df.to_csv(ssim_path, index=False)
-
-    if verbose:
-        print(f"  RMSE evolution saved: {rmse_path.name}")
-        print(f"  SSIM evolution saved: {ssim_path.name}")
-
-    # Save NRMSE if enabled
-    nrmse_path = None
-    if compute_nrmse and nrmse_df is not None:
-        nrmse_path = output_dir / 'nrmse_evolution.csv'
-        nrmse_df.to_csv(nrmse_path, index=False)
+    # Compute global metrics (case-wise Relative L2 and global R²) if enabled
+    global_metrics_df = None
+    if compute_relative_l2:
         if verbose:
-            print(f"  NRMSE evolution saved: {nrmse_path.name}")
+            print("  Computing global metrics (case Relative L2 and global R²)...")
+
+        case_relative_l2_values = []
+
+        # Compute per-sample case Relative L2
+        for sample_idx in range(n_samples):
+            pred_sample = pred_phys[sample_idx, 0].numpy()  # (nx, ny, nt)
+            gt_sample = gt_phys[sample_idx, 0].numpy()
+
+            case_rel_l2 = compute_case_relative_l2(pred_sample, gt_sample)
+            case_relative_l2_values.append(case_rel_l2)
+
+        # Compute global R² across ALL samples (mathematically correct)
+        gt_np = gt_phys[:, 0].numpy()    # (N, nx, ny, nt)
+        pred_np = pred_phys[:, 0].numpy()  # (N, nx, ny, nt)
+        r2_global = compute_global_r2_score(pred_np, gt_np)
+
+        # Create DataFrame for global metrics
+        global_metrics_df = pd.DataFrame({
+            'sample': [f'sample_{i}' for i in range(n_samples)],
+            'case_relative_l2': case_relative_l2_values
+        })
+
+        # Add summary row with mean Relative L2 and global R²
+        if add_mean:
+            mean_row = pd.DataFrame({
+                'sample': ['mean'],
+                'case_relative_l2': [np.mean(case_relative_l2_values)]
+            })
+            global_metrics_df = pd.concat([global_metrics_df, mean_row], ignore_index=True)
+
+        # Add global R² as a separate column (single value for entire dataset)
+        global_metrics_df['r2_score'] = np.nan  # Initialize with NaN
+        # Only set R² in the mean/summary row
+        if add_mean:
+            global_metrics_df.loc[global_metrics_df['sample'] == 'mean', 'r2_score'] = r2_global
+
+    # Save SSIM if enabled
+    ssim_path = None
+    if compute_ssim and ssim_df is not None:
+        ssim_path = output_dir / 'ssim_evolution.csv'
+        ssim_df.to_csv(ssim_path, index=False)
+        if verbose:
+            print(f"  SSIM evolution saved: {ssim_path.name}")
+
+    # Save Relative L2 evolution if enabled
+    relative_l2_path = None
+    if compute_relative_l2 and relative_l2_df is not None:
+        relative_l2_path = output_dir / 'relative_l2_evolution.csv'
+        relative_l2_df.to_csv(relative_l2_path, index=False)
+        if verbose:
+            print(f"  Relative L2 evolution saved: {relative_l2_path.name}")
+
+    # Save global metrics if enabled
+    global_metrics_path = None
+    if compute_relative_l2 and global_metrics_df is not None:
+        global_metrics_path = output_dir / 'global_metrics.csv'
+        global_metrics_df.to_csv(global_metrics_path, index=False)
+
+        if verbose:
+            print(f"  Global metrics saved: {global_metrics_path.name}")
+
+            # Print summary statistics
+            mean_idx = global_metrics_df[global_metrics_df['sample'] == 'mean'].index
+            if len(mean_idx) > 0:
+                mean_relative_l2 = global_metrics_df.loc[mean_idx[0], 'case_relative_l2']
+                global_r2 = global_metrics_df.loc[mean_idx[0], 'r2_score']
+                print(f"    Mean Case Relative L2: {mean_relative_l2:.6f}")
+                print(f"    Global R² Score (all samples): {global_r2:.6f}")
 
     # Generate parity plot data if enabled
     parity_paths = []
@@ -863,12 +1007,12 @@ def detailed_evaluation(
         parity_paths = generate_parity_csv(pred_phys, gt_phys, output_dir, config, verbose)
 
     return {
-        'rmse_df': rmse_df,
-        'nrmse_df': nrmse_df,
+        'relative_l2_df': relative_l2_df,
         'ssim_df': ssim_df,
-        'rmse_path': rmse_path,
-        'nrmse_path': nrmse_path,
+        'global_metrics_df': global_metrics_df,
+        'relative_l2_path': relative_l2_path,
         'ssim_path': ssim_path,
+        'global_metrics_path': global_metrics_path,
         'parity_paths': parity_paths
     }
 

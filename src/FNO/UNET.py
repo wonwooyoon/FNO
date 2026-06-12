@@ -21,6 +21,7 @@ sys.path.append('./')
 import math
 import shutil
 import json
+import pickle
 from pathlib import Path
 from typing import Dict, List, Tuple, Any, Optional
 
@@ -35,23 +36,30 @@ import matplotlib.colors as colors
 from torch.utils.data import DataLoader, Dataset
 from sklearn.model_selection import train_test_split
 
-from neuraloperator.neuralop.data.transforms.normalizers import UnitGaussianNormalizer
-from neuraloperator.neuralop.data.transforms.data_processors import DefaultDataProcessor
 from neuraloperator.neuralop.training import AdamW
+
+# Import preprocessing normalizer (needed for loading ChannelNormalizer from pickle)
+preprocessing_path = Path(__file__).parent.parent / 'preprocessing'
+if str(preprocessing_path) not in sys.path:
+    sys.path.insert(0, str(preprocessing_path))
+from preprocessing_normalize import ChannelNormalizer
 
 # ==============================================================================
 # Configuration
 # ==============================================================================
 CONFIG = {
-    'MERGED_PT_PATH': './src/preprocessing/merged.pt',
+    # Data paths - updated to use pre-normalized data (matches FNO.py)
+    'SPECIES_TYPE': 'u',  # Options: 'u' (uranium), 'ca' (calcium), 'c' (carbonate)
+    'MERGED_PT_PATH': './src/preprocessing/merged_normalized_U.pt',  # Pre-normalized data
+    'CHANNEL_NORMALIZER_PATH': './src/preprocessing/normalizer_u_delta.pkl',  # Normalizer (must match species and output mode)
     'OUTPUT_DIR': './src/FNO/output_unet',
-    'N_EPOCHS': 10000,
+    'N_EPOCHS': 150,
     'EVAL_INTERVAL': 1,
     'VAL_SIZE': 0.1,  # Validation set size
     'TEST_SIZE': 0.1,  # Test set size
     'RANDOM_STATE': 42,
     'MODEL_CONFIG': {
-        'in_channels': 9,  # 7 original channels + 2 uniform meta channels
+        'in_channels': 11,  # 10 original channels (with material one-hot) + 1 uniform meta channel (matches FNO)
         'out_channels': 1,
         'init_features': 32,  # Initial number of features for U-Net
     },
@@ -62,12 +70,12 @@ CONFIG = {
         'T_max': 40,
         'T_mult': 2,
         'eta_min': 1e-5,
-        'step_size': 20,
+        'step_size': 10,
         'gamma': 0.5,
-        'initial_lr': 1e-3,
+        'initial_lr': 1e-2,
     },
     'VISUALIZATION': {
-        'SAMPLE_NUM': [1, 50, 70, 90, 111],  # Can be single int or list: e.g., [121, 122, 123]
+        'SAMPLE_NUM': [1, 5, 15, 20, 25],  # Can be single int or list: e.g., [121, 122, 123]
         'TIME_INDICES': (4, 9, 14, 19),
         'DPI': 200,
         'SAVEASCSV': True  # Save visualization data as CSV format
@@ -92,9 +100,9 @@ CONFIG = {
         'dropout_rate_range': [0.0, 0.3],  # Dropout rate
     },
     'SINGLE_PARAMS': {
-        "depth": 3,
-        "init_features": 32,
-        "train_batch_size": 32,
+        "depth": 4,
+        "init_features": 64,
+        "train_batch_size": 16,
         "l2_weight": 1e-5,
         "dropout_rate": 0.1,
     }
@@ -134,25 +142,24 @@ class CustomDatasetPure(Dataset):
 
 def preprocessing(config: Dict, verbose: bool = True) -> Tuple:
     """
-    Unified data preprocessing function for Pure U-Net training.
+    Load pre-normalized data and perform train/val/test split.
 
     Processing Steps:
-    1. Load saved tensors (x, y, meta)
-    2. Transform meta data to uniform channels and combine with input
-    3. Create normalizers and fit them, form DefaultDataProcessor
-    4. Perform train/val/test split and create datasets
-    5. Return necessary objects for training
+    1. Load normalized tensors (x, y_u/y_ca/y_c already combined and normalized)
+    2. Load channel-wise normalizer from pickle file
+    3. Perform train/val/test split and create datasets
+    4. Return necessary objects for training
 
     Args:
         config: Configuration dictionary containing paths and parameters
         verbose: Whether to print progress information
 
     Returns:
-        Tuple containing (processor, train_dataset, val_dataset, test_dataset, device)
+        Tuple containing (channel_normalizer, train_dataset, val_dataset, test_dataset, device)
     """
 
     if verbose:
-        print(f"\nStarting unified data preprocessing...")
+        print(f"\nLoading pre-normalized data and creating datasets...")
 
     # Determine device
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -160,92 +167,78 @@ def preprocessing(config: Dict, verbose: bool = True) -> Tuple:
         print(f"Using device: {device}")
 
     try:
-        # Step 1: Load saved tensors
+        # Step 1: Load normalized tensors
         if verbose:
-            print("Step 1: Loading merged tensors...")
+            print("Step 1: Loading normalized tensors...")
 
         if not Path(config['MERGED_PT_PATH']).exists():
-            raise FileNotFoundError(f"Merged file not found: {config['MERGED_PT_PATH']}")
+            raise FileNotFoundError(f"Normalized file not found: {config['MERGED_PT_PATH']}")
 
         bundle = torch.load(config['MERGED_PT_PATH'], map_location="cpu", weights_only=False)
 
-        required_keys = ["x", "y", "meta"]
+        # Determine output key based on species type
+        species_map = {'u': 'y_u', 'ca': 'y_ca', 'c': 'y_c'}
+        species_type = config.get('SPECIES_TYPE', 'u')
+
+        if species_type not in species_map:
+            raise ValueError(f"Invalid SPECIES_TYPE: {species_type}. Must be one of {list(species_map.keys())}")
+
+        output_key = species_map[species_type]
+
+        required_keys = ["x", output_key]
         missing_keys = [key for key in required_keys if key not in bundle]
         if missing_keys:
-            raise KeyError(f"Missing required keys in data: {missing_keys}")
+            raise KeyError(f"Missing required keys in normalized data: {missing_keys}")
 
-        # Keep data on CPU to avoid VRAM issues during preprocessing
-        in_data = bundle["x"].float()
-        out_data = bundle["y"].float()
-        meta_data = bundle["meta"].float()
+        # Data is already normalized and combined (includes meta channel)
+        combined_input = bundle["x"].float()   # (N, 11, nx, ny, nt) - already normalized
+        out_data = bundle[output_key].float()  # (N, 1, nx, ny, nt) - already normalized
 
         if verbose:
-            print(f"   Loaded tensors - Input: {tuple(in_data.shape)}, Output: {tuple(out_data.shape)}, Meta: {tuple(meta_data.shape)}")
+            print(f"   Loaded normalized tensors - Input: {tuple(combined_input.shape)}, Output: {tuple(out_data.shape)}")
+            print(f"   Species type: {species_type}, Output key: {output_key}")
 
     except Exception as e:
-        raise RuntimeError(f"Failed at Step 1 (tensor loading): {e}")
+        raise RuntimeError(f"Failed at Step 1 (loading normalized data): {e}")
 
     try:
-        # Step 2: Transform meta data to uniform channels and combine
+        # Step 2: Load channel-wise normalizer from pickle
         if verbose:
-            print("Step 2: Expanding meta channels and combining with input...")
+            print("Step 2: Loading channel-wise normalizer from pickle...")
 
-        # Expand meta data to uniform spatial channels and combine with input
-        N, original_channels, nx, ny, nt = in_data.shape
+        # Get pickle path from config
+        if 'CHANNEL_NORMALIZER_PATH' in config and config['CHANNEL_NORMALIZER_PATH']:
+            pickle_path = Path(config['CHANNEL_NORMALIZER_PATH'])
+        else:
+            # Fallback: same directory as normalized data
+            data_path = Path(config['MERGED_PT_PATH'])
+            pickle_path = data_path.parent / f'normalizer_{species_type}_log.pkl'
 
-        # Handle both 1D and 2D meta tensors
-        if len(meta_data.shape) == 1:
-            meta_data = meta_data.unsqueeze(1)  # (N,) -> (N, 1)
+        if not pickle_path.exists():
+            raise FileNotFoundError(
+                f"Channel normalizer pickle not found: {pickle_path}\n"
+                f"Please ensure CHANNEL_NORMALIZER_PATH in CONFIG points to the correct file.\n"
+                f"Expected file corresponds to the species type and output mode used during preprocessing."
+            )
 
-        N_meta, meta_channels = meta_data.shape
+        with open(pickle_path, 'rb') as f:
+            channel_normalizer = pickle.load(f)
 
-        if N != N_meta:
-            raise ValueError(f"Batch size mismatch: input_tensor {N}, meta_tensor {N_meta}")
-
-        # Expand meta tensor to match spatial dimensions
-        # Shape: (N, meta_channels) -> (N, meta_channels, nx, ny, nt)
-        expanded_meta = meta_data.unsqueeze(2).unsqueeze(3).unsqueeze(4)  # (N, meta_channels, 1, 1, 1)
-        expanded_meta = expanded_meta.expand(N, meta_channels, nx, ny, nt)   # (N, meta_channels, nx, ny, nt)
-
-        # Concatenate along channel dimension
-        combined_input = torch.cat([in_data, expanded_meta], dim=1)
+        # Move to device
+        channel_normalizer = channel_normalizer.to(device)
 
         if verbose:
-            print(f"   Combined input shape: {tuple(combined_input.shape)}")
+            print(f"   Channel normalizer loaded from: {pickle_path}")
+            print(f"   Output mode: {channel_normalizer.output_mode}")
+            print(f"   Moved to device: {device}")
 
     except Exception as e:
-        raise RuntimeError(f"Failed at Step 2 (meta channel expansion): {e}")
+        raise RuntimeError(f"Failed at Step 2 (loading normalizer): {e}")
 
     try:
-        # Step 3: Create normalizers and processor
+        # Step 3: Perform train/val/test split and create datasets
         if verbose:
-            print("Step 3: Creating normalizers and data processor...")
-
-        # Create normalizers for combined input and output (on CPU)
-        in_normalizer = UnitGaussianNormalizer(
-            mean=combined_input, std=combined_input, dim=[0,2,3,4], eps=1e-6
-        )
-        out_normalizer = UnitGaussianNormalizer(
-            mean=out_data, std=out_data, dim=[0,2,3,4], eps=1e-6
-        )
-
-        # Fit normalizers on CPU data
-        in_normalizer.fit(combined_input)
-        out_normalizer.fit(out_data)
-
-        # Create processor and move only the processor to device
-        processor = DefaultDataProcessor(in_normalizer, out_normalizer).to(device)
-
-        if verbose:
-            print("   Normalizers and processor created successfully")
-
-    except Exception as e:
-        raise RuntimeError(f"Failed at Step 3 (normalizer creation): {e}")
-
-    try:
-        # Step 4: Perform train/val/test split and create datasets
-        if verbose:
-            print("Step 4: Creating train/val/test datasets...")
+            print("Step 3: Creating train/val/test datasets...")
 
         # First split: separate test set (final 10%)
         train_temp_combined, test_combined, train_temp_out, test_out = train_test_split(
@@ -263,7 +256,7 @@ def preprocessing(config: Dict, verbose: bool = True) -> Tuple:
             random_state=config['RANDOM_STATE']
         )
 
-        # Create datasets with already combined inputs
+        # Create datasets with already combined and normalized inputs
         train_dataset = CustomDatasetPure(train_combined, train_out)
         val_dataset = CustomDatasetPure(val_combined, val_out)
         test_dataset = CustomDatasetPure(test_combined, test_out)
@@ -276,13 +269,13 @@ def preprocessing(config: Dict, verbose: bool = True) -> Tuple:
             print(f"   Split ratios: Train {len(train_dataset)/total_size:.1%}, Val {len(val_dataset)/total_size:.1%}, Test {len(test_dataset)/total_size:.1%}")
 
     except Exception as e:
-        raise RuntimeError(f"Failed at Step 4 (dataset creation): {e}")
+        raise RuntimeError(f"Failed at Step 3 (dataset creation): {e}")
 
     if verbose:
         print("Data preprocessing completed successfully!")
 
-    # Step 5: Return necessary objects
-    return (processor, train_dataset, val_dataset, test_dataset, device)
+    # Step 4: Return necessary objects
+    return (channel_normalizer, train_dataset, val_dataset, test_dataset, device)
 
 # ==============================================================================
 # Loss Function Options
@@ -605,14 +598,16 @@ def create_model(config: Dict, train_dataset, val_dataset, test_dataset, device:
 # Training Functions
 # ==============================================================================
 
-def train_model(config: Dict, processor, device: str, model, train_loader, val_loader, test_loader,
+def train_model(config: Dict, channel_normalizer, device: str, model, train_loader, val_loader, test_loader,
                 optimizer, scheduler, loss_fn, verbose: bool = True):
     """
     Train the U-Net model with early stopping and loss tracking.
 
+    Note: Data is already normalized, so no transformation is applied during training.
+
     Args:
         config: Configuration dictionary
-        processor: Data processor for normalization
+        channel_normalizer: ChannelNormalizer for inverse transform (not used in training)
         device: Device to use (cuda/cpu)
         model: U-Net model to train
         train_loader: Training data loader
@@ -653,10 +648,7 @@ def train_model(config: Dict, processor, device: str, model, train_loader, val_l
             x = batch['x'].to(device)
             y = batch['y'].to(device)
 
-            # Apply input and output normalization for consistent training
-            x = processor.in_normalizer.transform(x)
-            y = processor.out_normalizer.transform(y)
-
+            # Data is already normalized - no transformation needed
             optimizer.zero_grad()
             pred = model(x)
             loss = loss_fn(pred, y)
@@ -679,9 +671,7 @@ def train_model(config: Dict, processor, device: str, model, train_loader, val_l
                 x = batch['x'].to(device)
                 y = batch['y'].to(device)
 
-                x = processor.in_normalizer.transform(x)
-                y = processor.out_normalizer.transform(y)
-
+                # Data is already normalized - no transformation needed
                 pred = model(x)
                 loss = loss_fn(pred, y)
                 total_val_loss += loss.item()
@@ -748,13 +738,15 @@ def train_model(config: Dict, processor, device: str, model, train_loader, val_l
     return model
 
 
-def model_evaluation(config: Dict, processor, device: str, model, test_loader, loss_fn, verbose: bool = True):
+def model_evaluation(config: Dict, channel_normalizer, device: str, model, test_loader, loss_fn, verbose: bool = True):
     """
     Evaluate the trained model on test set and print detailed results.
 
+    Note: Data is already normalized, so no transformation is applied during evaluation.
+
     Args:
         config: Configuration dictionary
-        processor: Data processor for normalization
+        channel_normalizer: ChannelNormalizer for inverse transform (not used in evaluation)
         device: Device to use (cuda/cpu)
         model: Trained model to evaluate
         test_loader: Test data loader
@@ -782,9 +774,7 @@ def model_evaluation(config: Dict, processor, device: str, model, test_loader, l
             x = batch['x'].to(device)
             y = batch['y'].to(device)
 
-            x = processor.in_normalizer.transform(x)
-            y = processor.out_normalizer.transform(y)
-
+            # Data is already normalized - no transformation needed
             pred = model(x)
             loss = loss_fn(pred, y)
             total_test_loss += loss.item()
@@ -826,14 +816,14 @@ def model_evaluation(config: Dict, processor, device: str, model, test_loader, l
 # Optuna Optimization Functions
 # ==============================================================================
 
-def optuna_optimization(config: Dict, processor, train_dataset, val_dataset, test_dataset, device: str,
+def optuna_optimization(config: Dict, channel_normalizer, train_dataset, val_dataset, test_dataset, device: str,
                         verbose: bool = True) -> Dict:
     """
     Perform hyperparameter optimization using Optuna.
 
     Args:
         config: Configuration dictionary
-        processor: Data processor for normalization
+        channel_normalizer: ChannelNormalizer for inverse transform
         train_dataset: Training dataset
         val_dataset: Validation dataset
         test_dataset: Test dataset
@@ -896,7 +886,7 @@ def optuna_optimization(config: Dict, processor, train_dataset, val_dataset, tes
             # Train model and get best validation loss
             trained_model = train_model(
                 config=config,
-                processor=processor,
+                channel_normalizer=channel_normalizer,
                 device=device,
                 model=model,
                 train_loader=train_loader,
@@ -1090,21 +1080,22 @@ def optuna_optimization(config: Dict, processor, train_dataset, val_dataset, tes
 # Visualization Functions
 # ==============================================================================
 
-def visualize_single_sample(config: Dict, processor, device: str, trained_model,
+def visualize_single_sample(config: Dict, device: str, trained_model,
                            pred_phys: torch.Tensor, gt_phys: torch.Tensor,
                            input_phys: torch.Tensor, sample_idx: int,
                            verbose: bool = True) -> Dict:
     """
     Generate visualization for a single sample.
 
+    Note: pred_phys and gt_phys are already in physical scale (inverse transformed).
+
     Args:
         config: Configuration dictionary.
-        processor: Data processor for normalization.
         device: Device to use (e.g., 'cuda' or 'cpu').
         trained_model: The trained U-Net model.
-        pred_phys: Physical scale predictions tensor.
-        gt_phys: Ground truth tensor.
-        input_phys: Input tensor.
+        pred_phys: Physical scale predictions tensor (already inverse transformed).
+        gt_phys: Ground truth tensor (already inverse transformed).
+        input_phys: Input tensor (normalized).
         sample_idx: Index of the sample to visualize.
         verbose: If True, prints progress information.
 
@@ -1237,7 +1228,7 @@ def visualize_single_sample(config: Dict, processor, device: str, trained_model,
     return csv_data
 
 
-def visualization(config: Dict, processor, device: str, trained_model, train_dataset,
+def visualization(config: Dict, channel_normalizer, device: str, trained_model, train_dataset,
                  test_dataset, verbose: bool = True):
     """
     Generate visualizations for multiple samples:
@@ -1247,7 +1238,7 @@ def visualization(config: Dict, processor, device: str, trained_model, train_dat
 
     Args:
         config: Configuration dictionary.
-        processor: Data processor for normalization.
+        channel_normalizer: ChannelNormalizer for inverse transform.
         device: Device to use (e.g., 'cuda' or 'cpu').
         trained_model: The trained U-Net model.
         train_dataset: The training dataset.
@@ -1284,24 +1275,23 @@ def visualization(config: Dict, processor, device: str, trained_model, train_dat
 
             x, y = batch['x'].to(device), batch['y'].to(device)
 
-            # Store original input immediately moved to CPU to free GPU memory
+            # Store original input (already normalized) moved to CPU to free GPU memory
             all_input.append(x.cpu())
 
-            # Normalize input for the model
-            x_norm = processor.in_normalizer.transform(x)
+            # Get model prediction (data is already normalized)
+            pred = trained_model(x)
 
-            # Get model prediction
-            pred = trained_model(x_norm)
-
-            # Inverse transform the prediction to its physical scale
-            pred_phys = processor.out_normalizer.inverse_transform(pred)
+            # Inverse transform both prediction and ground truth to physical scale
+            # Note: We need the original (untransformed) input for inverse transform context
+            pred_phys = channel_normalizer.inverse_output_transform(pred, x_raw=x)
+            y_phys = channel_normalizer.inverse_output_transform(y, x_raw=x)
 
             # Move to CPU immediately and clear GPU memory
             all_pred.append(pred_phys.cpu())
-            all_gt.append(y.cpu())
+            all_gt.append(y_phys.cpu())
 
             # Clear intermediate GPU tensors
-            del x, y, x_norm, pred, pred_phys
+            del x, y, pred, pred_phys, y_phys
             if device == 'cuda':
                 torch.cuda.empty_cache()
 
@@ -1354,7 +1344,6 @@ def visualization(config: Dict, processor, device: str, trained_model, train_dat
         # Generate visualization for single sample
         csv_data = visualize_single_sample(
             config=config,
-            processor=processor,
             device=device,
             trained_model=trained_model,
             pred_phys=pred_phys,
@@ -1417,8 +1406,9 @@ def main() -> None:
         # Step 1: Unified data preprocessing
         print(f"\nU-Net-Pure Training Pipeline Started")
         print(f"Training Mode: {CONFIG['TRAINING_CONFIG']['mode'].upper()}")
+        print(f"Species Type: {CONFIG['SPECIES_TYPE'].upper()}")
 
-        processor, train_dataset, val_dataset, test_dataset, device = preprocessing(
+        channel_normalizer, train_dataset, val_dataset, test_dataset, device = preprocessing(
             config=CONFIG,
             verbose=True
         )
@@ -1456,12 +1446,12 @@ def main() -> None:
             print(f"   Optimizer: {type(optimizer).__name__}")
             print(f"   Scheduler: {type(scheduler).__name__}")
             print(f"   Loss function: {type(loss_fn).__name__}")
-            print(f"   Processor: {type(processor).__name__}")
+            print(f"   Channel normalizer: {type(channel_normalizer).__name__}")
 
             # Train the model
             trained_model = train_model(
                 config=CONFIG,
-                processor=processor,
+                channel_normalizer=channel_normalizer,
                 device=device,
                 model=model,
                 train_loader=train_loader,
@@ -1476,7 +1466,7 @@ def main() -> None:
             # Evaluate the model
             model_evaluation(
                 config=CONFIG,
-                processor=processor,
+                channel_normalizer=channel_normalizer,
                 device=device,
                 model=trained_model,
                 test_loader=test_loader,
@@ -1491,7 +1481,7 @@ def main() -> None:
             # Run hyperparameter optimization
             optimization_results = optuna_optimization(
                 config=CONFIG,
-                processor=processor,
+                channel_normalizer=channel_normalizer,
                 train_dataset=train_dataset,
                 val_dataset=val_dataset,
                 test_dataset=test_dataset,
@@ -1527,7 +1517,7 @@ def main() -> None:
             # Train final model with best parameters
             trained_model = train_model(
                 config=CONFIG,
-                processor=processor,
+                channel_normalizer=channel_normalizer,
                 device=device,
                 model=model,
                 train_loader=train_loader,
@@ -1542,7 +1532,7 @@ def main() -> None:
             # Evaluate the final model
             model_evaluation(
                 config=CONFIG,
-                processor=processor,
+                channel_normalizer=channel_normalizer,
                 device=device,
                 model=trained_model,
                 test_loader=test_loader,
@@ -1584,7 +1574,7 @@ def main() -> None:
             # Evaluate the loaded model
             model_evaluation(
                 config=CONFIG,
-                processor=processor,
+                channel_normalizer=channel_normalizer,
                 device=device,
                 model=trained_model,
                 test_loader=test_loader,
@@ -1598,7 +1588,7 @@ def main() -> None:
         # Step 3: Generate visualization (for all modes)
         visualization(
             config=CONFIG,
-            processor=processor,
+            channel_normalizer=channel_normalizer,
             device=device,
             trained_model=trained_model,
             train_dataset=train_dataset,

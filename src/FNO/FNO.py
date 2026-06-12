@@ -25,6 +25,7 @@ from typing import Dict, List, Tuple, Any, Optional
 import numpy as np
 import pandas as pd
 import torch
+import torch.nn as nn
 import optuna
 import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader, Dataset
@@ -42,6 +43,16 @@ from util_common import LpLoss, LRStepScheduler, CappedCosineAnnealingWarmRestar
 
 # Import common training utilities (refactored from duplicate code)
 from util_training import train_model_generic, model_evaluation_generic
+from util_ensemble import (
+    EnsemblePredictor,
+    fixed_test_split,
+    load_ensemble_manifest,
+    make_member_split,
+    member_seed,
+    resolve_domain_padding,
+    resolve_training_params,
+    train_ensemble,
+)
 
 # Import preprocessing normalizer (needed for loading channel_normalizer from pickle)
 preprocessing_path = Path(__file__).parent.parent / 'preprocessing'
@@ -84,7 +95,7 @@ CONFIG = {
     'OUTPUT': {
         'ENABLED': True,  # Master switch for all output generation
         'OUTPUT_DIR': './src/FNO/output_pure',  # Base output directory
-        'SAMPLE_INDICES': [8],  # Samples to visualize
+        'SAMPLE_INDICES': [230],  # Samples to visualize
         'TIME_INDICES': [4, 9, 14, 19],  # Time indices to visualize
         'DPI': 200,  # Resolution for all images
 
@@ -99,28 +110,28 @@ CONFIG = {
 
         # GIF generation configuration
         'GIF_OUTPUT': {
-            'ENABLED': True,  # Generate animated GIFs
+            'ENABLED': False,  # Generate animated GIFs
             'FPS': 2,  # Frames per second
             # Always uses all time steps (GIF_ALL_TIMES removed)
         },
 
         # Detailed evaluation configuration
         'DETAIL_EVAL': {
-            'ENABLED': True,  # Compute RMSE/SSIM per time
-            'METRICS': ['RMSE', 'SSIM'],  # Metrics to compute
-            'COMPUTE_NRMSE': True,  # Compute normalized RMSE (MinMax-based)
+            'ENABLED': False,  # Compute detailed evaluation metrics
+            'COMPUTE_RELATIVE_L2': True,  # Compute Relative L2-based metrics
+            'COMPUTE_SSIM': True,  # Compute SSIM evolution
             'PARITY_PLOT': True,  # Generate parity plot CSV
             'ADD_MEAN_COLUMN': True,  # Add mean column to CSV
         },
 
         # Integrated Gradients configuration
         'IG_ANALYSIS': {
-            'ENABLED': True,  # Perform IG analysis
-            'SAMPLE_IDX': 8,  # Sample to analyze
+            'ENABLED': False,  # Perform IG analysis
+            'SAMPLE_IDX': 3,  # Sample to analyze
             'TIME_INDICES': [4, 9, 14, 19],  # Target times
-            'N_STEPS': 50,  # Integration steps
+            'N_STEPS': 20,  # Integration steps
             'USE_MULTI_BASELINE': True,  # Use multiple real samples as baselines (instead of mean)
-            'N_BASELINES': 20,  # Number of baseline samples (only used if USE_MULTI_BASELINE=True)
+            'N_BASELINES': 1,  # Number of baseline samples (only used if USE_MULTI_BASELINE=True)
             'BASELINE_SEED': 42,  # Random seed for baseline selection (reproducibility)
         },
     },
@@ -135,6 +146,14 @@ CONFIG = {
         'optuna_seed': 42,
         'optuna_n_startup_trials': 10,
         'eval_model_path': './src/FNO/output_pure/final/best_model_state_dict.pt'
+    },
+    'ENSEMBLE': {
+        'ENABLED': True,
+        'N_MODELS': 50,
+        'BASE_SEED': 42,
+        'SPLIT_SEED_STRATEGY': 'base_plus_member',
+        'MEMBER_OUTPUT_PATTERN': 'ensemble/member_{member_id:03d}',
+        'MANIFEST_NAME': 'ensemble_manifest.json',
     },
     'OPTUNA_SEARCH_SPACE': {
         'n_modes_dim1_range': [4, 16],  # [min, max] for first dimension
@@ -202,7 +221,7 @@ class CustomDatasetPure(Dataset):
 # Data Processing Functions
 # ==============================================================================
 
-def preprocessing(config: Dict, verbose: bool = True) -> Tuple:
+def preprocessing(config: Dict, verbose: bool = True, return_split: bool = False) -> Tuple:
     """
     Load pre-normalized data and perform train/val/test split.
 
@@ -299,46 +318,19 @@ def preprocessing(config: Dict, verbose: bool = True) -> Tuple:
         if verbose:
             print("Step 3: Creating train/val/test datasets...")
 
-        # Perform split on combined_input and out_data
-        # If y_initial exists, split it as well to maintain consistency
-        if y_initial is not None:
-            # First split: separate test set (final 10%)
-            train_temp_combined, test_combined, train_temp_out, test_out, train_temp_initial, test_initial = train_test_split(
-                combined_input, out_data, y_initial,
-                test_size=config['TEST_SIZE'],
-                random_state=config['RANDOM_STATE']
-            )
-
-            # Second split: separate validation set from remaining data
-            val_size_relative = config['VAL_SIZE'] / (1 - config['TEST_SIZE'])
-            train_combined, val_combined, train_out, val_out, train_initial, val_initial = train_test_split(
-                train_temp_combined, train_temp_out, train_temp_initial,
-                test_size=val_size_relative,
-                random_state=config['RANDOM_STATE']
-            )
-        else:
-            # First split: separate test set (final 10%)
-            train_temp_combined, test_combined, train_temp_out, test_out = train_test_split(
-                combined_input, out_data,
-                test_size=config['TEST_SIZE'],
-                random_state=config['RANDOM_STATE']
-            )
-
-            # Second split: separate validation set from remaining data
-            val_size_relative = config['VAL_SIZE'] / (1 - config['TEST_SIZE'])
-            train_combined, val_combined, train_out, val_out = train_test_split(
-                train_temp_combined, train_temp_out,
-                test_size=val_size_relative,
-                random_state=config['RANDOM_STATE']
-            )
-
-            # No initial values
-            train_initial, val_initial, test_initial = None, None, None
-
-        # Create datasets with already combined inputs (and initial values if available)
-        train_dataset = CustomDatasetPure(train_combined, train_out, train_initial)
-        val_dataset = CustomDatasetPure(val_combined, val_out, val_initial)
-        test_dataset = CustomDatasetPure(test_combined, test_out, test_initial)
+        full_dataset = CustomDatasetPure(combined_input, out_data, y_initial)
+        trainval_dataset, test_dataset, fixed_split = fixed_test_split(
+            full_dataset,
+            test_size=config['TEST_SIZE'],
+            random_state=config['RANDOM_STATE'],
+        )
+        val_size_relative = config['VAL_SIZE'] / (1 - config['TEST_SIZE'])
+        train_dataset, val_dataset, _ = make_member_split(
+            trainval_dataset=trainval_dataset,
+            trainval_original_indices=fixed_split.trainval_indices,
+            val_size_relative=val_size_relative,
+            random_state=config['RANDOM_STATE'],
+        )
 
         if verbose:
             print(f"   Train dataset size: {len(train_dataset)}")
@@ -352,6 +344,17 @@ def preprocessing(config: Dict, verbose: bool = True) -> Tuple:
 
     if verbose:
         print("Data preprocessing completed successfully!")
+
+    if return_split:
+        return (
+            channel_normalizer,
+            trainval_dataset,
+            test_dataset,
+            fixed_split,
+            train_dataset,
+            val_dataset,
+            device,
+        )
 
     # Step 4: Return necessary objects
     return (channel_normalizer, train_dataset, val_dataset, test_dataset, device)
@@ -473,6 +476,95 @@ def create_model(config: Dict, train_dataset, val_dataset, test_dataset, device:
         raise ValueError(f"Unknown scheduler type: {scheduler_type}. Use 'cosine' or 'step'.")
     
     return (model, train_loader, val_loader, test_loader, optimizer, scheduler, loss_fn)
+
+
+def create_model_from_params(
+    config: Dict,
+    train_dataset,
+    val_dataset,
+    test_dataset,
+    device: str,
+    params: Dict[str, Any],
+):
+    """Create FNO model components from canonical or Optuna parameter dictionaries."""
+    resolved = resolve_domain_padding(params, config['OPTUNA_SEARCH_SPACE'])
+    n_modes = (
+        int(resolved['n_modes_1']),
+        int(resolved['n_modes_2']),
+        int(resolved['n_modes_3']),
+    )
+    return create_model(
+        config=config,
+        train_dataset=train_dataset,
+        val_dataset=val_dataset,
+        test_dataset=test_dataset,
+        device=device,
+        n_modes=n_modes,
+        hidden_channels=int(resolved['hidden_channels']),
+        n_layers=int(resolved['n_layers']),
+        domain_padding=tuple(resolved['domain_padding']),
+        train_batch_size=int(resolved['train_batch_size']),
+        l2_weight=float(resolved['l2_weight']),
+        channel_mlp_expansion=float(resolved['channel_mlp_expansion']),
+        channel_mlp_skip=resolved['channel_mlp_skip'],
+    )
+
+
+def train_model_to_dir(
+    config: Dict,
+    device: str,
+    model,
+    train_loader,
+    val_loader,
+    optimizer,
+    scheduler,
+    loss_fn,
+    output_dir: Path,
+    verbose: bool = True,
+):
+    """Train one model and save checkpoints/loss curves to the provided directory."""
+    return train_model_generic(
+        config=config,
+        device=device,
+        model=model,
+        train_loader=train_loader,
+        val_loader=val_loader,
+        optimizer=optimizer,
+        scheduler=scheduler,
+        loss_fn=loss_fn,
+        output_dir=output_dir,
+        verbose=verbose,
+    )
+
+
+def load_ensemble_for_evaluation(
+    config: Dict,
+    manifest_file: Path,
+    train_dataset,
+    val_dataset,
+    test_dataset,
+    device: str,
+):
+    """Load an ensemble manifest and return a predictor plus test loader/loss."""
+    manifest = load_ensemble_manifest(manifest_file)
+    params = manifest['params']
+    models = []
+    test_loader = None
+    loss_fn = None
+    base_dir = Path(manifest_file).parent
+
+    for member in manifest['members']:
+        model, _, _, test_loader, _, _, loss_fn = create_model_from_params(
+            config, train_dataset, val_dataset, test_dataset, device, params
+        )
+        state_path = Path(member['model_state_path'])
+        if not state_path.is_absolute():
+            state_path = base_dir / state_path
+        model.load_state_dict(torch.load(state_path, map_location=device, weights_only=False))
+        model.eval()
+        models.append(model)
+
+    return EnsemblePredictor(models=models, device=device), test_loader, loss_fn, manifest
 
 # ==============================================================================
 # Training Functions
@@ -639,21 +731,24 @@ def optuna_optimization(config: Dict, train_dataset, val_dataset, test_dataset, 
             )
 
             # Train model and get best validation loss
-            trained_model = train_model(
+            trial_output_dir = optuna_output_dir / 'trials' / f'trial_{trial.number:03d}'
+            trained_model = train_model_to_dir(
                 config=config,
                 device=device,
                 model=model,
                 train_loader=train_loader,
                 val_loader=val_loader,
-                test_loader=test_loader,
                 optimizer=optimizer,
                 scheduler=scheduler,
                 loss_fn=loss_fn,
+                output_dir=trial_output_dir,
                 verbose=False  # Reduce verbosity during optimization
             )
+            trial.set_user_attr('model_state_path', str(trial_output_dir / 'best_model_state_dict.pt'))
+            trial.set_user_attr('loss_history_path', str(trial_output_dir / 'loss_history.pt'))
 
             # Get best validation loss from training history
-            loss_history_path = Path(config['OUTPUT_DIR']) / 'final' / 'loss_history.pt'
+            loss_history_path = trial_output_dir / 'loss_history.pt'
             if loss_history_path.exists():
                 loss_history = torch.load(loss_history_path, map_location='cpu', weights_only=False)
                 best_val_loss = min(loss_history['val_losses'])
@@ -712,8 +807,8 @@ def optuna_optimization(config: Dict, train_dataset, val_dataset, test_dataset, 
             print(f"New best trial found: Trial {trial.number} with loss {trial.value:.6f}")
 
             # Define paths
-            source_model_path = Path(config['OUTPUT_DIR']) / 'final' / 'best_model_state_dict.pt'
-            source_loss_path = Path(config['OUTPUT_DIR']) / 'final' / 'loss_history.pt'
+            source_model_path = Path(trial.user_attrs.get('model_state_path', ''))
+            source_loss_path = Path(trial.user_attrs.get('loss_history_path', ''))
 
             best_trial_dir = Path(config['OUTPUT_DIR']) / 'optuna' / 'best_trial_model'
             best_trial_dir.mkdir(parents=True, exist_ok=True)
@@ -864,7 +959,7 @@ def visualization(config: Dict, channel_normalizer, device: str, trained_model, 
     from util_output.py, which handles:
     - Image generation (combined grids and/or separated images)
     - GIF generation for temporal evolution
-    - Detailed evaluation metrics (RMSE, SSIM, parity plots)
+    - Detailed evaluation metrics (Relative L2, optional SSIM, parity plots)
     - Integrated Gradients analysis
 
     All outputs are organized into subdirectories based on configuration.
@@ -923,66 +1018,78 @@ def main() -> None:
         print(f"\nFNO-Pure Training Pipeline Started")
         print(f"Training Mode: {CONFIG['TRAINING_CONFIG']['mode'].upper()}")
         
-        channel_normalizer, train_dataset, val_dataset, test_dataset, device = preprocessing(
+        (
+            channel_normalizer,
+            trainval_dataset,
+            test_dataset,
+            fixed_split,
+            train_dataset,
+            val_dataset,
+            device,
+        ) = preprocessing(
             config=CONFIG,
-            verbose=True
+            verbose=True,
+            return_split=True,
         )
         
         # Step 2: Execute based on training mode
         training_mode = CONFIG['TRAINING_CONFIG']['mode']
         
-        if training_mode == 'single':
-            # Single training mode - use predefined parameters
-            print("\nExecuting single training mode...")
+        if training_mode in ('single', 'optuna'):
+            if training_mode == 'single':
+                print("\nExecuting single/ensemble training mode...")
+                optimization_results = None
+            else:
+                print("\nExecuting Optuna optimization mode...")
+                # Optuna searches only within the train/validation pool. The fixed test set
+                # remains held out until final ensemble evaluation.
+                optuna_train_dataset, optuna_val_dataset, _ = make_member_split(
+                    trainval_dataset=trainval_dataset,
+                    trainval_original_indices=fixed_split.trainval_indices,
+                    val_size_relative=CONFIG['VAL_SIZE'] / (1 - CONFIG['TEST_SIZE']),
+                    random_state=member_seed(CONFIG, 0),
+                )
+                optimization_results = optuna_optimization(
+                    config=CONFIG,
+                    train_dataset=optuna_train_dataset,
+                    val_dataset=optuna_val_dataset,
+                    test_dataset=test_dataset,
+                    device=device,
+                    verbose=True
+                )
 
-            params = CONFIG['SINGLE_PARAMS']
+            params = resolve_training_params(training_mode, CONFIG, optimization_results)
+            print("\nTraining final ensemble with resolved hyperparameters...")
 
-            # Reconstruct n_modes from individual dimension parameters
-            n_modes = (params['n_modes_1'], params['n_modes_2'], params['n_modes_3'])
+            def create_components(train_ds, val_ds, test_ds, member_params, output_dir):
+                return create_model_from_params(CONFIG, train_ds, val_ds, test_ds, device, member_params)
 
-            model, train_loader, val_loader, test_loader, optimizer, scheduler, loss_fn = create_model(
+            def train_one(model, train_loader, val_loader, optimizer, scheduler, loss_fn, output_dir):
+                return train_model_to_dir(
+                    CONFIG, device, model, train_loader, val_loader,
+                    optimizer, scheduler, loss_fn, output_dir, verbose=True
+                )
+
+            ensemble_run = train_ensemble(
                 config=CONFIG,
-                train_dataset=train_dataset,
-                val_dataset=val_dataset,
+                model_kind='fno',
+                trainval_dataset=trainval_dataset,
+                trainval_original_indices=fixed_split.trainval_indices,
                 test_dataset=test_dataset,
+                test_original_indices=fixed_split.test_indices,
                 device=device,
-                n_modes=n_modes,
-                hidden_channels=params['hidden_channels'],
-                n_layers=params['n_layers'],
-                domain_padding=params['domain_padding'],
-                train_batch_size=params['train_batch_size'],
-                l2_weight=params['l2_weight'],
-                channel_mlp_expansion=params['channel_mlp_expansion'],
-                channel_mlp_skip=params['channel_mlp_skip']
-            )
-            
-            # Count trainable parameters
-            trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-            total_params = sum(p.numel() for p in model.parameters())
-            
-            print(f"   Model created - Device: {device}")
-            print(f"   Trainable parameters: {trainable_params:,}")
-            print(f"   Total parameters: {total_params:,}")
-            print(f"   Train batches: {len(train_loader)}, Val batches: {len(val_loader)}, Test batches: {len(test_loader)}")
-            print(f"   Optimizer: {type(optimizer).__name__}")
-            print(f"   Scheduler: {type(scheduler).__name__}")
-            print(f"   Loss function: {type(loss_fn).__name__}")
-
-            # Train the model
-            trained_model = train_model(
-                config=CONFIG,
-                device=device,
-                model=model,
-                train_loader=train_loader,
-                val_loader=val_loader,
-                test_loader=test_loader,
-                optimizer=optimizer,
-                scheduler=scheduler,
-                loss_fn=loss_fn,
-                verbose=True
+                params=params,
+                create_components=create_components,
+                train_one=train_one,
+                verbose=True,
             )
 
-            # Evaluate the model
+            trained_model = ensemble_run.predictor
+            test_loader = ensemble_run.test_loader
+            loss_fn = ensemble_run.loss_fn
+            train_dataset = ensemble_run.train_dataset
+            val_dataset = ensemble_run.val_dataset
+
             model_evaluation(
                 config=CONFIG,
                 device=device,
@@ -991,118 +1098,37 @@ def main() -> None:
                 loss_fn=loss_fn,
                 verbose=True
             )
-            
-        elif training_mode == 'optuna':
-            # Optuna optimization mode
-            print("\nExecuting Optuna optimization mode...")
-            
-            # Run hyperparameter optimization
-            optimization_results = optuna_optimization(
-                config=CONFIG,
-                train_dataset=train_dataset,
-                val_dataset=val_dataset,
-                test_dataset=test_dataset,
-                device=device,
-                verbose=True
-            )
-            
-            # Train final model with best parameters
-            print(f"\nTraining final model with best parameters...")
-            best_params = optimization_results['best_params']
 
-            # Reconstruct n_modes from individual dimension parameters
-            n_modes = (best_params['n_modes_1'], best_params['n_modes_2'], best_params['n_modes_3'])
+            print(f"   Ensemble manifest saved to: {ensemble_run.manifest_path}")
 
-            # Convert index-based parameters back to actual values
-            search_space = CONFIG['OPTUNA_SEARCH_SPACE']
-            domain_padding = search_space['domain_padding_options'][best_params['domain_padding_idx']]
-
-            model, train_loader, val_loader, test_loader, optimizer, scheduler, loss_fn = create_model(
-                config=CONFIG,
-                train_dataset=train_dataset,
-                val_dataset=val_dataset,
-                test_dataset=test_dataset,
-                device=device,
-                n_modes=n_modes,
-                hidden_channels=best_params['hidden_channels'],
-                n_layers=best_params['n_layers'],
-                domain_padding=domain_padding,
-                train_batch_size=best_params['train_batch_size'],
-                l2_weight=best_params['l2_weight'],
-                channel_mlp_expansion=best_params['channel_mlp_expansion'],
-                channel_mlp_skip=best_params['channel_mlp_skip']
-            )
-            
-            # Count trainable parameters
-            trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-            total_params = sum(p.numel() for p in model.parameters())
-            
-            print(f"   Final model created - Device: {device}")
-            print(f"   Trainable parameters: {trainable_params:,}")
-            print(f"   Total parameters: {total_params:,}")
-            
-            # Train final model with best parameters
-            trained_model = train_model(
-                config=CONFIG,
-                device=device,
-                model=model,
-                train_loader=train_loader,
-                val_loader=val_loader,
-                test_loader=test_loader,
-                optimizer=optimizer,
-                scheduler=scheduler,
-                loss_fn=loss_fn,
-                verbose=True
-            )
-
-            # Evaluate the final model
-            model_evaluation(
-                config=CONFIG,
-                device=device,
-                model=trained_model,
-                test_loader=test_loader,
-                loss_fn=loss_fn,
-                verbose=True
-            )
-            
         elif training_mode == 'eval':
-            # Evaluation mode - load pretrained model
+            # Evaluation mode - load pretrained single model or ensemble manifest
             print("\nExecuting evaluation mode...")
 
-            eval_model_path = CONFIG['TRAINING_CONFIG']['eval_model_path']
-            if not Path(eval_model_path).exists():
+            eval_model_path = Path(CONFIG['TRAINING_CONFIG']['eval_model_path'])
+            if not eval_model_path.exists():
                 raise FileNotFoundError(f"Model file not found: {eval_model_path}")
 
-            # Create model with single params for evaluation
-            params = CONFIG['SINGLE_PARAMS']
+            if eval_model_path.suffix.lower() == '.json':
+                trained_model, test_loader, loss_fn, manifest = load_ensemble_for_evaluation(
+                    CONFIG,
+                    eval_model_path,
+                    train_dataset,
+                    val_dataset,
+                    test_dataset,
+                    device,
+                )
+                print(f"   Loaded ensemble manifest from: {eval_model_path}")
+                print(f"   Ensemble members: {len(manifest['members'])}")
+            else:
+                model, train_loader, val_loader, test_loader, optimizer, scheduler, loss_fn = create_model_from_params(
+                    CONFIG, train_dataset, val_dataset, test_dataset, device, CONFIG['SINGLE_PARAMS']
+                )
+                model.load_state_dict(torch.load(eval_model_path, map_location=device, weights_only=False))
+                model.eval()
+                trained_model = model
+                print(f"   Loaded model from: {eval_model_path}")
 
-            # Reconstruct n_modes from individual dimension parameters
-            n_modes = (params['n_modes_1'], params['n_modes_2'], params['n_modes_3'])
-
-            model, train_loader, val_loader, test_loader, optimizer, scheduler, loss_fn = create_model(
-                config=CONFIG,
-                train_dataset=train_dataset,
-                val_dataset=val_dataset,
-                test_dataset=test_dataset,
-                device=device,
-                n_modes=n_modes,
-                hidden_channels=params['hidden_channels'],
-                n_layers=params['n_layers'],
-                domain_padding=params['domain_padding'],
-                train_batch_size=params['train_batch_size'],
-                l2_weight=params['l2_weight'],
-                channel_mlp_expansion=params['channel_mlp_expansion'],
-                channel_mlp_skip=params['channel_mlp_skip']
-            )
-            
-            # Load pretrained model
-            model.load_state_dict(torch.load(eval_model_path, map_location=device, weights_only=False))
-            print(f"   Loaded model from: {eval_model_path}")
-            
-            # Set as trained model for visualization
-            trained_model = model
-            
-            # Evaluate the loaded model
             model_evaluation(
                 config=CONFIG,
                 device=device,
@@ -1111,10 +1137,10 @@ def main() -> None:
                 loss_fn=loss_fn,
                 verbose=True
             )
-            
+
         else:
             raise ValueError(f"Unknown training mode: {training_mode}. Use 'single', 'optuna', or 'eval'.")
-        
+
         # Step 3: Generate visualization (for all modes)
         visualization(
             config=CONFIG,
@@ -1126,9 +1152,9 @@ def main() -> None:
             test_dataset=test_dataset,
             verbose=True
         )
-        
+
         print("\nTraining pipeline completed successfully!")
-        
+
     except Exception as e:
         print(f"\nError during training: {e}")
         raise

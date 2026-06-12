@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Dict, List, Tuple, Any, Optional
 
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
@@ -40,6 +41,16 @@ from util_common import LRStepScheduler
 
 # Import common training utilities (refactored from duplicate code)
 from util_training import train_model_generic, model_evaluation_generic
+from util_ensemble import (
+    EnsemblePredictor,
+    fixed_test_split,
+    load_ensemble_manifest,
+    make_member_split,
+    member_seed,
+    resolve_domain_padding,
+    resolve_training_params,
+    train_ensemble,
+)
 
 # Import outlet-specific output utilities (refactored from duplicate code)
 from util_output_outlet import visualize_outlet_predictions
@@ -56,15 +67,16 @@ from preprocessing_normalize import ChannelNormalizer
 # ==============================================================================
 CONFIG = {
     # Data paths
-    'MERGED_PT_PATH': './src/preprocessing/data/normalized/lr/delta/merged_normalized_out.pt',
+    'MERGED_PT_PATH': './src/preprocessing/data/normalized/hr/delta/merged_normalized_out_hr.pt',
     'SPATIAL_NORMALIZER_PATH': './src/preprocessing/normalizers/lr/delta/normalizer_u_delta.pkl',
     'OUTLET_NORMALIZER_PATH': './src/preprocessing/normalizers/lr/delta/normalizer_out_delta.pkl',
     'OUTPUT_DIR': './src/FNO/output_outlet/',
+    'SPLIT_INDEX_CSV_PATH': './src/FNO/output_outlet/split_index_mapping.csv',
 
     # Training parameters
     'N_EPOCHS': 100,
-    'VAL_SIZE': 0.1,
-    'TEST_SIZE': 0.1,
+    'VAL_SIZE': 0.02,
+    'TEST_SIZE': 0.96,
     'RANDOM_STATE': 42,
     'DOMAIN_PADDING_MODE': 'symmetric',
 
@@ -99,6 +111,14 @@ CONFIG = {
         'optuna_n_startup_trials': 10,
         'eval_model_path': './src/FNO/output_outlet/final/best_model_state_dict.pt'
     },
+    'ENSEMBLE': {
+        'ENABLED': True,
+        'N_MODELS': 50,
+        'BASE_SEED': 42,
+        'SPLIT_SEED_STRATEGY': 'base_plus_member',
+        'MEMBER_OUTPUT_PATTERN': 'ensemble/member_{member_id:03d}',
+        'MANIFEST_NAME': 'ensemble_manifest.json',
+    },
 
     # Optuna search space (hyperparameter ranges for optimization)
     'OPTUNA_SEARCH_SPACE': {
@@ -130,23 +150,23 @@ CONFIG = {
     # Single training parameters (hyperparameters that can be tuned)
     'SINGLE_PARAMS': {
         # TFNO architecture
-        "n_modes_1": 8,
-        "n_modes_2": 4,
+        "n_modes_1": 10,
+        "n_modes_2": 14,
         "n_modes_3": 4,
-        "hidden_channels": 24,
-        "n_layers": 4,
+        "hidden_channels": 57,
+        "n_layers": 5,
         "domain_padding": (0.1, 0.1, 0.1),
 
         # Training parameters
-        "train_batch_size": 32,
-        "l2_weight": 0.0,
+        "train_batch_size": 16,
+        "l2_weight": 6.942933677610523e-07,
 
         # FNO block parameters
-        "channel_mlp_expansion": 0.5,
+        "channel_mlp_expansion": 1.0,
         "channel_mlp_skip": 'soft-gating',
 
         # ChannelMLP projection head parameters
-        "projection_mlp_hidden": 128,    # Hidden channels for C → 1 projection
+        "projection_mlp_hidden": 115,    # Hidden channels for C → 1 projection
         "projection_mlp_layers": 3,      # Number of Conv1d layers
         "projection_mlp_activation": 'gelu',  # Activation function
         "projection_mlp_dropout": 0.0,   # Dropout probability
@@ -154,20 +174,73 @@ CONFIG = {
 
     # Visualization configuration
     'VISUALIZATION': {
-        'N_SAMPLES': 16,  # Number of samples to visualize
+        'N_SAMPLES': 24,  # Number of samples to visualize
     },
 
     # Integrated Gradients configuration
     'IG_ANALYSIS': {
-        'ENABLED': True,  # Perform IG analysis
-        'SAMPLE_IDX': 6,  # Sample to analyze (test set index)
-        'TIME_INDICES': [4, 9, 14, 19],  # Target times to analyze
+        'ENABLED': False, # Perform IG analysis
+        'SAMPLE_IDX': [108],  # Sample index or list of sample indices
+        'TIME_INDICES': [19],  # Target times to analyze
         'N_STEPS': 50,  # Integration steps
-        'USE_MULTI_BASELINE': True,  # Use multiple real samples as baselines (instead of mean)
-        'N_BASELINES': 20,  # Number of baseline samples (only used if USE_MULTI_BASELINE=True)
-        'BASELINE_SEED': 42,  # Random seed for baseline selection (reproducibility)
+        'N_BASELINES': 200,  # Number of baseline samples (multi-baseline mode only)
+        'BASELINE_SEED': 36,  # Random seed for baseline selection (reproducibility)
     }
 }
+
+# Channel names for IG output handling
+CHANNEL_NAMES_11 = [
+    'Permeability', 'Calcite', 'Clinochlore', 'Pyrite', 'Smectite',
+    'Material_Source', 'Material_Bentonite', 'Material_Fracture',
+    'X-velocity', 'Y-velocity', 'Meta'
+]
+CHANNEL_SHORT_11 = [
+    'Perm', 'Calcite', 'Clino', 'Pyrite', 'Smectite',
+    'MatSrc', 'MatBent', 'MatFrac', 'Vx', 'Vy', 'Meta'
+]
+CHANNEL_NAMES_10_MERGED = [
+    'Permeability', 'Calcite', 'Clinochlore', 'Pyrite', 'Smectite',
+    'Material_Source', 'Material_Bentonite', 'Material_Fracture',
+    'Velocity', 'Meta'
+]
+CHANNEL_SHORT_10_MERGED = [
+    'Perm', 'Calcite', 'Clino', 'Pyrite', 'Smectite',
+    'MatSrc', 'MatBent', 'MatFrac', 'Vel', 'Meta'
+]
+
+
+def merge_velocity_channels(ig_spatial: np.ndarray, vx_idx: int = 8, vy_idx: int = 9) -> np.ndarray:
+    """
+    Merge Vx/Vy IG channels into a single Velocity channel using cell-wise signed sum.
+
+    Args:
+        ig_spatial: IG attribution map of shape (11, nx, ny)
+        vx_idx: Channel index for X-velocity
+        vy_idx: Channel index for Y-velocity
+
+    Returns:
+        Merged IG map of shape (10, nx, ny) with channel order:
+        Perm..MatFrac, Velocity, Meta
+    """
+    if ig_spatial.ndim != 3:
+        raise ValueError(f"Expected ig_spatial with 3 dimensions (C, nx, ny), got {ig_spatial.shape}")
+    if ig_spatial.shape[0] <= max(vx_idx, vy_idx):
+        raise ValueError(
+            f"Velocity channel indices out of bounds. shape={ig_spatial.shape}, "
+            f"vx_idx={vx_idx}, vy_idx={vy_idx}"
+        )
+
+    velocity_ig = ig_spatial[vx_idx] + ig_spatial[vy_idx]
+    merged_channels = []
+    for ch in range(ig_spatial.shape[0]):
+        if ch in (vx_idx, vy_idx):
+            continue
+        merged_channels.append(ig_spatial[ch])
+        # Insert merged velocity channel at original Vx position.
+        if ch == vx_idx - 1:
+            merged_channels.append(velocity_ig)
+
+    return np.stack(merged_channels, axis=0)
 
 # ==============================================================================
 # Custom Model: TFNOWithPooling
@@ -328,7 +401,31 @@ class CustomDatasetOutlet(Dataset):
 # Data Processing Functions
 # ==============================================================================
 
-def preprocessing_outlet(config: Dict, verbose: bool = True) -> Tuple:
+def save_split_index_mapping(train_idx: np.ndarray, val_idx: np.ndarray,
+                             test_idx: np.ndarray, output_path: str) -> None:
+    """Save mapping of original indices to split assignments as CSV.
+
+    Args:
+        train_idx: Original indices assigned to training set
+        val_idx: Original indices assigned to validation set
+        test_idx: Original indices assigned to test set
+        output_path: Path to save the CSV file
+    """
+    rows = []
+    for split_pos, orig_idx in enumerate(train_idx):
+        rows.append({'original_idx': int(orig_idx), 'split': 'train', 'split_idx': split_pos})
+    for split_pos, orig_idx in enumerate(val_idx):
+        rows.append({'original_idx': int(orig_idx), 'split': 'val', 'split_idx': split_pos})
+    for split_pos, orig_idx in enumerate(test_idx):
+        rows.append({'original_idx': int(orig_idx), 'split': 'test', 'split_idx': split_pos})
+
+    df = pd.DataFrame(rows).sort_values('original_idx').reset_index(drop=True)
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(output_path, index=False)
+    print(f"   Split index mapping saved: {output_path}")
+
+
+def preprocessing_outlet(config: Dict, verbose: bool = True, return_split: bool = False) -> Tuple:
     """
     Load pre-normalized data for outlet prediction.
 
@@ -411,25 +508,26 @@ def preprocessing_outlet(config: Dict, verbose: bool = True) -> Tuple:
         if verbose:
             print("Step 3: Creating train/val/test datasets...")
 
-        # First split: separate test set
-        train_temp_x, test_x, train_temp_outlet, test_outlet = train_test_split(
-            x_input, y_outlet,
+        full_dataset = CustomDatasetOutlet(x_input, y_outlet)
+        trainval_dataset, test_dataset, fixed_split = fixed_test_split(
+            full_dataset,
             test_size=config['TEST_SIZE'],
-            random_state=config['RANDOM_STATE']
+            random_state=config['RANDOM_STATE'],
         )
 
-        # Second split: separate validation set
+        # Create a deterministic initial train/val split for backward-compatible
+        # single-model eval paths and baseline generation.
         val_size_relative = config['VAL_SIZE'] / (1 - config['TEST_SIZE'])
-        train_x, val_x, train_outlet, val_outlet = train_test_split(
-            train_temp_x, train_temp_outlet,
-            test_size=val_size_relative,
+        train_dataset, val_dataset, member_split = make_member_split(
+            trainval_dataset=trainval_dataset,
+            trainval_original_indices=fixed_split.trainval_indices,
+            val_size_relative=val_size_relative,
             random_state=config['RANDOM_STATE']
         )
 
-        # Create datasets
-        train_dataset = CustomDatasetOutlet(train_x, train_outlet)
-        val_dataset = CustomDatasetOutlet(val_x, val_outlet)
-        test_dataset = CustomDatasetOutlet(test_x, test_outlet)
+        # Save original-to-split index mapping for traceability
+        save_split_index_mapping(member_split.train_indices, member_split.val_indices, fixed_split.test_indices,
+                                 config['SPLIT_INDEX_CSV_PATH'])
 
         if verbose:
             print(f"   Train dataset size: {len(train_dataset)}")
@@ -441,6 +539,18 @@ def preprocessing_outlet(config: Dict, verbose: bool = True) -> Tuple:
 
     if verbose:
         print("Data preprocessing completed successfully!")
+
+    if return_split:
+        return (
+            spatial_normalizer,
+            outlet_normalizer,
+            trainval_dataset,
+            test_dataset,
+            fixed_split,
+            train_dataset,
+            val_dataset,
+            device,
+        )
 
     return (spatial_normalizer, outlet_normalizer,
             train_dataset, val_dataset, test_dataset, device)
@@ -567,6 +677,99 @@ def create_model(config: Dict, train_dataset, val_dataset, test_dataset, device:
         raise ValueError(f"Unknown scheduler type: {scheduler_type}. Use 'step'.")
 
     return (model, train_loader, val_loader, test_loader, optimizer, scheduler, loss_fn)
+
+
+def create_model_from_params(
+    config: Dict,
+    train_dataset,
+    val_dataset,
+    test_dataset,
+    device: str,
+    params: Dict[str, Any],
+):
+    """Create outlet model components from canonical or Optuna parameter dictionaries."""
+    resolved = resolve_domain_padding(params, config['OPTUNA_SEARCH_SPACE'])
+    n_modes = (
+        int(resolved['n_modes_1']),
+        int(resolved['n_modes_2']),
+        int(resolved['n_modes_3']),
+    )
+    return create_model(
+        config=config,
+        train_dataset=train_dataset,
+        val_dataset=val_dataset,
+        test_dataset=test_dataset,
+        device=device,
+        n_modes=n_modes,
+        hidden_channels=int(resolved['hidden_channels']),
+        n_layers=int(resolved['n_layers']),
+        domain_padding=tuple(resolved['domain_padding']),
+        train_batch_size=int(resolved['train_batch_size']),
+        l2_weight=float(resolved['l2_weight']),
+        channel_mlp_expansion=float(resolved['channel_mlp_expansion']),
+        channel_mlp_skip=resolved['channel_mlp_skip'],
+        projection_mlp_hidden=int(resolved['projection_mlp_hidden']),
+        projection_mlp_layers=int(resolved['projection_mlp_layers']),
+        projection_mlp_activation=resolved['projection_mlp_activation'],
+        projection_mlp_dropout=float(resolved['projection_mlp_dropout']),
+    )
+
+
+def train_model_to_dir(
+    config: Dict,
+    device: str,
+    model,
+    train_loader,
+    val_loader,
+    optimizer,
+    scheduler,
+    loss_fn,
+    output_dir: Path,
+    verbose: bool = True,
+):
+    """Train one outlet model and save artifacts to the provided directory."""
+    return train_model_generic(
+        config=config,
+        device=device,
+        model=model,
+        train_loader=train_loader,
+        val_loader=val_loader,
+        optimizer=optimizer,
+        scheduler=scheduler,
+        loss_fn=loss_fn,
+        output_dir=output_dir,
+        verbose=verbose,
+    )
+
+
+def load_ensemble_for_evaluation(
+    config: Dict,
+    manifest_file: Path,
+    train_dataset,
+    val_dataset,
+    test_dataset,
+    device: str,
+):
+    """Load an outlet ensemble manifest and return predictor, test loader, and loss."""
+    manifest = load_ensemble_manifest(manifest_file)
+    params = manifest['params']
+    models = []
+    test_loader = None
+    loss_fn = None
+    base_dir = Path(manifest_file).parent
+
+    for member in manifest['members']:
+        model, _, _, test_loader, _, _, loss_fn = create_model_from_params(
+            config, train_dataset, val_dataset, test_dataset, device, params
+        )
+        state_path = Path(member['model_state_path'])
+        if not state_path.is_absolute():
+            state_path = base_dir / state_path
+        model.load_state_dict(torch.load(state_path, map_location=device, weights_only=False))
+        model.eval()
+        models.append(model)
+
+    return EnsemblePredictor(models=models, device=device), test_loader, loss_fn, manifest
 
 
 # ==============================================================================
@@ -708,21 +911,24 @@ def optuna_optimization_outlet(
             )
 
             # Train model and get best validation loss
-            trained_model = train_model(
+            trial_output_dir = optuna_output_dir / 'trials' / f'trial_{trial.number:03d}'
+            trained_model = train_model_to_dir(
                 config=config,
                 device=device,
                 model=model,
                 train_loader=train_loader,
                 val_loader=val_loader,
-                test_loader=test_loader,
                 optimizer=optimizer,
                 scheduler=scheduler,
                 loss_fn=loss_fn,
+                output_dir=trial_output_dir,
                 verbose=False  # Reduce verbosity during optimization
             )
+            trial.set_user_attr('model_state_path', str(trial_output_dir / 'best_model_state_dict.pt'))
+            trial.set_user_attr('loss_history_path', str(trial_output_dir / 'loss_history.pt'))
 
             # Get best validation loss from training history
-            loss_history_path = Path(config['OUTPUT_DIR']) / 'final' / 'loss_history.pt'
+            loss_history_path = trial_output_dir / 'loss_history.pt'
             if loss_history_path.exists():
                 loss_history = torch.load(loss_history_path, map_location='cpu', weights_only=False)
                 best_val_loss = min(loss_history['val_losses'])
@@ -756,7 +962,7 @@ def optuna_optimization_outlet(
             best_trial_dir.mkdir(parents=True, exist_ok=True)
 
             # Copy best model state dict
-            source_path = Path(config['OUTPUT_DIR']) / 'final' / 'best_model_state_dict.pt'
+            source_path = Path(trial.user_attrs.get('model_state_path', ''))
             if source_path.exists():
                 dest_path = best_trial_dir / 'best_model_state_dict.pt'
                 shutil.copy2(source_path, dest_path)
@@ -961,43 +1167,6 @@ def model_evaluation(config: Dict, device: str, model, test_loader, loss_fn,
 # Integrated Gradients Functions
 # ==============================================================================
 
-def create_mean_baseline_outlet(train_dataset, val_dataset, test_dataset, verbose: bool = True) -> torch.Tensor:
-    """
-    Create mean baseline from all datasets for IG analysis.
-
-    Args:
-        train_dataset: Training dataset
-        val_dataset: Validation dataset
-        test_dataset: Test dataset
-        verbose: Whether to print progress
-
-    Returns:
-        Baseline tensor of shape (1, C, nx, ny, nt)
-    """
-    if verbose:
-        print("Creating mean baseline from all datasets...")
-
-    all_samples = []
-
-    # Collect all samples
-    for i in range(len(train_dataset)):
-        all_samples.append(train_dataset[i]['x'])
-    for i in range(len(val_dataset)):
-        all_samples.append(val_dataset[i]['x'])
-    for i in range(len(test_dataset)):
-        all_samples.append(test_dataset[i]['x'])
-
-    # Stack and compute mean
-    all_samples_tensor = torch.stack(all_samples, dim=0)  # (N, C, nx, ny, nt)
-    baseline = all_samples_tensor.mean(dim=0, keepdim=True)  # (1, C, nx, ny, nt)
-
-    if verbose:
-        print(f"  Baseline shape: {tuple(baseline.shape)}")
-        print(f"  Baseline range: [{baseline.min():.4f}, {baseline.max():.4f}]")
-
-    return baseline
-
-
 def create_multi_sample_baselines_outlet(
     train_dataset,
     val_dataset,
@@ -1139,30 +1308,46 @@ def compute_integrated_gradients_outlet(
         if verbose and step % 10 == 0:
             print(f"  Step {step}/{n_steps}, output={output.item():.4e}")
 
-    # Average gradient
-    avg_grad = torch.stack(grads).mean(dim=0)
+    # Trapezoidal integration of gradients along interpolation path:
+    # integral_grad = (g0/2 + g1 + ... + gN/2) / N
+    grads_tensor = torch.stack(grads, dim=0)  # (n_steps+1, 1, C, nx, ny, nt)
+    integral_grad = grads_tensor[0] * 0.5 + grads_tensor[-1] * 0.5
+    if n_steps > 1:
+        integral_grad = integral_grad + grads_tensor[1:-1].sum(dim=0)
+    integral_grad = integral_grad / n_steps
 
-    # IG: (x - baseline) × avg_grad
-    ig = (test_sample - baseline) * avg_grad
+    # IG: (x - baseline) × integral_grad
+    ig = (test_sample - baseline) * integral_grad
 
     # Sum over time dimension to get spatial attribution
     ig_spatial = ig[0, :, :, :, :].sum(dim=-1).numpy()  # (C, nx, ny)
+    ig_spatial_merged = merge_velocity_channels(ig_spatial)
+
+    ig_sum = float(ig_spatial_merged.sum())
+    output_change = outputs[-1] - outputs[0]
+    completeness_error = ig_sum - output_change
+    completeness_rel_error = completeness_error / (abs(output_change) + 1e-12)
 
     # Metadata
     info = {
         'target_t': target_t,
         'n_steps': n_steps,
-        'total_abs_ig': float(np.abs(ig_spatial).sum()),
-        'ig_sum': float(ig_spatial.sum()),
+        'total_abs_ig': float(np.abs(ig_spatial_merged).sum()),
+        'ig_sum': ig_sum,
         'output_baseline': outputs[0],
         'output_actual': outputs[-1],
-        'output_change': outputs[-1] - outputs[0]
+        'output_change': output_change,
+        'completeness_target': output_change,
+        'completeness_error': completeness_error,
+        'completeness_rel_error': completeness_rel_error,
     }
 
     if verbose:
         print(f"  Done. Total |IG|: {info['total_abs_ig']:.4e}")
         print(f"  Output change: {info['output_change']:.4e}")
         print(f"  IG sum: {info['ig_sum']:.4e}")
+        print(f"  Completeness error: {info['completeness_error']:.4e}")
+        print(f"  Completeness rel. error: {info['completeness_rel_error']:.2%}")
 
     return ig_spatial, info
 
@@ -1244,14 +1429,25 @@ def compute_integrated_gradients_outlet_multi_baseline(
     output_baselines = [info['output_baseline'] for info in baseline_infos]
     output_actuals = [info['output_actual'] for info in baseline_infos]
     output_changes = [info['output_change'] for info in baseline_infos]
+    completeness_errors = [info['completeness_error'] for info in baseline_infos]
+    completeness_rel_errors = [info['completeness_rel_error'] for info in baseline_infos]
+
+    ig_spatial_avg_merged = merge_velocity_channels(ig_spatial_avg)
+    ig_sum = float(ig_spatial_avg_merged.sum())
+    output_change_mean = float(np.mean(output_changes))
+    completeness_error = ig_sum - output_change_mean
+    completeness_rel_error = completeness_error / (abs(output_change_mean) + 1e-12)
 
     info_avg = {
         'target_t': target_t,
         'n_steps': n_steps,
         'n_baselines': len(baselines),
-        'total_abs_ig': float(np.abs(ig_spatial_avg).sum()),
-        'ig_sum': float(ig_spatial_avg.sum()),
+        'total_abs_ig': float(np.abs(ig_spatial_avg_merged).sum()),
+        'ig_sum': ig_sum,
         'output_actual': float(np.mean(output_actuals)),  # Should be identical for all baselines
+        'completeness_target': output_change_mean,
+        'completeness_error': completeness_error,
+        'completeness_rel_error': completeness_rel_error,
         # Statistics across baselines
         'baseline_stats': {
             'total_abs_ig_mean': float(np.mean(total_abs_igs)),
@@ -1264,6 +1460,12 @@ def compute_integrated_gradients_outlet_multi_baseline(
             'output_baseline_std': float(np.std(output_baselines)),
             'output_change_mean': float(np.mean(output_changes)),
             'output_change_std': float(np.std(output_changes)),
+            'completeness_error_mean': float(np.mean(completeness_errors)),
+            'completeness_error_std': float(np.std(completeness_errors)),
+            'completeness_error_min': float(np.min(completeness_errors)),
+            'completeness_error_max': float(np.max(completeness_errors)),
+            'completeness_rel_error_mean': float(np.mean(completeness_rel_errors)),
+            'completeness_rel_error_std': float(np.std(completeness_rel_errors)),
         },
         # Per-channel statistics
         'channel_stats': {
@@ -1282,66 +1484,10 @@ def compute_integrated_gradients_outlet_multi_baseline(
         print(f"      Std:  {info_avg['baseline_stats']['total_abs_ig_std']:.4e}")
         print(f"      Range: [{info_avg['baseline_stats']['total_abs_ig_min']:.4e}, "
               f"{info_avg['baseline_stats']['total_abs_ig_max']:.4e}]")
+        print(f"    Completeness error: {info_avg['completeness_error']:.4e}")
+        print(f"    Completeness rel. error: {info_avg['completeness_rel_error']:.2%}")
 
     return ig_spatial_avg, info_avg
-
-
-def visualize_baseline_channels_outlet(
-    baseline_data: np.ndarray,
-    output_dir: Path,
-    verbose: bool = True
-) -> List[Path]:
-    """
-    Visualize baseline channels for IG analysis.
-    Creates one image per channel showing the mean baseline (time-invariant).
-
-    Args:
-        baseline_data: Baseline data array (C, nx, ny, nt)
-        output_dir: Output directory
-        verbose: Whether to print progress
-
-    Returns:
-        List of paths to saved images
-    """
-    channel_names = ['Permeability', 'Calcite', 'Clinochlore', 'Pyrite', 'Smectite',
-                    'Material_Source', 'Material_Bentonite', 'Material_Fracture',
-                    'X-velocity', 'Y-velocity', 'Meta']
-    channel_short = ['Perm', 'Calcite', 'Clino', 'Pyrite', 'Smectite',
-                    'MatSrc', 'MatBent', 'MatFrac', 'Vx', 'Vy', 'Meta']
-
-    saved_paths = []
-    n_channels = baseline_data.shape[0]
-
-    for ch in range(n_channels):
-        fig, ax = plt.subplots(1, 1, figsize=(8, 6))
-
-        # Baseline channel at t=0 (time-invariant)
-        baseline_slice = baseline_data[ch, :, :, 0]
-        baseline_vmin = np.percentile(baseline_slice, 2)
-        baseline_vmax = np.percentile(baseline_slice, 98)
-
-        im = ax.imshow(baseline_slice.T, cmap='viridis',
-                      vmin=baseline_vmin, vmax=baseline_vmax, aspect='auto')
-        ax.set_title(f'{channel_names[ch]} Baseline (Mean)', fontweight='bold')
-        ax.set_xlabel('X')
-        ax.set_ylabel('Y')
-        cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-        cbar.formatter.set_powerlimits((-2, 2))
-        cbar.formatter.set_useMathText(True)
-        cbar.update_ticks()
-
-        plt.tight_layout()
-
-        save_path = output_dir / f'ch{ch:02d}_{channel_short[ch]}_baseline.png'
-        plt.savefig(save_path, dpi=200, bbox_inches='tight')
-        plt.close(fig)
-
-        saved_paths.append(save_path)
-
-        if verbose:
-            print(f"  Saved: {save_path.name}")
-
-    return saved_paths
 
 
 def visualize_input_channels_outlet(
@@ -1363,11 +1509,8 @@ def visualize_input_channels_outlet(
     Returns:
         List of paths to saved images
     """
-    channel_names = ['Permeability', 'Calcite', 'Clinochlore', 'Pyrite', 'Smectite',
-                    'Material_Source', 'Material_Bentonite', 'Material_Fracture',
-                    'X-velocity', 'Y-velocity', 'Meta']
-    channel_short = ['Perm', 'Calcite', 'Clino', 'Pyrite', 'Smectite',
-                    'MatSrc', 'MatBent', 'MatFrac', 'Vx', 'Vy', 'Meta']
+    channel_names = CHANNEL_NAMES_11
+    channel_short = CHANNEL_SHORT_11
 
     saved_paths = []
     n_channels = input_data.shape[0]
@@ -1423,20 +1566,18 @@ def visualize_ig_attributions_outlet(
     Returns:
         List of paths to saved images
     """
-    channel_names = ['Permeability', 'Calcite', 'Clinochlore', 'Pyrite', 'Smectite',
-                    'Material_Source', 'Material_Bentonite', 'Material_Fracture',
-                    'X-velocity', 'Y-velocity', 'Meta']
-    channel_short = ['Perm', 'Calcite', 'Clino', 'Pyrite', 'Smectite',
-                    'MatSrc', 'MatBent', 'MatFrac', 'Vx', 'Vy', 'Meta']
+    channel_names = CHANNEL_NAMES_10_MERGED
+    channel_short = CHANNEL_SHORT_10_MERGED
 
     # Compute global ranges for each channel (across all time indices)
     # Using symmetric colorbar centered at 0 for better interpretation
-    n_channels = ig_results[list(ig_results.keys())[0]].shape[0]
+    merged_ig_results = {t_idx: merge_velocity_channels(ig_spatial) for t_idx, ig_spatial in ig_results.items()}
+    n_channels = merged_ig_results[list(merged_ig_results.keys())[0]].shape[0]
     ig_ranges = {}
 
     for ch in range(n_channels):
         all_ig_values = []
-        for t_idx, ig_spatial in ig_results.items():
+        for t_idx, ig_spatial in merged_ig_results.items():
             all_ig_values.append(ig_spatial[ch].flatten())
         combined_ig = np.concatenate(all_ig_values)
 
@@ -1460,7 +1601,7 @@ def visualize_ig_attributions_outlet(
     saved_paths = []
 
     # Create separate image for each (channel, time) combination
-    for t_idx, ig_spatial in ig_results.items():
+    for t_idx, ig_spatial in merged_ig_results.items():
         for ch in range(n_channels):
             fig, ax = plt.subplots(1, 1, figsize=(8, 6))
 
@@ -1494,6 +1635,124 @@ def visualize_ig_attributions_outlet(
     return saved_paths
 
 
+def save_ig_csv_outlet(
+    ig_results: Dict[int, np.ndarray],
+    sample_idx: int,
+    output_dir: Path,
+    verbose: bool = True
+) -> List[Path]:
+    """
+    Save outlet IG results as per-time CSV files (Option A, wide format).
+
+    Format per time:
+        x_coord, y_coord, Permeability_IG, Calcite_IG, ...
+
+    Args:
+        ig_results: Dictionary mapping time indices to IG arrays (C, nx, ny)
+        sample_idx: Sample index being analyzed
+        output_dir: Output directory
+        verbose: Whether to print progress
+
+    Returns:
+        List of paths to saved CSV files
+    """
+    channel_names = CHANNEL_NAMES_10_MERGED
+
+    saved_paths = []
+
+    for t_idx in sorted(ig_results.keys()):
+        ig_spatial = merge_velocity_channels(ig_results[t_idx])  # (10, nx, ny)
+        n_channels, nx, ny = ig_spatial.shape
+
+        x_coords = []
+        y_coords = []
+        for x in range(nx):
+            for y in range(ny):
+                x_coords.append(x)
+                y_coords.append(y)
+
+        data = {
+            'x_coord': x_coords,
+            'y_coord': y_coords
+        }
+
+        for ch in range(n_channels):
+            col_name = f'{channel_names[ch]}_IG'
+            vals = []
+            for x in range(nx):
+                for y in range(ny):
+                    vals.append(ig_spatial[ch, x, y])
+            data[col_name] = vals
+
+        df = pd.DataFrame(data)
+        csv_path = output_dir / f'ig_data_s{sample_idx}_t{t_idx:02d}.csv'
+        df.to_csv(csv_path, index=False, float_format='%.6e')
+        saved_paths.append(csv_path)
+
+        if verbose:
+            print(f"  Saved: {csv_path.name}")
+
+    return saved_paths
+
+
+def analyze_channel_importance_outlet(
+    ig_results: Dict[int, np.ndarray],
+    output_dir: Path,
+    verbose: bool = True
+) -> Tuple[Path, Path]:
+    """
+    Analyze channel-wise IG importance evolution over time for outlet IG.
+
+    Importance metric:
+        sum_{x,y} |IG(channel, x, y)| per time index.
+
+    Args:
+        ig_results: Dictionary mapping time indices to IG arrays (C, nx, ny)
+        output_dir: Output directory
+        verbose: Whether to print progress
+
+    Returns:
+        Tuple of (importance_csv_path, importance_plot_path)
+    """
+    channel_names = [
+        'Perm', 'Calcite', 'Clino', 'Pyrite', 'Smectite',
+        'MatSrc', 'MatBent', 'MatFrac', 'Velocity', 'Meta'
+    ]
+
+    times = sorted(ig_results.keys())
+    n_channels = merge_velocity_channels(ig_results[times[0]]).shape[0]
+    importance = np.zeros((len(times), n_channels))
+
+    for i, t_idx in enumerate(times):
+        ig_spatial = merge_velocity_channels(ig_results[t_idx])
+        for ch in range(n_channels):
+            importance[i, ch] = np.abs(ig_spatial[ch]).sum()
+
+    df = pd.DataFrame(importance, index=times, columns=channel_names)
+    df.index.name = 'time'
+    csv_path = output_dir / 'channel_importance.csv'
+    df.to_csv(csv_path, float_format='%.6e')
+
+    plt.figure(figsize=(12, 6))
+    for ch in range(n_channels):
+        plt.plot(times, importance[:, ch], marker='o', label=channel_names[ch])
+    plt.xlabel('Time Index')
+    plt.ylabel('Total |IG|')
+    plt.title('Outlet IG Channel Importance Evolution')
+    plt.grid(True, alpha=0.3)
+    plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+    plt.tight_layout()
+
+    plot_path = output_dir / 'importance_evolution.png'
+    plt.savefig(plot_path, dpi=200, bbox_inches='tight')
+    plt.close()
+
+    if verbose:
+        print(f"  Saved importance analysis: {csv_path.name}, {plot_path.name}")
+
+    return csv_path, plot_path
+
+
 def integrated_gradients_analysis_outlet(
     config: Dict,
     outlet_normalizer,
@@ -1525,43 +1784,55 @@ def integrated_gradients_analysis_outlet(
     print("="*70)
 
     ig_config = config.get('IG_ANALYSIS', {})
-    sample_idx = ig_config.get('SAMPLE_IDX', 0)
+    sample_idx_cfg = ig_config.get('SAMPLE_IDX', 0)
     time_indices = ig_config.get('TIME_INDICES', [4, 9, 14, 19])
     n_steps = ig_config.get('N_STEPS', 50)
 
-    # Check if multi-baseline mode is enabled
-    use_multi_baseline = ig_config.get('USE_MULTI_BASELINE', False)
     n_baselines = ig_config.get('N_BASELINES', 5)
     baseline_seed = ig_config.get('BASELINE_SEED', 42)
 
-    # Validate sample index
-    if sample_idx >= len(test_dataset):
-        print(f"Warning: sample_idx {sample_idx} out of range. Using sample 0.")
-        sample_idx = 0
+    # Support both int and list for sample indices
+    if isinstance(sample_idx_cfg, (list, tuple, np.ndarray)):
+        requested_indices = [int(idx) for idx in sample_idx_cfg]
+    else:
+        requested_indices = [int(sample_idx_cfg)]
 
-    # Get test sample
-    test_sample = test_dataset[sample_idx]['x'].unsqueeze(0)  # (1, C, nx, ny, nt)
-    test_outlet = test_dataset[sample_idx]['y']  # (nt,)
+    valid_sample_indices = []
+    for idx in requested_indices:
+        if 0 <= idx < len(test_dataset):
+            valid_sample_indices.append(idx)
+        else:
+            print(f"Warning: sample_idx {idx} out of range. Skipping.")
 
-    print(f"\nAnalyzing sample {sample_idx} at times {time_indices}")
-    print(f"Test sample shape: {tuple(test_sample.shape)}")
-    print(f"Test outlet shape: {tuple(test_outlet.shape)}")
+    if not valid_sample_indices:
+        print("Warning: No valid sample indices found. Using sample 0.")
+        valid_sample_indices = [0]
 
-    # Create baseline(s) based on configuration
-    if use_multi_baseline:
-        # Multi-baseline mode: use multiple real samples
-        baselines = create_multi_sample_baselines_outlet(
-            train_dataset, val_dataset, test_dataset,
-            n_baselines=n_baselines,
-            random_seed=baseline_seed,
-            verbose=verbose
-        )
-        baseline_data = None  # Will not visualize individual baselines
+    # Deduplicate while preserving order
+    valid_sample_indices = list(dict.fromkeys(valid_sample_indices))
 
-        # Compute IG for each time index using multi-baseline approach
+    # Multi baseline only (other baseline modes removed by design)
+    baselines = create_multi_sample_baselines_outlet(
+        train_dataset, val_dataset, test_dataset,
+        n_baselines=n_baselines,
+        random_seed=baseline_seed,
+        verbose=verbose
+    )
+
+    all_results = {}
+
+    for sample_idx in valid_sample_indices:
+        # Get test sample
+        test_sample = test_dataset[sample_idx]['x'].unsqueeze(0)  # (1, C, nx, ny, nt)
+        test_outlet = test_dataset[sample_idx]['y']  # (nt,)
+
+        print(f"\nAnalyzing sample {sample_idx} at times {time_indices}")
+        print(f"Test sample shape: {tuple(test_sample.shape)}")
+        print(f"Test outlet shape: {tuple(test_outlet.shape)}")
+
+        # Compute IG for each time index
         ig_results = {}
         info_results = {}
-
         for t in time_indices:
             if t >= test_outlet.shape[0]:
                 print(f"  Skipping time {t} (out of range)")
@@ -1577,85 +1848,57 @@ def integrated_gradients_analysis_outlet(
                 n_steps=n_steps,
                 verbose=verbose
             )
+
             ig_results[t] = ig_spatial
             info_results[t] = info
 
-    else:
-        # Single baseline mode: use mean baseline (original behavior)
-        baseline = create_mean_baseline_outlet(train_dataset, val_dataset, test_dataset, verbose)
-        baseline_data = baseline[0].cpu().numpy()  # (C, nx, ny, nt) for visualization
+        # Generate outputs for current sample
+        output_dir = Path(config['OUTPUT_DIR']) / 'integrated_gradients' / f'sample_{sample_idx}'
+        output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Compute IG for each time index
-        ig_results = {}
-        info_results = {}
-
-        for t in time_indices:
-            if t >= test_outlet.shape[0]:
-                print(f"  Skipping time {t} (out of range)")
-                continue
-
-            ig_spatial, info = compute_integrated_gradients_outlet(
-                model=model,
-                outlet_normalizer=outlet_normalizer,
-                device=device,
-                test_sample=test_sample,
-                baseline=baseline,
-                target_t=t,
-                n_steps=n_steps,
-                verbose=verbose
-            )
-            ig_results[t] = ig_spatial
-            info_results[t] = info
-
-    # Generate visualizations
-    output_dir = Path(config['OUTPUT_DIR']) / 'integrated_gradients' / f'sample_{sample_idx}'
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    # Visualize baseline channels (only if using single mean baseline)
-    baseline_paths = []
-    if baseline_data is not None:
-        print("\nGenerating baseline channel images...")
-        baseline_paths = visualize_baseline_channels_outlet(
-            baseline_data, output_dir, verbose
-        )
-    else:
+        baseline_paths = []
         if verbose:
-            print("\nSkipping mean baseline visualization (using multi-baseline mode)")
+            print("\nSkipping baseline visualization (multi-baseline only mode)")
 
-    # Visualize input channels
-    print("\nGenerating input channel images...")
-    input_data = test_sample[0].cpu().numpy()  # (C, nx, ny, nt)
-    input_paths = visualize_input_channels_outlet(
-        input_data, sample_idx, output_dir, verbose
-    )
+        print("\nGenerating input channel images...")
+        input_data = test_sample[0].cpu().numpy()  # (C, nx, ny, nt)
+        input_paths = visualize_input_channels_outlet(
+            input_data, sample_idx, output_dir, verbose
+        )
 
-    # Visualize IG attributions
-    print("\nGenerating IG attribution images...")
-    ig_paths = visualize_ig_attributions_outlet(
-        ig_results, sample_idx, output_dir, verbose
-    )
+        print("\nGenerating IG attribution images...")
+        ig_paths = visualize_ig_attributions_outlet(
+            ig_results, sample_idx, output_dir, verbose
+        )
 
-    # Save summary information
-    summary_path = output_dir / 'ig_summary.txt'
-    with open(summary_path, 'w') as f:
-        f.write("Integrated Gradients Analysis Summary\n")
-        f.write("="*50 + "\n\n")
-        f.write(f"Sample Index: {sample_idx}\n")
-        f.write(f"Time Indices Analyzed: {time_indices}\n")
-        f.write(f"Integration Steps: {n_steps}\n")
-        f.write(f"Baseline Mode: {'Multi-baseline' if use_multi_baseline else 'Single mean baseline'}\n")
-        if use_multi_baseline:
+        print("\nSaving IG CSV files...")
+        csv_paths = save_ig_csv_outlet(ig_results, sample_idx, output_dir, verbose)
+
+        print("\nGenerating channel importance analysis...")
+        importance_csv, importance_plot = analyze_channel_importance_outlet(
+            ig_results, output_dir, verbose
+        )
+
+        summary_path = output_dir / 'ig_summary.txt'
+        with open(summary_path, 'w') as f:
+            f.write("Integrated Gradients Analysis Summary\n")
+            f.write("="*50 + "\n\n")
+            f.write(f"Sample Index: {sample_idx}\n")
+            f.write(f"Time Indices Analyzed: {time_indices}\n")
+            f.write(f"Integration Steps: {n_steps}\n")
+            f.write("Baseline Mode: multi\n")
+            f.write("Velocity merged: True (Vx+Vy)\n")
             f.write(f"Number of Baselines: {n_baselines}\n")
             f.write(f"Baseline Seed: {baseline_seed}\n")
-        f.write("\n")
+            f.write(f"IG CSV files saved: {len(csv_paths)}\n")
+            f.write(f"Channel importance CSV: {importance_csv.name}\n")
+            f.write(f"Channel importance plot: {importance_plot.name}\n")
+            f.write("\n")
 
-        for t in sorted(info_results.keys()):
-            info = info_results[t]
-            f.write(f"Time {t}:\n")
+            for t in sorted(info_results.keys()):
+                info = info_results[t]
+                f.write(f"Time {t}:\n")
 
-            # Handle different info structures based on baseline mode
-            if use_multi_baseline:
-                # Multi-baseline mode: info has 'baseline_stats' dict
                 f.write(f"  Output (actual): {info['output_actual']:.6e}\n")
                 f.write(f"  Output (baseline mean): {info['baseline_stats']['output_baseline_mean']:.6e}\n")
                 f.write(f"  Output (baseline std): {info['baseline_stats']['output_baseline_std']:.6e}\n")
@@ -1667,27 +1910,45 @@ def integrated_gradients_analysis_outlet(
                 f.write(f"  IG sum: {info['ig_sum']:.6e}\n")
                 f.write(f"  IG sum (mean): {info['baseline_stats']['ig_sum_mean']:.6e}\n")
                 f.write(f"  IG sum (std): {info['baseline_stats']['ig_sum_std']:.6e}\n")
-            else:
-                # Single baseline mode: info has direct keys
-                f.write(f"  Output (baseline): {info['output_baseline']:.6e}\n")
-                f.write(f"  Output (actual): {info['output_actual']:.6e}\n")
-                f.write(f"  Output change: {info['output_change']:.6e}\n")
-                f.write(f"  Total |IG|: {info['total_abs_ig']:.6e}\n")
-                f.write(f"  IG sum: {info['ig_sum']:.6e}\n")
+                f.write(f"  Completeness target (mean): {info['completeness_target']:.6e}\n")
+                f.write(f"  Completeness error: {info['completeness_error']:.6e}\n")
+                f.write(f"  Completeness rel. error: {info['completeness_rel_error']:.6e}\n")
+                f.write(f"  Completeness error (mean): {info['baseline_stats']['completeness_error_mean']:.6e}\n")
+                f.write(f"  Completeness error (std): {info['baseline_stats']['completeness_error_std']:.6e}\n")
+                f.write(f"  Completeness error (range): "
+                        f"[{info['baseline_stats']['completeness_error_min']:.6e}, "
+                        f"{info['baseline_stats']['completeness_error_max']:.6e}]\n")
+                f.write(f"  Completeness rel. error (mean): "
+                        f"{info['baseline_stats']['completeness_rel_error_mean']:.6e}\n")
+                f.write(f"  Completeness rel. error (std): "
+                        f"{info['baseline_stats']['completeness_rel_error_std']:.6e}\n")
 
-            f.write("\n")
+                f.write("\n")
 
-    print(f"\n  Saved summary: {summary_path}")
+        print(f"\n  Saved summary: {summary_path}")
+
+        sample_result = {
+            'ig_results': ig_results,
+            'info_results': info_results,
+            'baseline_paths': baseline_paths,
+            'input_paths': input_paths,
+            'ig_paths': ig_paths,
+            'csv_paths': csv_paths,
+            'importance_csv': importance_csv,
+            'importance_plot': importance_plot,
+            'summary_path': summary_path
+        }
+        all_results[f'sample_{sample_idx}'] = sample_result
+
     print("\nIntegrated Gradients analysis complete!")
 
-    return {
-        'ig_results': ig_results,
-        'info_results': info_results,
-        'baseline_paths': baseline_paths,
-        'input_paths': input_paths,
-        'ig_paths': ig_paths,
-        'summary_path': summary_path
-    }
+    # Backward compatibility: keep top-level single-sample keys when only one sample is analyzed
+    if len(all_results) == 1:
+        only_result = next(iter(all_results.values()))
+        only_result['samples'] = all_results
+        return only_result
+
+    return {'samples': all_results}
 
 
 # ==============================================================================
@@ -1709,186 +1970,121 @@ def main():
     print("="*80)
 
     # 1. Load data and create datasets
-    (spatial_normalizer, outlet_normalizer,
-     train_dataset, val_dataset, test_dataset, device) = preprocessing_outlet(CONFIG)
+    (
+        spatial_normalizer,
+        outlet_normalizer,
+        trainval_dataset,
+        test_dataset,
+        fixed_split,
+        train_dataset,
+        val_dataset,
+        device,
+    ) = preprocessing_outlet(CONFIG, return_split=True)
 
-    # 2. Extract single training parameters
-    params = CONFIG['SINGLE_PARAMS']
-    n_modes = (params['n_modes_1'], params['n_modes_2'], params['n_modes_3'])
+    training_mode = CONFIG['TRAINING_CONFIG']['mode']
 
-    # 3. Create model and training components
-    (model, train_loader, val_loader, test_loader,
-     optimizer, scheduler, loss_fn) = create_model(
-        CONFIG, train_dataset, val_dataset, test_dataset, device,
-        n_modes=n_modes,
-        hidden_channels=params['hidden_channels'],
-        n_layers=params['n_layers'],
-        domain_padding=params['domain_padding'],
-        train_batch_size=params['train_batch_size'],
-        l2_weight=params['l2_weight'],
-        channel_mlp_expansion=params['channel_mlp_expansion'],
-        channel_mlp_skip=params['channel_mlp_skip'],
-        projection_mlp_hidden=params['projection_mlp_hidden'],
-        projection_mlp_layers=params['projection_mlp_layers'],
-        projection_mlp_activation=params['projection_mlp_activation'],
-        projection_mlp_dropout=params['projection_mlp_dropout']
-    )
-
-    # Print model info
-    n_params = count_model_params(model)
-    print(f"\nModel created successfully!")
-    print(f"Total parameters: {n_params:,}")
-    print(f"Architecture: TFNOWithPooling with {CONFIG['MODEL_CONFIG']['pool_type']} spatial pooling")
-    print(f"Output: Dimension-independent (B, nt) - works with any time resolution!")
-
-    # Print Projection ChannelMLP configuration (hyperparameters)
-    print(f"\nProjection ChannelMLP Configuration (C → 1):")
-    print(f"  Hidden channels: {params['projection_mlp_hidden']}")
-    print(f"  N layers: {params['projection_mlp_layers']}")
-    print(f"  Activation: {params['projection_mlp_activation']}")
-    print(f"  Dropout: {params['projection_mlp_dropout']}")
-    print(f"  Input channels: C={params['hidden_channels']} → Output: 1 (time preserved)")
-
-    # 4. Training mode branching
-    if CONFIG['TRAINING_CONFIG']['mode'] == 'single':
-        # Single training mode with fixed parameters
-        trained_model = train_model(
-            CONFIG, device, model, train_loader, val_loader, test_loader,
-            optimizer, scheduler, loss_fn, verbose=True
-        )
-
-        # 5. Evaluate on test set
-        eval_results = model_evaluation(
-            CONFIG, device, trained_model, test_loader, loss_fn, verbose=True
-        )
-
-        # 6. Generate visualizations
-        viz_stats = visualize_outlet_predictions(
-            CONFIG, device, trained_model, test_loader, outlet_normalizer
-        )
-
-        # 7. Integrated Gradients analysis (if enabled)
-        if CONFIG.get('IG_ANALYSIS', {}).get('ENABLED', False):
-            ig_results = integrated_gradients_analysis_outlet(
-                CONFIG, outlet_normalizer, device, trained_model,
-                train_dataset, val_dataset, test_dataset, verbose=True
+    if training_mode in ('single', 'optuna'):
+        if training_mode == 'single':
+            print("\nExecuting single/ensemble training mode...")
+            optimization_results = None
+        else:
+            print("\nExecuting Optuna optimization mode...")
+            optuna_train_dataset, optuna_val_dataset, _ = make_member_split(
+                trainval_dataset=trainval_dataset,
+                trainval_original_indices=fixed_split.trainval_indices,
+                val_size_relative=CONFIG['VAL_SIZE'] / (1 - CONFIG['TEST_SIZE']),
+                random_state=member_seed(CONFIG, 0),
+            )
+            optimization_results = optuna_optimization_outlet(
+                config=CONFIG,
+                train_dataset=optuna_train_dataset,
+                val_dataset=optuna_val_dataset,
+                test_dataset=test_dataset,
+                device=device,
+                verbose=True
             )
 
-        print("\n" + "="*80)
-        print("Training Complete!")
-        print("="*80)
+        params = resolve_training_params(training_mode, CONFIG, optimization_results)
+        print("\nTraining final outlet ensemble with resolved hyperparameters...")
+        print(f"Projection ChannelMLP hidden: {params['projection_mlp_hidden']}")
+        print(f"Projection ChannelMLP layers: {params['projection_mlp_layers']}")
 
-    elif CONFIG['TRAINING_CONFIG']['mode'] == 'optuna':
-        # Optuna hyperparameter optimization mode
-        print("\nExecuting Optuna optimization mode...")
+        def create_components(train_ds, val_ds, test_ds, member_params, output_dir):
+            return create_model_from_params(CONFIG, train_ds, val_ds, test_ds, device, member_params)
 
-        optimization_results = optuna_optimization_outlet(
+        def train_one(model, train_loader, val_loader, optimizer, scheduler, loss_fn, output_dir):
+            return train_model_to_dir(
+                CONFIG, device, model, train_loader, val_loader,
+                optimizer, scheduler, loss_fn, output_dir, verbose=True
+            )
+
+        ensemble_run = train_ensemble(
             config=CONFIG,
-            train_dataset=train_dataset,
-            val_dataset=val_dataset,
+            model_kind='fno_outlet',
+            trainval_dataset=trainval_dataset,
+            trainval_original_indices=fixed_split.trainval_indices,
             test_dataset=test_dataset,
+            test_original_indices=fixed_split.test_indices,
             device=device,
-            verbose=True
+            params=params,
+            create_components=create_components,
+            train_one=train_one,
+            verbose=True,
         )
 
-        # Train final model with best hyperparameters
-        print(f"\n" + "="*80)
-        print("TRAINING FINAL MODEL WITH BEST PARAMETERS")
-        print("="*80)
+        trained_model = ensemble_run.predictor
+        test_loader = ensemble_run.test_loader
+        loss_fn = ensemble_run.loss_fn
+        train_dataset = ensemble_run.train_dataset
+        val_dataset = ensemble_run.val_dataset
 
-        best_params = optimization_results['best_params']
+        model_evaluation(CONFIG, device, trained_model, test_loader, loss_fn, verbose=True)
+        visualize_outlet_predictions(CONFIG, device, trained_model, test_loader, outlet_normalizer)
 
-        # Reconstruct n_modes tuple
-        best_n_modes = (
-            best_params['n_modes_1'],
-            best_params['n_modes_2'],
-            best_params['n_modes_3']
-        )
-
-        # Reconstruct domain_padding from index
-        domain_padding_idx = best_params['domain_padding_idx']
-        best_domain_padding = CONFIG['OPTUNA_SEARCH_SPACE']['domain_padding_options'][domain_padding_idx]
-
-        # Create model with best parameters
-        (final_model, final_train_loader, final_val_loader, final_test_loader,
-         final_optimizer, final_scheduler, final_loss_fn) = create_model(
-            CONFIG, train_dataset, val_dataset, test_dataset, device,
-            n_modes=best_n_modes,
-            hidden_channels=best_params['hidden_channels'],
-            n_layers=best_params['n_layers'],
-            domain_padding=best_domain_padding,
-            train_batch_size=best_params['train_batch_size'],
-            l2_weight=best_params['l2_weight'],
-            channel_mlp_expansion=best_params['channel_mlp_expansion'],
-            channel_mlp_skip=best_params['channel_mlp_skip'],
-            projection_mlp_hidden=best_params['projection_mlp_hidden'],
-            projection_mlp_layers=best_params['projection_mlp_layers'],
-            projection_mlp_activation=best_params['projection_mlp_activation'],
-            projection_mlp_dropout=best_params['projection_mlp_dropout']
-        )
-
-        # Print final model info
-        n_params_final = count_model_params(final_model)
-        print(f"\nFinal model created with best parameters!")
-        print(f"Total parameters: {n_params_final:,}")
-
-        # Train final model
-        trained_model = train_model(
-            CONFIG, device, final_model, final_train_loader, final_val_loader, final_test_loader,
-            final_optimizer, final_scheduler, final_loss_fn, verbose=True
-        )
-
-        # Evaluate final model
-        eval_results = model_evaluation(
-            CONFIG, device, trained_model, final_test_loader, final_loss_fn, verbose=True
-        )
-
-        # Generate visualizations
-        viz_stats = visualize_outlet_predictions(
-            CONFIG, device, trained_model, final_test_loader, outlet_normalizer
-        )
-
-        # Integrated Gradients analysis (if enabled)
         if CONFIG.get('IG_ANALYSIS', {}).get('ENABLED', False):
-            ig_results = integrated_gradients_analysis_outlet(
+            integrated_gradients_analysis_outlet(
                 CONFIG, outlet_normalizer, device, trained_model,
                 train_dataset, val_dataset, test_dataset, verbose=True
             )
 
-        print("\n" + "="*80)
-        print("OPTUNA OPTIMIZATION AND FINAL TRAINING COMPLETE!")
-        print("="*80)
-        print(f"\nBest hyperparameters:")
-        for key, value in best_params.items():
-            print(f"  {key}: {value}")
+        print(f"   Ensemble manifest saved to: {ensemble_run.manifest_path}")
 
-    elif CONFIG['TRAINING_CONFIG']['mode'] == 'eval':
-        # Load pretrained model for evaluation only
+    elif training_mode == 'eval':
         model_path = Path(CONFIG['TRAINING_CONFIG']['eval_model_path'])
         if not model_path.exists():
             raise FileNotFoundError(f"Model not found: {model_path}")
 
-        model.load_state_dict(torch.load(model_path, map_location=device, weights_only=False))
-        print(f"Loaded pretrained model from: {model_path}")
+        if model_path.suffix.lower() == '.json':
+            trained_model, test_loader, loss_fn, manifest = load_ensemble_for_evaluation(
+                CONFIG,
+                model_path,
+                train_dataset,
+                val_dataset,
+                test_dataset,
+                device,
+            )
+            print(f"Loaded outlet ensemble manifest from: {model_path}")
+            print(f"Ensemble members: {len(manifest['members'])}")
+        else:
+            model, _, _, test_loader, _, _, loss_fn = create_model_from_params(
+                CONFIG, train_dataset, val_dataset, test_dataset, device, CONFIG['SINGLE_PARAMS']
+            )
+            model.load_state_dict(torch.load(model_path, map_location=device, weights_only=False))
+            model.eval()
+            trained_model = model
+            print(f"Loaded pretrained model from: {model_path}")
 
-        eval_results = model_evaluation(
-            CONFIG, device, model, test_loader, loss_fn, verbose=True
-        )
+        model_evaluation(CONFIG, device, trained_model, test_loader, loss_fn, verbose=True)
+        visualize_outlet_predictions(CONFIG, device, trained_model, test_loader, outlet_normalizer)
 
-        # Generate visualizations for pretrained model
-        viz_stats = visualize_outlet_predictions(
-            CONFIG, device, model, test_loader, outlet_normalizer
-        )
-
-        # Integrated Gradients analysis (if enabled)
         if CONFIG.get('IG_ANALYSIS', {}).get('ENABLED', False):
-            ig_results = integrated_gradients_analysis_outlet(
-                CONFIG, outlet_normalizer, device, model,
+            integrated_gradients_analysis_outlet(
+                CONFIG, outlet_normalizer, device, trained_model,
                 train_dataset, val_dataset, test_dataset, verbose=True
             )
 
     else:
-        raise ValueError(f"Unknown training mode: {CONFIG['TRAINING_CONFIG']['mode']}")
+        raise ValueError(f"Unknown training mode: {training_mode}")
 
 
 if __name__ == '__main__':
