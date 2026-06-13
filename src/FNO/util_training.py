@@ -20,6 +20,12 @@ import matplotlib.pyplot as plt
 # Training Functions
 # ==============================================================================
 
+def config_for_optuna_epochs(config: Dict) -> Dict:
+    """Return a config copy with Optuna-specific N_EPOCHS applied."""
+    optuna_n_epochs = config.get("TRAINING_CONFIG", {}).get("optuna_n_epochs", config["N_EPOCHS"])
+    return {**config, "N_EPOCHS": int(optuna_n_epochs)}
+
+
 def train_model_generic(
     config: Dict,
     device: str,

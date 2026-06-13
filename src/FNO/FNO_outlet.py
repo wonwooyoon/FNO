@@ -40,7 +40,7 @@ from neuraloperator.neuralop.layers.channel_mlp import ChannelMLP
 from util_common import LRStepScheduler
 
 # Import common training utilities (refactored from duplicate code)
-from util_training import train_model_generic, model_evaluation_generic
+from util_training import config_for_optuna_epochs, train_model_generic, model_evaluation_generic
 from util_ensemble import (
     EnsemblePredictor,
     fixed_test_split,
@@ -107,6 +107,7 @@ CONFIG = {
     'TRAINING_CONFIG': {
         'mode': 'eval',  # Options: 'single', 'optuna', 'eval'
         'optuna_n_trials': 100,
+        'optuna_n_epochs': 30,
         'optuna_seed': 42,
         'optuna_n_startup_trials': 10,
         'eval_model_path': './src/FNO/output_outlet/final/best_model_state_dict.pt'
@@ -912,8 +913,9 @@ def optuna_optimization_outlet(
 
             # Train model and get best validation loss
             trial_output_dir = optuna_output_dir / 'trials' / f'trial_{trial.number:03d}'
+            trial_config = config_for_optuna_epochs(config)
             trained_model = train_model_to_dir(
-                config=config,
+                config=trial_config,
                 device=device,
                 model=model,
                 train_loader=train_loader,

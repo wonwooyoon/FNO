@@ -364,6 +364,7 @@ def train_ensemble(
         test_indices=test_original_indices,
         config_subset={
             "N_EPOCHS": config.get("N_EPOCHS"),
+            "OPTUNA_N_EPOCHS": config.get("TRAINING_CONFIG", {}).get("optuna_n_epochs"),
             "VAL_SIZE": config.get("VAL_SIZE"),
             "TEST_SIZE": config.get("TEST_SIZE"),
             "RANDOM_STATE": config.get("RANDOM_STATE"),
