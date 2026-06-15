@@ -29,14 +29,22 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import optuna
 import matplotlib.pyplot as plt
 import matplotlib.colors as colors
 from torch.utils.data import DataLoader, Dataset
-from sklearn.model_selection import train_test_split
 
 from neuraloperator.neuralop.training import AdamW
+from util_training import config_for_optuna_epochs, train_model_generic, model_evaluation_generic
+from util_ensemble import (
+    EnsemblePredictor,
+    fixed_test_split,
+    load_ensemble_manifest,
+    make_member_split,
+    member_seed,
+    resolve_training_params,
+    train_ensemble,
+)
 
 # Import preprocessing normalizer (needed for loading ChannelNormalizer from pickle)
 preprocessing_path = Path(__file__).parent.parent / 'preprocessing'
@@ -50,8 +58,8 @@ from preprocessing_normalize import ChannelNormalizer
 CONFIG = {
     # Data paths - updated to use pre-normalized data (matches FNO.py)
     'SPECIES_TYPE': 'u',  # Options: 'u' (uranium), 'ca' (calcium), 'c' (carbonate)
-    'MERGED_PT_PATH': './src/preprocessing/merged_normalized_U.pt',  # Pre-normalized data
-    'CHANNEL_NORMALIZER_PATH': './src/preprocessing/normalizer_u_delta.pkl',  # Normalizer (must match species and output mode)
+    'MERGED_PT_PATH': './src/preprocessing/data/normalized/lr/delta/merged_normalized_U.pt',  # Pre-normalized data
+    'CHANNEL_NORMALIZER_PATH': './src/preprocessing/normalizers/lr/delta/normalizer_u_delta.pkl',  # Normalizer (must match species and output mode)
     'OUTPUT_DIR': './src/FNO/output_unet',
     'N_EPOCHS': 150,
     'EVAL_INTERVAL': 1,
@@ -62,6 +70,7 @@ CONFIG = {
         'in_channels': 11,  # 10 original channels (with material one-hot) + 1 uniform meta channel (matches FNO)
         'out_channels': 1,
         'init_features': 32,  # Initial number of features for U-Net
+        'pool_kernels': [(2, 2, 2), (2, 2, 2), (2, 2, 1), (2, 2, 1)],
     },
     'SCHEDULER_CONFIG': {
         'scheduler_type': 'step',  # Options: 'cosine', 'step'
@@ -88,9 +97,18 @@ CONFIG = {
     'TRAINING_CONFIG': {
         'mode': 'single',  # Options: 'single', 'optuna', 'eval'
         'optuna_n_trials': 100,
+        'optuna_n_epochs': 30,
         'optuna_seed': 42,
         'optuna_n_startup_trials': 10,
         'eval_model_path': './src/FNO/output_unet/final/best_model_state_dict.pt'
+    },
+    'ENSEMBLE': {
+        'ENABLED': True,
+        'N_MODELS': 10,
+        'BASE_SEED': 42,
+        'SPLIT_SEED_STRATEGY': 'base_plus_member',
+        'MEMBER_OUTPUT_PATTERN': 'ensemble/member_{member_id:03d}',
+        'MANIFEST_NAME': 'ensemble_manifest.json',
     },
     'OPTUNA_SEARCH_SPACE': {
         'depth_range': [2, 4],  # U-Net depth (number of down/up sampling stages)
@@ -102,7 +120,7 @@ CONFIG = {
     'SINGLE_PARAMS': {
         "depth": 4,
         "init_features": 64,
-        "train_batch_size": 16,
+        "train_batch_size": 32,
         "l2_weight": 1e-5,
         "dropout_rate": 0.1,
     }
@@ -140,7 +158,7 @@ class CustomDatasetPure(Dataset):
 # Data Processing Functions
 # ==============================================================================
 
-def preprocessing(config: Dict, verbose: bool = True) -> Tuple:
+def preprocessing(config: Dict, verbose: bool = True, return_split: bool = False) -> Tuple:
     """
     Load pre-normalized data and perform train/val/test split.
 
@@ -240,26 +258,19 @@ def preprocessing(config: Dict, verbose: bool = True) -> Tuple:
         if verbose:
             print("Step 3: Creating train/val/test datasets...")
 
-        # First split: separate test set (final 10%)
-        train_temp_combined, test_combined, train_temp_out, test_out = train_test_split(
-            combined_input, out_data,
+        full_dataset = CustomDatasetPure(combined_input, out_data)
+        trainval_dataset, test_dataset, fixed_split = fixed_test_split(
+            full_dataset,
             test_size=config['TEST_SIZE'],
-            random_state=config['RANDOM_STATE']
+            random_state=config['RANDOM_STATE'],
         )
-
-        # Second split: separate validation set from remaining data
-        # Val size relative to remaining data: 0.1 / (1 - 0.1) = ~0.111
         val_size_relative = config['VAL_SIZE'] / (1 - config['TEST_SIZE'])
-        train_combined, val_combined, train_out, val_out = train_test_split(
-            train_temp_combined, train_temp_out,
-            test_size=val_size_relative,
-            random_state=config['RANDOM_STATE']
+        train_dataset, val_dataset, _ = make_member_split(
+            trainval_dataset=trainval_dataset,
+            trainval_original_indices=fixed_split.trainval_indices,
+            val_size_relative=val_size_relative,
+            random_state=config['RANDOM_STATE'],
         )
-
-        # Create datasets with already combined and normalized inputs
-        train_dataset = CustomDatasetPure(train_combined, train_out)
-        val_dataset = CustomDatasetPure(val_combined, val_out)
-        test_dataset = CustomDatasetPure(test_combined, test_out)
 
         if verbose:
             print(f"   Train dataset size: {len(train_dataset)}")
@@ -274,7 +285,17 @@ def preprocessing(config: Dict, verbose: bool = True) -> Tuple:
     if verbose:
         print("Data preprocessing completed successfully!")
 
-    # Step 4: Return necessary objects
+    if return_split:
+        return (
+            channel_normalizer,
+            trainval_dataset,
+            test_dataset,
+            fixed_split,
+            train_dataset,
+            val_dataset,
+            device,
+        )
+
     return (channel_normalizer, train_dataset, val_dataset, test_dataset, device)
 
 # ==============================================================================
@@ -399,12 +420,18 @@ class DoubleConv3D(nn.Module):
 
 
 class Down3D(nn.Module):
-    """Downscaling block: MaxPool3D -> DoubleConv3D"""
+    """Downscaling block: configurable MaxPool3D -> DoubleConv3D"""
 
-    def __init__(self, in_channels: int, out_channels: int, dropout_rate: float = 0.0):
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        pool_kernel: Tuple[int, int, int],
+        dropout_rate: float = 0.0,
+    ):
         super().__init__()
         self.maxpool_conv = nn.Sequential(
-            nn.MaxPool3d(2),
+            nn.MaxPool3d(kernel_size=pool_kernel, stride=pool_kernel),
             DoubleConv3D(in_channels, out_channels, dropout_rate)
         )
 
@@ -415,22 +442,30 @@ class Down3D(nn.Module):
 class Up3D(nn.Module):
     """Upscaling block: ConvTranspose3D -> Concat -> DoubleConv3D"""
 
-    def __init__(self, in_channels: int, out_channels: int, dropout_rate: float = 0.0):
+    def __init__(
+        self,
+        in_channels: int,
+        skip_channels: int,
+        pool_kernel: Tuple[int, int, int],
+        dropout_rate: float = 0.0,
+    ):
         super().__init__()
-        self.up = nn.ConvTranspose3d(in_channels, in_channels // 2, kernel_size=2, stride=2)
-        self.conv = DoubleConv3D(in_channels, out_channels, dropout_rate)
+        self.up = nn.ConvTranspose3d(
+            in_channels,
+            skip_channels,
+            kernel_size=pool_kernel,
+            stride=pool_kernel,
+        )
+        self.conv = DoubleConv3D(skip_channels * 2, skip_channels, dropout_rate)
 
     def forward(self, x1, x2):
         x1 = self.up(x1)
 
-        # Handle potential size mismatch
-        diffZ = x2.size()[2] - x1.size()[2]
-        diffY = x2.size()[3] - x1.size()[3]
-        diffX = x2.size()[4] - x1.size()[4]
-
-        x1 = F.pad(x1, [diffX // 2, diffX - diffX // 2,
-                        diffY // 2, diffY - diffY // 2,
-                        diffZ // 2, diffZ - diffZ // 2])
+        if x1.shape[2:] != x2.shape[2:]:
+            raise ValueError(
+                f"U-Net skip shape mismatch: upsampled={tuple(x1.shape[2:])}, "
+                f"skip={tuple(x2.shape[2:])}"
+            )
 
         # Concatenate along channel dimension
         x = torch.cat([x2, x1], dim=1)
@@ -446,55 +481,85 @@ class UNet3D(nn.Module):
         init_features: Number of features in the first layer
         depth: Depth of the U-Net (number of down/up sampling stages)
         dropout_rate: Dropout rate for regularization
+        pool_kernels: Downsampling schedule. Each tuple maps to one encoder level.
     """
 
     def __init__(self, in_channels: int, out_channels: int, init_features: int = 32,
-                 depth: int = 3, dropout_rate: float = 0.0):
+                 depth: int = 3, dropout_rate: float = 0.0,
+                 pool_kernels: Optional[List[Tuple[int, int, int]]] = None):
         super().__init__()
+        if depth < 1:
+            raise ValueError(f"depth must be >= 1, got {depth}")
+
+        if pool_kernels is None:
+            pool_kernels = [(2, 2, 2), (2, 2, 2), (2, 2, 1), (2, 2, 1)]
+        if depth > len(pool_kernels):
+            raise ValueError(
+                f"depth={depth} exceeds configured pool_kernels length={len(pool_kernels)}"
+            )
+
         self.depth = depth
+        self.pool_kernels = [tuple(kernel) for kernel in pool_kernels[:depth]]
+        self.last_skip_shape_pairs = []
 
-        features = init_features
+        encoder_channels = [init_features * (2 ** i) for i in range(depth)]
 
-        # Initial convolution
-        self.inc = DoubleConv3D(in_channels, features, dropout_rate)
+        self.encoder_blocks = nn.ModuleList()
+        prev_channels = in_channels
+        for features in encoder_channels:
+            self.encoder_blocks.append(DoubleConv3D(prev_channels, features, dropout_rate))
+            prev_channels = features
 
-        # Downsampling path
-        self.down_blocks = nn.ModuleList()
-        for i in range(depth):
-            self.down_blocks.append(Down3D(features, features * 2, dropout_rate))
-            features *= 2
+        self.pools = nn.ModuleList(
+            nn.MaxPool3d(kernel_size=kernel, stride=kernel)
+            for kernel in self.pool_kernels
+        )
 
-        # Upsampling path
+        bottleneck_channels = prev_channels * 2
+        self.bottleneck = DoubleConv3D(prev_channels, bottleneck_channels, dropout_rate)
+
         self.up_blocks = nn.ModuleList()
-        for i in range(depth):
-            self.up_blocks.append(Up3D(features, features // 2, dropout_rate))
-            features //= 2
+        self.decoder_blocks = nn.ModuleList()
+        current_channels = bottleneck_channels
+        for skip_channels, pool_kernel in zip(reversed(encoder_channels), reversed(self.pool_kernels)):
+            self.up_blocks.append(
+                nn.ConvTranspose3d(
+                    current_channels,
+                    skip_channels,
+                    kernel_size=pool_kernel,
+                    stride=pool_kernel,
+                )
+            )
+            self.decoder_blocks.append(DoubleConv3D(skip_channels * 2, skip_channels, dropout_rate))
+            current_channels = skip_channels
 
-        # Final output convolution
-        self.outc = nn.Conv3d(features, out_channels, kernel_size=1)
+        self.outc = nn.Conv3d(current_channels, out_channels, kernel_size=1)
 
     def forward(self, x):
-        # Encoder path with skip connections
         skip_connections = []
 
-        x = self.inc(x)
-        skip_connections.append(x)
-
-        for down in self.down_blocks:
-            x = down(x)
+        for encoder, pool in zip(self.encoder_blocks, self.pools):
+            x = encoder(x)
             skip_connections.append(x)
+            x = pool(x)
 
-        # Remove the last skip connection (bottom of U)
-        skip_connections = skip_connections[:-1]
+        x = self.bottleneck(x)
+        self.last_skip_shape_pairs = []
 
-        # Decoder path
-        for up in self.up_blocks:
+        for up, decoder in zip(self.up_blocks, self.decoder_blocks):
             skip = skip_connections.pop()
-            x = up(x, skip)
+            x = up(x)
+            up_shape = tuple(x.shape[2:])
+            skip_shape = tuple(skip.shape[2:])
+            self.last_skip_shape_pairs.append((up_shape, skip_shape))
+            if up_shape != skip_shape:
+                raise ValueError(
+                    f"U-Net skip shape mismatch: upsampled={up_shape}, skip={skip_shape}"
+                )
+            x = torch.cat([skip, x], dim=1)
+            x = decoder(x)
 
-        # Output layer
-        x = self.outc(x)
-        return x
+        return self.outc(x)
 
 
 # ==============================================================================
@@ -567,7 +632,8 @@ def create_model(config: Dict, train_dataset, val_dataset, test_dataset, device:
         out_channels=config['MODEL_CONFIG']['out_channels'],
         init_features=init_features,
         depth=depth,
-        dropout_rate=dropout_rate
+        dropout_rate=dropout_rate,
+        pool_kernels=config['MODEL_CONFIG']['pool_kernels'],
     ).to(device)
 
     # 4. Create optimizer
@@ -593,6 +659,86 @@ def create_model(config: Dict, train_dataset, val_dataset, test_dataset, device:
         raise ValueError(f"Unknown scheduler type: {scheduler_type}. Use 'cosine' or 'step'.")
 
     return (model, train_loader, val_loader, test_loader, optimizer, scheduler, loss_fn)
+
+
+def create_model_from_params(
+    config: Dict,
+    train_dataset,
+    val_dataset,
+    test_dataset,
+    device: str,
+    params: Dict[str, Any],
+):
+    """Create U-Net model components from canonical or Optuna parameter dictionaries."""
+    return create_model(
+        config=config,
+        train_dataset=train_dataset,
+        val_dataset=val_dataset,
+        test_dataset=test_dataset,
+        device=device,
+        depth=int(params['depth']),
+        init_features=int(params['init_features']),
+        train_batch_size=int(params['train_batch_size']),
+        l2_weight=float(params['l2_weight']),
+        dropout_rate=float(params['dropout_rate']),
+    )
+
+
+def train_model_to_dir(
+    config: Dict,
+    device: str,
+    model,
+    train_loader,
+    val_loader,
+    optimizer,
+    scheduler,
+    loss_fn,
+    output_dir: Path,
+    verbose: bool = True,
+):
+    """Train one U-Net model and save artifacts to the provided directory."""
+    return train_model_generic(
+        config=config,
+        device=device,
+        model=model,
+        train_loader=train_loader,
+        val_loader=val_loader,
+        optimizer=optimizer,
+        scheduler=scheduler,
+        loss_fn=loss_fn,
+        output_dir=output_dir,
+        verbose=verbose,
+    )
+
+
+def load_ensemble_for_evaluation(
+    config: Dict,
+    manifest_file: Path,
+    train_dataset,
+    val_dataset,
+    test_dataset,
+    device: str,
+):
+    """Load a U-Net ensemble manifest and return predictor, test loader, and loss."""
+    manifest = load_ensemble_manifest(manifest_file)
+    params = manifest['params']
+    models = []
+    test_loader = None
+    loss_fn = None
+    base_dir = Path(manifest_file).parent
+
+    for member in manifest['members']:
+        model, _, _, test_loader, _, _, loss_fn = create_model_from_params(
+            config, train_dataset, val_dataset, test_dataset, device, params
+        )
+        state_path = Path(member['model_state_path'])
+        if not state_path.is_absolute():
+            state_path = base_dir / state_path
+        model.load_state_dict(torch.load(state_path, map_location=device, weights_only=False))
+        model.eval()
+        models.append(model)
+
+    return EnsemblePredictor(models=models, device=device), test_loader, loss_fn, manifest
 
 # ==============================================================================
 # Training Functions
@@ -621,121 +767,19 @@ def train_model(config: Dict, channel_normalizer, device: str, model, train_load
     Returns:
         Trained model
     """
-
-    if verbose:
-        print(f"\nStarting model training for {config['N_EPOCHS']} epochs...")
-
-    # Training setup
-    best_val_loss = float('inf')
-    patience = 0
-    early_stopping_patience = config['SCHEDULER_CONFIG']['early_stopping']
-
-    # Track losses for each epoch
-    train_losses = []
-    val_losses = []
-
-    # Create output directory for saving best model
     output_dir = Path(config['OUTPUT_DIR']) / 'final'
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    for epoch in range(config['N_EPOCHS']):
-        # Training phase
-        model.train()
-        total_train_loss = 0
-        train_count = 0
-
-        for batch in train_loader:
-            x = batch['x'].to(device)
-            y = batch['y'].to(device)
-
-            # Data is already normalized - no transformation needed
-            optimizer.zero_grad()
-            pred = model(x)
-            loss = loss_fn(pred, y)
-            loss.backward()
-            optimizer.step()
-
-            total_train_loss += loss.item()
-            train_count += 1
-
-        train_loss = total_train_loss / train_count
-        train_losses.append(train_loss)
-
-        # Validation phase - compute validation loss every epoch
-        model.eval()
-        total_val_loss = 0
-        val_count = 0
-
-        with torch.no_grad():
-            for batch in val_loader:
-                x = batch['x'].to(device)
-                y = batch['y'].to(device)
-
-                # Data is already normalized - no transformation needed
-                pred = model(x)
-                loss = loss_fn(pred, y)
-                total_val_loss += loss.item()
-                val_count += 1
-
-        val_loss = total_val_loss / val_count
-        val_losses.append(val_loss)
-
-        # Print losses for every epoch
-        if verbose:
-            print(f"Epoch {epoch:3d}: Train Loss={train_loss:.6f}, Val Loss={val_loss:.6f}")
-
-        # Save best model based on validation loss
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
-            torch.save(model.state_dict(), output_dir / 'best_model_state_dict.pt')
-            patience = 0
-            if verbose:
-                print(f"    New best model saved! Val loss: {val_loss:.6f}")
-        else:
-            patience += 1
-
-        # Early stopping
-        if patience >= early_stopping_patience:
-            if verbose:
-                print(f"Early stopping after {epoch} epochs")
-            break
-
-        # Update learning rate
-        scheduler.step()
-
-    # Save loss history
-    loss_history = {
-        'train_losses': train_losses,
-        'val_losses': val_losses,
-        'epochs': list(range(len(train_losses)))
-    }
-    torch.save(loss_history, output_dir / 'loss_history.pt')
-
-    # Plot training curves
-    plt.figure(figsize=(10, 6))
-    epochs_range = range(len(train_losses))
-    plt.plot(epochs_range, train_losses, 'b-', label='Train Loss', linewidth=2)
-    plt.plot(epochs_range, val_losses, 'r-', label='Validation Loss', linewidth=2)
-    plt.xlabel('Epoch')
-    plt.ylabel('Loss')
-    plt.title('U-Net Training and Validation Loss Over Time')
-    plt.legend()
-    plt.grid(True, alpha=0.3)
-    plt.yscale('log')
-
-    loss_plot_path = output_dir / 'loss_curves.png'
-    plt.savefig(loss_plot_path, dpi=150, bbox_inches='tight')
-    plt.close()
-
-    if verbose:
-        print(f"\nTraining completed!")
-        print(f"Best Validation Loss: {best_val_loss:.6f}")
-        print(f"Loss history saved to: {output_dir / 'loss_history.pt'}")
-        print(f"Loss curves saved to: {loss_plot_path}")
-
-    # Load and return best model
-    model.load_state_dict(torch.load(output_dir / 'best_model_state_dict.pt', map_location=device, weights_only=False))
-    return model
+    return train_model_to_dir(
+        config=config,
+        device=device,
+        model=model,
+        train_loader=train_loader,
+        val_loader=val_loader,
+        optimizer=optimizer,
+        scheduler=scheduler,
+        loss_fn=loss_fn,
+        output_dir=output_dir,
+        verbose=verbose,
+    )
 
 
 def model_evaluation(config: Dict, channel_normalizer, device: str, model, test_loader, loss_fn, verbose: bool = True):
@@ -756,61 +800,17 @@ def model_evaluation(config: Dict, channel_normalizer, device: str, model, test_
     Returns:
         Dictionary containing evaluation results
     """
-
-    if verbose:
-        print(f"\nEvaluating model on test set...")
-
-    # Test evaluation
-    model.eval()
-    total_test_loss = 0
-    total_test_mse_loss = 0
-    test_count = 0
-
-    # Create MSE loss function for additional metric when using LpLoss
-    mse_loss_fn = torch.nn.MSELoss() if isinstance(loss_fn, LpLoss) else None
-
-    with torch.no_grad():
-        for batch in test_loader:
-            x = batch['x'].to(device)
-            y = batch['y'].to(device)
-
-            # Data is already normalized - no transformation needed
-            pred = model(x)
-            loss = loss_fn(pred, y)
-            total_test_loss += loss.item()
-
-            # Calculate MSE loss additionally when using LpLoss
-            if mse_loss_fn is not None:
-                mse_loss = mse_loss_fn(pred, y)
-                total_test_mse_loss += mse_loss.item()
-
-            test_count += 1
-
-    final_test_loss = total_test_loss / test_count
-    final_test_mse_loss = total_test_mse_loss / test_count if mse_loss_fn is not None else None
-
-    # Create evaluation results
-    eval_results = {
-        'test_loss': final_test_loss,
-        'test_mse_loss': final_test_mse_loss if final_test_mse_loss is not None else None
-    }
-
-    # Save evaluation results
     output_dir = Path(config['OUTPUT_DIR']) / 'final'
-    eval_results_path = output_dir / 'evaluation_results.pt'
-    torch.save(eval_results, eval_results_path)
-
-    if verbose:
-        print(f"Model Evaluation Results:")
-        loss_type = config['LOSS_CONFIG']['loss_type']
-        if loss_type == 'l2' and final_test_mse_loss is not None:
-            print(f"  Test Loss (L{config['LOSS_CONFIG']['l2_p']}): {final_test_loss:.6f}")
-            print(f"  Test Loss (MSE): {final_test_mse_loss:.6f}")
-        else:
-            print(f"  Test Loss: {final_test_loss:.6f}")
-        print(f"Evaluation results saved to: {eval_results_path}")
-
-    return eval_results
+    return model_evaluation_generic(
+        config=config,
+        device=device,
+        model=model,
+        test_loader=test_loader,
+        loss_fn=loss_fn,
+        output_dir=output_dir,
+        compute_mse=isinstance(loss_fn, LpLoss),
+        verbose=verbose,
+    )
 
 # ==============================================================================
 # Optuna Optimization Functions
@@ -884,22 +884,25 @@ def optuna_optimization(config: Dict, channel_normalizer, train_dataset, val_dat
             )
 
             # Train model and get best validation loss
-            trained_model = train_model(
-                config=config,
-                channel_normalizer=channel_normalizer,
+            trial_output_dir = optuna_output_dir / 'trials' / f'trial_{trial.number:03d}'
+            trial_config = config_for_optuna_epochs(config)
+            trained_model = train_model_to_dir(
+                config=trial_config,
                 device=device,
                 model=model,
                 train_loader=train_loader,
                 val_loader=val_loader,
-                test_loader=test_loader,
                 optimizer=optimizer,
                 scheduler=scheduler,
                 loss_fn=loss_fn,
+                output_dir=trial_output_dir,
                 verbose=False  # Reduce verbosity during optimization
             )
+            trial.set_user_attr('model_state_path', str(trial_output_dir / 'best_model_state_dict.pt'))
+            trial.set_user_attr('loss_history_path', str(trial_output_dir / 'loss_history.pt'))
 
             # Get best validation loss from training history
-            loss_history_path = Path(config['OUTPUT_DIR']) / 'final' / 'loss_history.pt'
+            loss_history_path = trial_output_dir / 'loss_history.pt'
             if loss_history_path.exists():
                 loss_history = torch.load(loss_history_path, map_location='cpu', weights_only=False)
                 best_val_loss = min(loss_history['val_losses'])
@@ -936,8 +939,8 @@ def optuna_optimization(config: Dict, channel_normalizer, train_dataset, val_dat
             print(f"New best trial found: Trial {trial.number} with loss {trial.value:.6f}")
 
             # Define paths
-            source_model_path = Path(config['OUTPUT_DIR']) / 'final' / 'best_model_state_dict.pt'
-            source_loss_path = Path(config['OUTPUT_DIR']) / 'final' / 'loss_history.pt'
+            source_model_path = Path(trial.user_attrs.get('model_state_path', ''))
+            source_loss_path = Path(trial.user_attrs.get('loss_history_path', ''))
 
             best_trial_dir = Path(config['OUTPUT_DIR']) / 'optuna' / 'best_trial_model'
             best_trial_dir.mkdir(parents=True, exist_ok=True)
@@ -1408,62 +1411,77 @@ def main() -> None:
         print(f"Training Mode: {CONFIG['TRAINING_CONFIG']['mode'].upper()}")
         print(f"Species Type: {CONFIG['SPECIES_TYPE'].upper()}")
 
-        channel_normalizer, train_dataset, val_dataset, test_dataset, device = preprocessing(
+        (
+            channel_normalizer,
+            trainval_dataset,
+            test_dataset,
+            fixed_split,
+            train_dataset,
+            val_dataset,
+            device,
+        ) = preprocessing(
             config=CONFIG,
-            verbose=True
+            verbose=True,
+            return_split=True,
         )
 
         # Step 2: Execute based on training mode
         training_mode = CONFIG['TRAINING_CONFIG']['mode']
 
-        if training_mode == 'single':
-            # Single training mode - use predefined parameters
-            print("\nExecuting single training mode...")
+        if training_mode in ('single', 'optuna'):
+            if training_mode == 'single':
+                print("\nExecuting single/ensemble training mode...")
+                optimization_results = None
+            else:
+                print("\nExecuting Optuna optimization mode...")
+                optuna_train_dataset, optuna_val_dataset, _ = make_member_split(
+                    trainval_dataset=trainval_dataset,
+                    trainval_original_indices=fixed_split.trainval_indices,
+                    val_size_relative=CONFIG['VAL_SIZE'] / (1 - CONFIG['TEST_SIZE']),
+                    random_state=member_seed(CONFIG, 0),
+                )
+                optimization_results = optuna_optimization(
+                    config=CONFIG,
+                    channel_normalizer=channel_normalizer,
+                    train_dataset=optuna_train_dataset,
+                    val_dataset=optuna_val_dataset,
+                    test_dataset=test_dataset,
+                    device=device,
+                    verbose=True
+                )
 
-            params = CONFIG['SINGLE_PARAMS']
+            params = resolve_training_params(training_mode, CONFIG, optimization_results)
+            print("\nTraining final U-Net ensemble with resolved hyperparameters...")
 
-            model, train_loader, val_loader, test_loader, optimizer, scheduler, loss_fn = create_model(
+            def create_components(train_ds, val_ds, test_ds, member_params, output_dir):
+                return create_model_from_params(CONFIG, train_ds, val_ds, test_ds, device, member_params)
+
+            def train_one(model, train_loader, val_loader, optimizer, scheduler, loss_fn, output_dir):
+                return train_model_to_dir(
+                    CONFIG, device, model, train_loader, val_loader,
+                    optimizer, scheduler, loss_fn, output_dir, verbose=True
+                )
+
+            ensemble_run = train_ensemble(
                 config=CONFIG,
-                train_dataset=train_dataset,
-                val_dataset=val_dataset,
+                model_kind='unet',
+                trainval_dataset=trainval_dataset,
+                trainval_original_indices=fixed_split.trainval_indices,
                 test_dataset=test_dataset,
+                test_original_indices=fixed_split.test_indices,
                 device=device,
-                depth=params['depth'],
-                init_features=params['init_features'],
-                train_batch_size=params['train_batch_size'],
-                l2_weight=params['l2_weight'],
-                dropout_rate=params['dropout_rate']
+                params=params,
+                create_components=create_components,
+                train_one=train_one,
+                verbose=True,
             )
 
-            # Count trainable parameters
-            trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-            total_params = sum(p.numel() for p in model.parameters())
+            trained_model = ensemble_run.predictor
+            test_loader = ensemble_run.test_loader
+            loss_fn = ensemble_run.loss_fn
+            train_dataset = ensemble_run.train_dataset
+            val_dataset = ensemble_run.val_dataset
 
-            print(f"   Model created - Device: {device}")
-            print(f"   Trainable parameters: {trainable_params:,}")
-            print(f"   Total parameters: {total_params:,}")
-            print(f"   Train batches: {len(train_loader)}, Val batches: {len(val_loader)}, Test batches: {len(test_loader)}")
-            print(f"   Optimizer: {type(optimizer).__name__}")
-            print(f"   Scheduler: {type(scheduler).__name__}")
-            print(f"   Loss function: {type(loss_fn).__name__}")
-            print(f"   Channel normalizer: {type(channel_normalizer).__name__}")
-
-            # Train the model
-            trained_model = train_model(
-                config=CONFIG,
-                channel_normalizer=channel_normalizer,
-                device=device,
-                model=model,
-                train_loader=train_loader,
-                val_loader=val_loader,
-                test_loader=test_loader,
-                optimizer=optimizer,
-                scheduler=scheduler,
-                loss_fn=loss_fn,
-                verbose=True
-            )
-
-            # Evaluate the model
             model_evaluation(
                 config=CONFIG,
                 channel_normalizer=channel_normalizer,
@@ -1474,102 +1492,35 @@ def main() -> None:
                 verbose=True
             )
 
-        elif training_mode == 'optuna':
-            # Optuna optimization mode
-            print("\nExecuting Optuna optimization mode...")
-
-            # Run hyperparameter optimization
-            optimization_results = optuna_optimization(
-                config=CONFIG,
-                channel_normalizer=channel_normalizer,
-                train_dataset=train_dataset,
-                val_dataset=val_dataset,
-                test_dataset=test_dataset,
-                device=device,
-                verbose=True
-            )
-
-            # Train final model with best parameters
-            print(f"\nTraining final model with best parameters...")
-            best_params = optimization_results['best_params']
-
-            model, train_loader, val_loader, test_loader, optimizer, scheduler, loss_fn = create_model(
-                config=CONFIG,
-                train_dataset=train_dataset,
-                val_dataset=val_dataset,
-                test_dataset=test_dataset,
-                device=device,
-                depth=best_params['depth'],
-                init_features=best_params['init_features'],
-                train_batch_size=best_params['train_batch_size'],
-                l2_weight=best_params['l2_weight'],
-                dropout_rate=best_params['dropout_rate']
-            )
-
-            # Count trainable parameters
-            trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-            total_params = sum(p.numel() for p in model.parameters())
-
-            print(f"   Final model created - Device: {device}")
-            print(f"   Trainable parameters: {trainable_params:,}")
-            print(f"   Total parameters: {total_params:,}")
-
-            # Train final model with best parameters
-            trained_model = train_model(
-                config=CONFIG,
-                channel_normalizer=channel_normalizer,
-                device=device,
-                model=model,
-                train_loader=train_loader,
-                val_loader=val_loader,
-                test_loader=test_loader,
-                optimizer=optimizer,
-                scheduler=scheduler,
-                loss_fn=loss_fn,
-                verbose=True
-            )
-
-            # Evaluate the final model
-            model_evaluation(
-                config=CONFIG,
-                channel_normalizer=channel_normalizer,
-                device=device,
-                model=trained_model,
-                test_loader=test_loader,
-                loss_fn=loss_fn,
-                verbose=True
-            )
+            print(f"   Ensemble manifest saved to: {ensemble_run.manifest_path}")
 
         elif training_mode == 'eval':
-            # Evaluation mode - load pretrained model
+            # Evaluation mode - load pretrained single model or ensemble manifest
             print("\nExecuting evaluation mode...")
 
-            eval_model_path = CONFIG['TRAINING_CONFIG']['eval_model_path']
-            if not Path(eval_model_path).exists():
+            eval_model_path = Path(CONFIG['TRAINING_CONFIG']['eval_model_path'])
+            if not eval_model_path.exists():
                 raise FileNotFoundError(f"Model file not found: {eval_model_path}")
 
-            # Create model with single params for evaluation
-            params = CONFIG['SINGLE_PARAMS']
-
-            model, train_loader, val_loader, test_loader, optimizer, scheduler, loss_fn = create_model(
-                config=CONFIG,
-                train_dataset=train_dataset,
-                val_dataset=val_dataset,
-                test_dataset=test_dataset,
-                device=device,
-                depth=params['depth'],
-                init_features=params['init_features'],
-                train_batch_size=params['train_batch_size'],
-                l2_weight=params['l2_weight'],
-                dropout_rate=params['dropout_rate']
-            )
-
-            # Load pretrained model
-            model.load_state_dict(torch.load(eval_model_path, map_location=device, weights_only=False))
-            print(f"   Loaded model from: {eval_model_path}")
-
-            # Set as trained model for visualization
-            trained_model = model
+            if eval_model_path.suffix.lower() == '.json':
+                trained_model, test_loader, loss_fn, manifest = load_ensemble_for_evaluation(
+                    CONFIG,
+                    eval_model_path,
+                    train_dataset,
+                    val_dataset,
+                    test_dataset,
+                    device,
+                )
+                print(f"   Loaded ensemble manifest from: {eval_model_path}")
+                print(f"   Ensemble members: {len(manifest['members'])}")
+            else:
+                model, train_loader, val_loader, test_loader, optimizer, scheduler, loss_fn = create_model_from_params(
+                    CONFIG, train_dataset, val_dataset, test_dataset, device, CONFIG['SINGLE_PARAMS']
+                )
+                model.load_state_dict(torch.load(eval_model_path, map_location=device, weights_only=False))
+                model.eval()
+                trained_model = model
+                print(f"   Loaded model from: {eval_model_path}")
 
             # Evaluate the loaded model
             model_evaluation(
