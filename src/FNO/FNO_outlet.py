@@ -761,16 +761,17 @@ def load_ensemble_for_evaluation(
 
     for member in manifest['members']:
         model, _, _, test_loader, _, _, loss_fn = create_model_from_params(
-            config, train_dataset, val_dataset, test_dataset, device, params
+            config, train_dataset, val_dataset, test_dataset, "cpu", params
         )
         state_path = Path(member['model_state_path'])
         if not state_path.is_absolute():
             state_path = base_dir / state_path
-        model.load_state_dict(torch.load(state_path, map_location=device, weights_only=False))
+        model.load_state_dict(torch.load(state_path, map_location="cpu", weights_only=False))
         model.eval()
+        model.to("cpu")
         models.append(model)
 
-    return EnsemblePredictor(models=models, device=device), test_loader, loss_fn, manifest
+    return EnsemblePredictor(models=models, device=device, keep_models_on_device=False), test_loader, loss_fn, manifest
 
 
 # ==============================================================================

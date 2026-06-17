@@ -9,6 +9,7 @@ reuse the same orchestration.
 from __future__ import annotations
 
 import json
+import gc
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
@@ -52,7 +53,13 @@ class EnsemblePredictor(nn.Module):
     ``model(x)`` without knowing whether it is a single model or an ensemble.
     """
 
-    def __init__(self, models: Sequence[nn.Module], device: str, reduction: str = "mean"):
+    def __init__(
+        self,
+        models: Sequence[nn.Module],
+        device: str,
+        reduction: str = "mean",
+        keep_models_on_device: bool = True,
+    ):
         super().__init__()
         if not models:
             raise ValueError("EnsemblePredictor requires at least one model")
@@ -62,14 +69,46 @@ class EnsemblePredictor(nn.Module):
         self.models = nn.ModuleList(models)
         self.device = device
         self.reduction = reduction
+        self.keep_models_on_device = keep_models_on_device
 
         for model in self.models:
-            model.to(device)
             model.eval()
+            if keep_models_on_device:
+                model.to(device)
+            else:
+                model.to("cpu")
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        predictions = [model(x) for model in self.models]
-        return torch.stack(predictions, dim=0).mean(dim=0)
+        if self.keep_models_on_device:
+            prediction_sum = None
+            for model in self.models:
+                prediction = model(x)
+                if prediction_sum is None:
+                    prediction_sum = prediction
+                else:
+                    prediction_sum = prediction_sum + prediction
+            return prediction_sum / len(self.models)
+
+        if torch.is_grad_enabled() and x.requires_grad:
+            raise RuntimeError("Low-memory EnsemblePredictor is evaluation-only and does not support gradients")
+
+        target_device = torch.device(self.device)
+        prediction_sum = None
+        with torch.no_grad():
+            for model in self.models:
+                model.to(target_device)
+                model.eval()
+                prediction = model(x)
+                if prediction_sum is None:
+                    prediction_sum = prediction
+                else:
+                    prediction_sum.add_(prediction)
+                model.to("cpu")
+                del prediction
+                if target_device.type == "cuda":
+                    torch.cuda.empty_cache()
+
+        return prediction_sum / len(self.models)
 
 
 def fixed_test_split(dataset, test_size: float, random_state: int) -> Tuple[Subset, Subset, FixedSplit]:
@@ -267,9 +306,11 @@ def load_ensemble_from_manifest(
         state_path = Path(member["model_state_path"])
         if not state_path.is_absolute():
             state_path = base_dir / state_path
-        model.load_state_dict(torch.load(state_path, map_location=device, weights_only=False))
+        model.load_state_dict(torch.load(state_path, map_location="cpu", weights_only=False))
+        model.eval()
+        model.to("cpu")
         models.append(model)
-    return EnsemblePredictor(models=models, device=device), data
+    return EnsemblePredictor(models=models, device=device, keep_models_on_device=False), data
 
 
 def train_ensemble(
@@ -334,6 +375,7 @@ def train_ensemble(
             output_dir,
         )
         trained_model.eval()
+        trained_model.to("cpu")
         trained_models.append(trained_model)
         final_test_loader = test_loader
         final_loss_fn = loss_fn
@@ -349,13 +391,15 @@ def train_ensemble(
             }
         )
 
+        del model, trained_model, train_loader, val_loader, optimizer, scheduler
+        gc.collect()
         if device == "cuda":
             torch.cuda.empty_cache()
 
     split_csv_path = Path(config["OUTPUT_DIR"]) / "ensemble_split_manifest.csv"
     save_split_manifest_csv(split_csv_path, test_original_indices, member_splits)
 
-    predictor = EnsemblePredictor(trained_models, device=device)
+    predictor = EnsemblePredictor(trained_models, device=device, keep_models_on_device=False)
     m_path = save_ensemble_manifest(
         manifest_path=manifest_path(config),
         model_kind=model_kind,

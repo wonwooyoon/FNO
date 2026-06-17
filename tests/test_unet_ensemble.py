@@ -143,6 +143,7 @@ def test_load_ensemble_for_evaluation_returns_mean_predictor(monkeypatch, tmp_pa
     pred = predictor(torch.zeros(2, 11, 4, 4, 4))
 
     assert torch.allclose(pred, torch.full((2, 1, 4, 4, 4), 2.0))
+    assert predictor.keep_models_on_device is False
     assert test_loader == "test_loader"
     assert isinstance(loss_fn, torch.nn.MSELoss)
     assert manifest["model_kind"] == "unet"
