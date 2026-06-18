@@ -11,9 +11,12 @@ Refactored from FNO.py and FNO_outlet.py to eliminate code duplication.
 
 from pathlib import Path
 from typing import Dict, Tuple, Union
+import time
 import torch
 import torch.nn as nn
 import matplotlib.pyplot as plt
+
+from util_timing import save_timing_report, sync_if_cuda
 
 
 # ==============================================================================
@@ -59,6 +62,11 @@ def train_model_generic(
     Returns:
         Trained model (with best weights loaded)
     """
+
+    timing_enabled = config.get("TIMING", {}).get("ENABLED", True)
+    if timing_enabled:
+        sync_if_cuda(device)
+        train_started_at = time.perf_counter()
 
     if verbose:
         print(f"\nStarting model training for {config['N_EPOCHS']} epochs...")
@@ -172,6 +180,23 @@ def train_model_generic(
     # Load and return best model
     model.load_state_dict(torch.load(output_dir / 'best_model_state_dict.pt',
                                      map_location=device, weights_only=False))
+
+    if timing_enabled:
+        sync_if_cuda(device)
+        train_seconds = time.perf_counter() - train_started_at
+        timing_record = {
+            "model_kind": config.get("MODEL_KIND", "unknown"),
+            "scope": "single_model_train",
+            "device": str(device),
+            "n_models": 1,
+            "total_seconds": train_seconds,
+            "train_seconds": train_seconds,
+            "single_model_train_seconds": train_seconds,
+            "epochs_completed": len(train_losses),
+            "model_state_path": str(output_dir / "best_model_state_dict.pt"),
+        }
+        save_timing_report(timing_record, output_dir / "training_timing")
+
     return model
 
 

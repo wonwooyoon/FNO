@@ -118,6 +118,13 @@ def test_train_ensemble_returns_low_memory_predictor_and_releases_member_models(
     assert run.predictor.keep_models_on_device is False
     assert len(run.predictor.models) == 2
     assert all(model.to_calls[-1] == "cpu" for model in trained_models)
+    assert all("train_seconds" in record for record in run.member_records)
+    assert (tmp_path / "timing" / "ensemble_training_timing.json").exists()
+    assert (tmp_path / "timing" / "ensemble_training_timing.csv").exists()
+
+    manifest = json.loads(run.manifest_path.read_text())
+    assert "training_timing" in manifest
+    assert manifest["training_timing"]["n_models"] == 2
 
 
 def test_fixed_test_split_keeps_test_indices_out_of_member_splits():

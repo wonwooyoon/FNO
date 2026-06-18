@@ -38,6 +38,9 @@ def test_unet_config_exposes_ensemble_and_optuna_epoch_settings():
     assert UNET.CONFIG["ENSEMBLE"]["ENABLED"] is True
     assert UNET.CONFIG["ENSEMBLE"]["N_MODELS"] >= 1
     assert UNET.CONFIG["ENSEMBLE"]["MANIFEST_NAME"] == "ensemble_manifest.json"
+    assert UNET.CONFIG["TIMING"]["ENABLED"] is True
+    assert UNET.CONFIG["TIMING"]["PREDICTION_WARMUP_BATCHES"] == 1
+    assert UNET.CONFIG["TIMING"]["REPORT_DIR_NAME"] == "timing"
     assert UNET.CONFIG["OUTPUT"]["ENABLED"] is True
     assert UNET.CONFIG["OUTPUT"]["SAMPLE_INDICES"]
     assert "VISUALIZATION" not in UNET.CONFIG

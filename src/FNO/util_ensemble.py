@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import gc
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
@@ -19,6 +20,8 @@ import torch
 from sklearn.model_selection import train_test_split
 from torch import nn
 from torch.utils.data import Subset
+
+from util_timing import save_timing_report, sync_if_cuda
 
 
 @dataclass(frozen=True)
@@ -273,6 +276,7 @@ def save_ensemble_manifest(
     member_records: List[Dict[str, Any]],
     test_indices: Sequence[int],
     config_subset: Dict[str, Any],
+    training_timing: Optional[Dict[str, Any]] = None,
 ) -> Path:
     manifest_path = Path(manifest_path)
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
@@ -285,6 +289,8 @@ def save_ensemble_manifest(
         "test_indices": [int(idx) for idx in test_indices],
         "config": _json_safe(config_subset),
     }
+    if training_timing is not None:
+        data["training_timing"] = _json_safe(training_timing)
     manifest_path.write_text(json.dumps(data, indent=2))
     return manifest_path
 
@@ -328,6 +334,11 @@ def train_ensemble(
     verbose: bool = True,
 ) -> EnsembleRun:
     """Train one or more models over randomized train/validation splits."""
+    timing_enabled = config.get("TIMING", {}).get("ENABLED", True)
+    if timing_enabled:
+        sync_if_cuda(device)
+        ensemble_started_at = time.perf_counter()
+
     n_members = n_ensemble_members(config)
     val_size_relative = config["VAL_SIZE"] / (1 - config["TEST_SIZE"])
     member_records: List[Dict[str, Any]] = []
@@ -365,6 +376,10 @@ def train_ensemble(
             params,
             output_dir,
         )
+        if timing_enabled:
+            sync_if_cuda(device)
+            member_started_at = time.perf_counter()
+
         trained_model = train_one(
             model,
             train_loader,
@@ -374,22 +389,36 @@ def train_ensemble(
             loss_fn,
             output_dir,
         )
+
+        member_train_seconds = None
+        if timing_enabled:
+            sync_if_cuda(device)
+            member_train_seconds = time.perf_counter() - member_started_at
+
         trained_model.eval()
         trained_model.to("cpu")
         trained_models.append(trained_model)
         final_test_loader = test_loader
         final_loss_fn = loss_fn
 
-        member_records.append(
-            {
-                "member_id": member_id,
-                "seed": seed,
-                "model_state_path": str(output_dir.relative_to(Path(config["OUTPUT_DIR"])) / "best_model_state_dict.pt"),
-                "loss_history_path": str(output_dir.relative_to(Path(config["OUTPUT_DIR"])) / "loss_history.pt"),
-                "train_indices": [int(idx) for idx in split.train_indices],
-                "val_indices": [int(idx) for idx in split.val_indices],
-            }
-        )
+        member_record = {
+            "member_id": member_id,
+            "seed": seed,
+            "model_state_path": str(output_dir.relative_to(Path(config["OUTPUT_DIR"])) / "best_model_state_dict.pt"),
+            "loss_history_path": str(output_dir.relative_to(Path(config["OUTPUT_DIR"])) / "loss_history.pt"),
+            "train_indices": [int(idx) for idx in split.train_indices],
+            "val_indices": [int(idx) for idx in split.val_indices],
+        }
+        if timing_enabled:
+            member_record.update(
+                {
+                    "train_seconds": member_train_seconds,
+                    "single_model_train_seconds": member_train_seconds,
+                    "total_seconds": member_train_seconds,
+                    "epochs_completed": _epochs_completed(output_dir / "loss_history.pt"),
+                }
+            )
+        member_records.append(member_record)
 
         del model, trained_model, train_loader, val_loader, optimizer, scheduler
         gc.collect()
@@ -400,21 +429,67 @@ def train_ensemble(
     save_split_manifest_csv(split_csv_path, test_original_indices, member_splits)
 
     predictor = EnsemblePredictor(trained_models, device=device, keep_models_on_device=False)
+    config_subset = {
+        "N_EPOCHS": config.get("N_EPOCHS"),
+        "OPTUNA_N_EPOCHS": config.get("TRAINING_CONFIG", {}).get("optuna_n_epochs"),
+        "VAL_SIZE": config.get("VAL_SIZE"),
+        "TEST_SIZE": config.get("TEST_SIZE"),
+        "RANDOM_STATE": config.get("RANDOM_STATE"),
+        "ENSEMBLE": ensemble_config(config),
+    }
+
     m_path = save_ensemble_manifest(
         manifest_path=manifest_path(config),
         model_kind=model_kind,
         params=params,
         member_records=member_records,
         test_indices=test_original_indices,
-        config_subset={
-            "N_EPOCHS": config.get("N_EPOCHS"),
-            "OPTUNA_N_EPOCHS": config.get("TRAINING_CONFIG", {}).get("optuna_n_epochs"),
-            "VAL_SIZE": config.get("VAL_SIZE"),
-            "TEST_SIZE": config.get("TEST_SIZE"),
-            "RANDOM_STATE": config.get("RANDOM_STATE"),
-            "ENSEMBLE": ensemble_config(config),
-        },
+        config_subset=config_subset,
     )
+
+    if timing_enabled:
+        sync_if_cuda(device)
+        ensemble_train_total_seconds = time.perf_counter() - ensemble_started_at
+        sum_member_train_seconds = sum(
+            float(record.get("train_seconds") or 0.0) for record in member_records
+        )
+        training_timing = {
+            "model_kind": model_kind,
+            "scope": "ensemble_total",
+            "device": str(device),
+            "n_models": n_members,
+            "total_seconds": ensemble_train_total_seconds,
+            "ensemble_train_total_seconds": ensemble_train_total_seconds,
+            "sum_member_train_seconds": sum_member_train_seconds,
+        }
+        timing_records = [
+            {
+                "model_kind": model_kind,
+                "scope": "ensemble_member",
+                "device": str(device),
+                "n_models": 1,
+                "member_id": record["member_id"],
+                "seed": record["seed"],
+                "total_seconds": record.get("total_seconds"),
+                "train_seconds": record.get("train_seconds"),
+                "single_model_train_seconds": record.get("single_model_train_seconds"),
+                "epochs_completed": record.get("epochs_completed"),
+                "model_state_path": record.get("model_state_path"),
+            }
+            for record in member_records
+        ]
+        timing_records.append(training_timing)
+        timing_dir = Path(config["OUTPUT_DIR"]) / config.get("TIMING", {}).get("REPORT_DIR_NAME", "timing")
+        save_timing_report(timing_records, timing_dir / "ensemble_training_timing")
+        m_path = save_ensemble_manifest(
+            manifest_path=manifest_path(config),
+            model_kind=model_kind,
+            params=params,
+            member_records=member_records,
+            test_indices=test_original_indices,
+            config_subset=config_subset,
+            training_timing=training_timing,
+        )
 
     return EnsembleRun(
         predictor=predictor,
@@ -442,3 +517,16 @@ def _json_safe(value: Any) -> Any:
     if isinstance(value, Path):
         return str(value)
     return value
+
+
+def _epochs_completed(loss_history_path: Path) -> Optional[int]:
+    if not loss_history_path.exists():
+        return None
+    try:
+        loss_history = torch.load(loss_history_path, map_location="cpu", weights_only=False)
+    except Exception:
+        return None
+    train_losses = loss_history.get("train_losses") if isinstance(loss_history, dict) else None
+    if train_losses is None:
+        return None
+    return len(train_losses)

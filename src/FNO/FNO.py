@@ -64,6 +64,7 @@ from preprocessing_normalize import ChannelNormalizer
 # Configuration
 # ==============================================================================
 CONFIG = {
+    'MODEL_KIND': 'fno',
     # Data paths - ensure these match your preprocessing output mode (raw/log/delta)
     'MERGED_PT_PATH': './src/preprocessing/data/normalized/lr/delta/merged_normalized_U.pt',  # Pre-normalized data
     'CHANNEL_NORMALIZER_PATH': './src/preprocessing/normalizers/lr/delta/normalizer_u_delta.pkl',  # Normalizer (must match output mode)
@@ -155,6 +156,11 @@ CONFIG = {
         'SPLIT_SEED_STRATEGY': 'base_plus_member',
         'MEMBER_OUTPUT_PATTERN': 'ensemble/member_{member_id:03d}',
         'MANIFEST_NAME': 'ensemble_manifest.json',
+    },
+    'TIMING': {
+        'ENABLED': True,
+        'PREDICTION_WARMUP_BATCHES': 1,
+        'REPORT_DIR_NAME': 'timing',
     },
     'OPTUNA_SEARCH_SPACE': {
         'n_modes_dim1_range': [4, 16],  # [min, max] for first dimension

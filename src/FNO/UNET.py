@@ -57,6 +57,7 @@ from preprocessing_normalize import ChannelNormalizer
 # Configuration
 # ==============================================================================
 CONFIG = {
+    'MODEL_KIND': 'unet',
     # Data paths - updated to use pre-normalized data (matches FNO.py)
     'SPECIES_TYPE': 'u',  # Options: 'u' (uranium), 'ca' (calcium), 'c' (carbonate)
     'MERGED_PT_PATH': './src/preprocessing/data/normalized/lr/delta/merged_normalized_U.pt',  # Pre-normalized data
@@ -136,6 +137,11 @@ CONFIG = {
         'SPLIT_SEED_STRATEGY': 'base_plus_member',
         'MEMBER_OUTPUT_PATTERN': 'ensemble/member_{member_id:03d}',
         'MANIFEST_NAME': 'ensemble_manifest.json',
+    },
+    'TIMING': {
+        'ENABLED': True,
+        'PREDICTION_WARMUP_BATCHES': 1,
+        'REPORT_DIR_NAME': 'timing',
     },
     'OPTUNA_SEARCH_SPACE': {
         'depth_range': [2, 4],  # U-Net depth (number of down/up sampling stages)

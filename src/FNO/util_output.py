@@ -22,6 +22,9 @@ import matplotlib.cm as cm
 import matplotlib.animation as animation
 from skimage.metrics import structural_similarity as ssim
 
+from util_ensemble import EnsemblePredictor
+from util_timing import measure_forward_time, save_timing_report
+
 
 # ==============================================================================
 # Section 0: Directory Setup
@@ -1940,6 +1943,63 @@ def integrated_gradients_analysis(
 # Section 5: Master Output Generation Function
 # ==============================================================================
 
+def _measure_prediction_timing(
+    *,
+    config: Dict,
+    device: str,
+    trained_model: nn.Module,
+    test_loader,
+) -> List[Dict]:
+    timing_config = config.get("TIMING", {})
+    model_kind = config.get("MODEL_KIND", trained_model.__class__.__name__.lower())
+    warmup_batches = timing_config.get("PREDICTION_WARMUP_BATCHES", 1)
+
+    if isinstance(trained_model, EnsemblePredictor):
+        single_model = trained_model.models[0]
+        moved_single_model = False
+        if not trained_model.keep_models_on_device:
+            single_model.to(device)
+            moved_single_model = True
+        single_record = measure_forward_time(
+            model=single_model,
+            data_loader=test_loader,
+            device=device,
+            model_kind=model_kind,
+            scope="single_model",
+            n_models=1,
+            warmup_batches=warmup_batches,
+        )
+        if moved_single_model:
+            single_model.to("cpu")
+            if device == "cuda":
+                torch.cuda.empty_cache()
+
+        ensemble_record = measure_forward_time(
+            model=trained_model,
+            data_loader=test_loader,
+            device=device,
+            model_kind=model_kind,
+            scope="ensemble",
+            n_models=len(trained_model.models),
+            warmup_batches=warmup_batches,
+        )
+        single_record["single_model_predict_seconds"] = single_record["total_seconds"]
+        ensemble_record["ensemble_predict_seconds"] = ensemble_record["total_seconds"]
+        return [single_record, ensemble_record]
+
+    record = measure_forward_time(
+        model=trained_model,
+        data_loader=test_loader,
+        device=device,
+        model_kind=model_kind,
+        scope="single_model",
+        n_models=1,
+        warmup_batches=warmup_batches,
+    )
+    record["single_model_predict_seconds"] = record["total_seconds"]
+    return [record]
+
+
 def generate_all_outputs(
     config: Dict,
     channel_normalizer,
@@ -1992,6 +2052,18 @@ def generate_all_outputs(
     output_config = config.get('OUTPUT', {})
     sample_indices = output_config.get('SAMPLE_INDICES')
     time_indices = output_config.get('TIME_INDICES')
+    timing_records = []
+
+    timing_config = config.get("TIMING", {})
+    if timing_config.get("ENABLED", True):
+        timing_records = _measure_prediction_timing(
+            config=config,
+            device=device,
+            trained_model=trained_model,
+            test_loader=test_loader,
+        )
+        timing_dir = base_dir / timing_config.get("REPORT_DIR_NAME", "timing")
+        save_timing_report(timing_records, timing_dir / "prediction_timing")
 
     # Generate predictions
     print("\nGenerating predictions...")
@@ -2047,6 +2119,8 @@ def generate_all_outputs(
 
 
     results = {}
+    if timing_records:
+        results["timing"] = timing_records
 
     # ==== Image Output ====
     if output_config.get('IMAGE_OUTPUT', {}).get('ENABLED', False):
