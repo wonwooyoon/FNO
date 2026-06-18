@@ -62,19 +62,88 @@ class LpLoss(nn.Module):
 # Learning Rate Schedulers
 # ==============================================================================
 
-class LRStepScheduler(torch.optim.lr_scheduler.StepLR):
-    """Learning rate step scheduler wrapper.
+class LRStepScheduler:
+    """Validation-plateau learning rate scheduler.
+
+    This keeps the historical ``LRStepScheduler`` name and constructor shape,
+    but ``step_size`` now means the number of consecutive non-improving
+    validation epochs allowed before multiplying the learning rate by ``gamma``.
 
     Args:
         optimizer: Wrapped optimizer
-        step_size: Period of learning rate decay
+        step_size: Validation plateau patience in epochs
         gamma: Multiplicative factor of learning rate decay
-        last_epoch: Index of last epoch
+        threshold: Minimum strict improvement margin
     """
 
-    def __init__(self, optimizer: torch.optim.Optimizer, step_size: int,
-                 gamma: float = 0.1, last_epoch: int = -1):
-        super().__init__(optimizer, step_size, gamma, last_epoch)
+    requires_metric = True
+
+    def __init__(
+        self,
+        optimizer: torch.optim.Optimizer,
+        step_size: int,
+        gamma: float = 0.1,
+        threshold: float = 0.0,
+    ):
+        if step_size < 1:
+            raise ValueError(f"step_size must be >= 1, got {step_size}")
+        if not 0.0 < gamma < 1.0:
+            raise ValueError(f"gamma must be between 0 and 1, got {gamma}")
+        self.optimizer = optimizer
+        self.step_size = int(step_size)
+        self.gamma = float(gamma)
+        self.threshold = float(threshold)
+        self.best = None
+        self.num_bad_epochs = 0
+        self.last_epoch = -1
+        self._last_lr = [group["lr"] for group in self.optimizer.param_groups]
+
+    def step(self, metric: float) -> None:
+        current = float(metric)
+        self.last_epoch += 1
+
+        if self.best is None or current < (self.best - self.threshold):
+            self.best = current
+            self.num_bad_epochs = 0
+        else:
+            self.num_bad_epochs += 1
+            if self.num_bad_epochs >= self.step_size:
+                for group in self.optimizer.param_groups:
+                    group["lr"] *= self.gamma
+                self.num_bad_epochs = 0
+
+        self._last_lr = [group["lr"] for group in self.optimizer.param_groups]
+
+    def get_last_lr(self):
+        return list(self._last_lr)
+
+    def state_dict(self):
+        return {
+            "step_size": self.step_size,
+            "gamma": self.gamma,
+            "threshold": self.threshold,
+            "best": self.best,
+            "num_bad_epochs": self.num_bad_epochs,
+            "last_epoch": self.last_epoch,
+            "_last_lr": self._last_lr,
+        }
+
+    def load_state_dict(self, state_dict):
+        self.step_size = int(state_dict["step_size"])
+        self.gamma = float(state_dict["gamma"])
+        self.threshold = float(state_dict.get("threshold", 0.0))
+        self.best = state_dict["best"]
+        self.num_bad_epochs = int(state_dict["num_bad_epochs"])
+        self.last_epoch = int(state_dict["last_epoch"])
+        self._last_lr = list(state_dict["_last_lr"])
+
+
+def step_scheduler(scheduler, val_loss: float) -> None:
+    """Step a scheduler, passing validation loss only when required."""
+    if getattr(scheduler, "requires_metric", False):
+        scheduler.step(val_loss)
+    else:
+        scheduler.step()
 
 
 class CappedCosineAnnealingWarmRestarts(torch.optim.lr_scheduler._LRScheduler):

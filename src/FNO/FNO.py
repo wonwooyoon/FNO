@@ -83,14 +83,14 @@ CONFIG = {
         'positional_embedding': 'grid',
     },
     'SCHEDULER_CONFIG': {
-        'scheduler_type': 'step',  # Options: 'cosine', 'step'
+        'scheduler_type': 'step',  # Options: 'cosine', 'step' (validation plateau)
         'early_stopping': 40,
         'T_0': 10,
         'T_max': 40,
         'T_mult': 2,
         'eta_min': 1e-5,
-        'step_size': 10,
-        'gamma': 0.5,
+        'step_size': 10,  # Plateau patience epochs before reducing LR
+        'gamma': 0.5,  # LR multiplier after plateau
         'initial_lr': 1e-2,
     },
     'OUTPUT': {

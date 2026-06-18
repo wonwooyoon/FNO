@@ -16,6 +16,7 @@ import torch
 import torch.nn as nn
 import matplotlib.pyplot as plt
 
+from util_common import step_scheduler
 from util_timing import save_timing_report, sync_if_cuda
 
 
@@ -145,7 +146,7 @@ def train_model_generic(
             break
 
         # Update learning rate
-        scheduler.step()
+        step_scheduler(scheduler, val_loss)
 
     # Save loss history
     loss_history = {

@@ -91,10 +91,10 @@ CONFIG = {
 
     # Scheduler configuration
     'SCHEDULER_CONFIG': {
-        'scheduler_type': 'step',
+        'scheduler_type': 'step',  # Validation plateau
         'early_stopping': 20,
-        'step_size': 10,
-        'gamma': 0.5,
+        'step_size': 10,  # Plateau patience epochs before reducing LR
+        'gamma': 0.5,  # LR multiplier after plateau
         'initial_lr': 1e-2,
     },
 

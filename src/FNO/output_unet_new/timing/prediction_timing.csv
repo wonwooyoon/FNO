@@ -1,0 +1,3 @@
+model_kind,scope,device,n_models,n_batches,n_samples,total_seconds,seconds_per_sample,seconds_per_batch,single_model_predict_seconds,ensemble_predict_seconds
+unet_new,single_model,cuda,1,38,299,0.26797923000412993,0.000896251605364983,0.007052085000108683,0.26797923000412993,
+unet_new,ensemble,cuda,1,38,299,12.65988240299339,0.042340743822720364,0.3331548000787734,,12.65988240299339
