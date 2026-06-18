@@ -243,6 +243,7 @@ def model_evaluation_generic(
 
     # Save evaluation results
     output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
     eval_results_path = output_dir / 'evaluation_results.pt'
     torch.save(eval_results, eval_results_path)
 

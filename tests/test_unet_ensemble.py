@@ -13,6 +13,9 @@ if str(FNO_SRC) not in sys.path:
     sys.path.insert(0, str(FNO_SRC))
 
 import UNET
+from util_common import LpLoss as CommonLpLoss
+from util_common import LRStepScheduler as CommonLRStepScheduler
+from util_common import CappedCosineAnnealingWarmRestarts as CommonCappedCosineAnnealingWarmRestarts
 from util_ensemble import FixedSplit
 
 
@@ -35,6 +38,9 @@ def test_unet_config_exposes_ensemble_and_optuna_epoch_settings():
     assert UNET.CONFIG["ENSEMBLE"]["ENABLED"] is True
     assert UNET.CONFIG["ENSEMBLE"]["N_MODELS"] >= 1
     assert UNET.CONFIG["ENSEMBLE"]["MANIFEST_NAME"] == "ensemble_manifest.json"
+    assert UNET.CONFIG["OUTPUT"]["ENABLED"] is True
+    assert UNET.CONFIG["OUTPUT"]["SAMPLE_INDICES"]
+    assert "VISUALIZATION" not in UNET.CONFIG
 
 
 def test_create_model_from_params_casts_unet_params(monkeypatch):
@@ -67,6 +73,68 @@ def test_create_model_from_params_casts_unet_params(monkeypatch):
     assert captured["train_batch_size"] == 2
     assert captured["l2_weight"] == 0.25
     assert captured["dropout_rate"] == 0.1
+
+
+def test_unet_uses_common_loss_and_scheduler_classes():
+    assert UNET.LpLoss is CommonLpLoss
+    assert UNET.LRStepScheduler is CommonLRStepScheduler
+    assert UNET.CappedCosineAnnealingWarmRestarts is CommonCappedCosineAnnealingWarmRestarts
+
+
+def test_unet_dataset_includes_initial_values_when_available():
+    x = torch.zeros(2, 11, 4, 4, 3)
+    y = torch.ones(2, 1, 4, 4, 3)
+    y_initial = torch.full((2, 1, 4, 4, 1), 2.0)
+
+    dataset = UNET.CustomDatasetPure(x, y, y_initial)
+
+    item = dataset[1]
+    assert set(item) == {"x", "y", "y_initial"}
+    assert torch.equal(item["y_initial"], y_initial[1])
+
+
+def test_unet_dataset_omits_initial_values_when_unavailable():
+    x = torch.zeros(2, 11, 4, 4, 3)
+    y = torch.ones(2, 1, 4, 4, 3)
+
+    dataset = UNET.CustomDatasetPure(x, y)
+
+    assert set(dataset[0]) == {"x", "y"}
+
+
+def test_unet_visualization_delegates_to_unified_output(monkeypatch):
+    captured = {}
+    test_dataset = [
+        {
+            "x": torch.zeros(1),
+            "y": torch.zeros(1),
+        }
+    ]
+
+    def fake_generate_all_outputs(**kwargs):
+        captured.update(kwargs)
+        return {"ok": True}
+
+    monkeypatch.setattr(UNET, "generate_all_outputs", fake_generate_all_outputs, raising=False)
+
+    result = UNET.visualization(
+        config={"OUTPUT_DIR": "out"},
+        channel_normalizer="normalizer",
+        device="cpu",
+        trained_model="model",
+        train_dataset="train",
+        val_dataset="val",
+        test_dataset=test_dataset,
+        verbose=False,
+    )
+
+    assert result == {"ok": True}
+    assert captured["channel_normalizer"] == "normalizer"
+    assert captured["trained_model"] == "model"
+    assert captured["train_dataset"] == "train"
+    assert captured["val_dataset"] == "val"
+    assert captured["test_dataset"] is test_dataset
+    assert captured["test_loader"].batch_size == 1
 
 
 def test_train_model_to_dir_delegates_to_generic_training_with_output_dir(monkeypatch, tmp_path):

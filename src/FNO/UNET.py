@@ -18,7 +18,6 @@ Refactored for improved readability and maintainability following CLAUDE.md guid
 import sys
 sys.path.append('./')
 
-import math
 import shutil
 import json
 import pickle
@@ -35,6 +34,8 @@ import matplotlib.colors as colors
 from torch.utils.data import DataLoader, Dataset
 
 from neuraloperator.neuralop.training import AdamW
+from util_output import generate_all_outputs
+from util_common import LpLoss, LRStepScheduler, CappedCosineAnnealingWarmRestarts
 from util_training import config_for_optuna_epochs, train_model_generic, model_evaluation_generic
 from util_ensemble import (
     EnsemblePredictor,
@@ -83,11 +84,37 @@ CONFIG = {
         'gamma': 0.5,
         'initial_lr': 1e-2,
     },
-    'VISUALIZATION': {
-        'SAMPLE_NUM': [1, 5, 15, 20, 25],  # Can be single int or list: e.g., [121, 122, 123]
-        'TIME_INDICES': (4, 9, 14, 19),
+    'OUTPUT': {
+        'ENABLED': True,
+        'OUTPUT_DIR': './src/FNO/output_unet',
+        'SAMPLE_INDICES': [1, 5, 15, 20, 25],
+        'TIME_INDICES': [4, 9, 14, 19],
         'DPI': 200,
-        'SAVEASCSV': True  # Save visualization data as CSV format
+        'IMAGE_OUTPUT': {
+            'ENABLED': True,
+            'COMBINED_IMG': True,
+            'SEPARATED_IMG': True,
+        },
+        'GIF_OUTPUT': {
+            'ENABLED': False,
+            'FPS': 2,
+        },
+        'DETAIL_EVAL': {
+            'ENABLED': False,
+            'COMPUTE_RELATIVE_L2': True,
+            'COMPUTE_SSIM': True,
+            'PARITY_PLOT': True,
+            'ADD_MEAN_COLUMN': True,
+        },
+        'IG_ANALYSIS': {
+            'ENABLED': False,
+            'SAMPLE_IDX': 3,
+            'TIME_INDICES': [4, 9, 14, 19],
+            'N_STEPS': 20,
+            'USE_MULTI_BASELINE': True,
+            'N_BASELINES': 1,
+            'BASELINE_SEED': 42,
+        },
     },
     'LOSS_CONFIG': {
         'loss_type': 'l2',  # Options: 'l2', 'mse'
@@ -139,20 +166,31 @@ class CustomDatasetPure(Dataset):
     Args:
         input_tensor: Combined input tensor of shape (N, original_channels + meta_channels, nx, ny, nt)
         output_tensor: Output tensor of shape (N, 1, nx, ny, nt)
+        initial_tensor: Initial values at t=0 of shape (N, 1, nx, ny, 1) - optional,
+            used for delta mode reconstruction
     """
 
-    def __init__(self, input_tensor: torch.Tensor, output_tensor: torch.Tensor):
+    def __init__(
+        self,
+        input_tensor: torch.Tensor,
+        output_tensor: torch.Tensor,
+        initial_tensor: torch.Tensor = None,
+    ):
         self.input_tensor = input_tensor
         self.output_tensor = output_tensor
+        self.initial_tensor = initial_tensor
 
     def __len__(self) -> int:
         return self.input_tensor.shape[0]
 
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
-        return {
+        item = {
             'x': self.input_tensor[idx],
             'y': self.output_tensor[idx]
         }
+        if self.initial_tensor is not None:
+            item['y_initial'] = self.initial_tensor[idx]
+        return item
 
 # ==============================================================================
 # Data Processing Functions
@@ -212,6 +250,12 @@ def preprocessing(config: Dict, verbose: bool = True, return_split: bool = False
         combined_input = bundle["x"].float()   # (N, 11, nx, ny, nt) - already normalized
         out_data = bundle[output_key].float()  # (N, 1, nx, ny, nt) - already normalized
 
+        y_initial = None
+        if "y_initial" in bundle:
+            y_initial = bundle["y_initial"].float()  # (N, 1, nx, ny, 1)
+            if verbose:
+                print(f"   Loaded initial values for delta mode reconstruction: {tuple(y_initial.shape)}")
+
         if verbose:
             print(f"   Loaded normalized tensors - Input: {tuple(combined_input.shape)}, Output: {tuple(out_data.shape)}")
             print(f"   Species type: {species_type}, Output key: {output_key}")
@@ -258,7 +302,7 @@ def preprocessing(config: Dict, verbose: bool = True, return_split: bool = False
         if verbose:
             print("Step 3: Creating train/val/test datasets...")
 
-        full_dataset = CustomDatasetPure(combined_input, out_data)
+        full_dataset = CustomDatasetPure(combined_input, out_data, y_initial)
         trainval_dataset, test_dataset, fixed_split = fixed_test_split(
             full_dataset,
             test_size=config['TEST_SIZE'],
@@ -297,104 +341,6 @@ def preprocessing(config: Dict, verbose: bool = True, return_split: bool = False
         )
 
     return (channel_normalizer, train_dataset, val_dataset, test_dataset, device)
-
-# ==============================================================================
-# Loss Function Options
-# ==============================================================================
-
-class LpLoss(nn.Module):
-    """Lp Loss function for neural operators.
-
-    Computes the relative Lp norm between prediction and ground truth:
-    ||pred - y||_p / ||y||_p
-
-    Args:
-        d: Spatial dimensions to compute norm over (e.g., 2 for 2D, 3 for 3D)
-        p: Power for Lp norm (e.g., 2 for L2 norm)
-        reduction: Reduction method ('mean' or 'sum')
-    """
-
-    def __init__(self, d=2, p=2, reduction='mean'):
-        super().__init__()
-        self.d = d
-        self.p = p
-        self.reduction = reduction
-
-    def forward(self, pred, y):
-        # Get spatial dimensions (skip batch and channel dimensions)
-        if len(pred.shape) == 5:  # (N, C, nx, ny, nt)
-            dims = [2, 3, 4]  # spatial and temporal dimensions
-        elif len(pred.shape) == 4:  # (N, C, nx, ny)
-            dims = [2, 3]  # spatial dimensions
-        else:
-            dims = list(range(2, len(pred.shape)))
-
-        # Compute relative Lp norm: ||pred - y||_p / ||y||_p
-        diff_norm = torch.norm(pred - y, p=self.p, dim=dims, keepdim=False)
-        y_norm = torch.norm(y, p=self.p, dim=dims, keepdim=False)
-        relative_error = diff_norm / (y_norm + 1e-12)  # Add small epsilon to avoid division by zero
-
-        if self.reduction == 'mean':
-            return relative_error.mean()
-        elif self.reduction == 'sum':
-            return relative_error.sum()
-        else:
-            return relative_error
-
-
-# ==============================================================================
-# Scheduler Options
-# ==============================================================================
-
-class LRStepScheduler(torch.optim.lr_scheduler.StepLR):
-    """Learning rate step scheduler wrapper."""
-
-    def __init__(self, optimizer: torch.optim.Optimizer, step_size: int,
-                 gamma: float = 0.1, last_epoch: int = -1):
-        super().__init__(optimizer, step_size, gamma, last_epoch)
-
-class CappedCosineAnnealingWarmRestarts(torch.optim.lr_scheduler._LRScheduler):
-    """Cosine annealing warm restarts scheduler with maximum period cap.
-
-    Args:
-        optimizer: Wrapped optimizer
-        T_0: Number of iterations for the first restart
-        T_max: Maximum period length
-        T_mult: Factor to increase period after restart
-        eta_min: Minimum learning rate
-        last_epoch: Index of last epoch
-    """
-
-    def __init__(self, optimizer: torch.optim.Optimizer, T_0: int, T_max: int,
-                 T_mult: int = 1, eta_min: float = 0, last_epoch: int = -1):
-        self.T_0 = T_0
-        self.T_max = T_max
-        self.T_mult = T_mult
-        self.eta_min = eta_min
-        self.T_i = T_0
-        self.last_restart = 0
-        super().__init__(optimizer, last_epoch)
-
-    def get_lr(self):
-        if self.last_epoch == 0:
-            return self.base_lrs
-
-        epoch_in_cycle = (self.last_epoch - self.last_restart) % self.T_i
-        cycle_num = self.last_epoch // self.T_i + 1
-        progress = epoch_in_cycle / self.T_i
-
-        lrs = []
-        for base_lr in self.base_lrs:
-            lr = self.eta_min + ((base_lr - self.eta_min) * (1 + math.cos(math.pi * progress)) / 2) / cycle_num
-            lrs.append(lr)
-
-        # Check for restart
-        if (self.last_epoch - self.last_restart) == self.T_i:
-            self.last_restart = self.last_epoch
-            self.T_i = min(self.T_i * self.T_mult, self.T_max)
-
-        return lrs
-
 
 # ==============================================================================
 # U-Net Architecture
@@ -907,15 +853,31 @@ def optuna_optimization(config: Dict, channel_normalizer, train_dataset, val_dat
             if loss_history_path.exists():
                 loss_history = torch.load(loss_history_path, map_location='cpu', weights_only=False)
                 best_val_loss = min(loss_history['val_losses'])
+                del loss_history
             else:
                 # Fallback: return a high loss value if history not found
                 best_val_loss = float('inf')
+
+            del model, trained_model, optimizer, scheduler, loss_fn
+            del train_loader, val_loader, test_loader
+            if device == 'cuda':
+                torch.cuda.empty_cache()
 
             return best_val_loss
 
         except Exception as e:
             if verbose:
                 print(f"Trial {trial.number} failed with error: {e}")
+            if 'model' in locals():
+                del model
+            if 'trained_model' in locals():
+                del trained_model
+            if 'optimizer' in locals():
+                del optimizer
+            if 'scheduler' in locals():
+                del scheduler
+            if device == 'cuda':
+                torch.cuda.empty_cache()
             # Return high loss for failed trials
             return float('inf')
 
@@ -1106,6 +1068,14 @@ def visualize_single_sample(config: Dict, device: str, trained_model,
     Returns:
         Dict containing CSV data for this sample.
     """
+    output_config = config.get('OUTPUT', {})
+    legacy_visualization_config = config.get('VISUALIZATION', {})
+    dpi = output_config.get('DPI', legacy_visualization_config.get('DPI', 200))
+    t_indices = output_config.get(
+        'TIME_INDICES',
+        legacy_visualization_config.get('TIME_INDICES', [4, 9, 14, 19]),
+    )
+    save_csv = legacy_visualization_config.get('SAVEASCSV', True)
 
     # Extract the corresponding data slices and move to NumPy
     pred_sample = pred_phys[sample_idx, 0].detach().numpy()  # Shape: (nx, ny, nt) -> (64, 32, nt)
@@ -1140,14 +1110,12 @@ def visualize_single_sample(config: Dict, device: str, trained_model,
     # Save the input data figure
     output_path_inputs = Path(config['OUTPUT_DIR']) / f'UNET_input_visualization_sample_{sample_idx}.png'
     output_path_inputs.parent.mkdir(parents=True, exist_ok=True)
-    plt.savefig(output_path_inputs, dpi=config['VISUALIZATION']['DPI'], bbox_inches='tight')
+    plt.savefig(output_path_inputs, dpi=dpi, bbox_inches='tight')
     plt.close(fig_inputs)
     if verbose:
         print(f"Input visualization for sample {sample_idx} saved to: {output_path_inputs}")
 
     # --- Plot 2: GT, Prediction, and Error Grid ---
-    t_indices = config['VISUALIZATION']['TIME_INDICES']
-
     # Create a 3x4 grid for GT, Prediction, and Error
     fig, axes = plt.subplots(3, 4, figsize=(16, 8))
 
@@ -1187,7 +1155,7 @@ def visualize_single_sample(config: Dict, device: str, trained_model,
 
     # Save the main comparison figure
     output_path_grid = Path(config['OUTPUT_DIR']) / f'UNET_comparison_grid_sample_{sample_idx}.png'
-    plt.savefig(output_path_grid, dpi=config['VISUALIZATION']['DPI'], bbox_inches='tight')
+    plt.savefig(output_path_grid, dpi=dpi, bbox_inches='tight')
     plt.close(fig)
 
     if verbose:
@@ -1195,7 +1163,7 @@ def visualize_single_sample(config: Dict, device: str, trained_model,
 
     # --- Prepare CSV Data ---
     csv_data = {}
-    if config['VISUALIZATION']['SAVEASCSV']:
+    if save_csv:
         # Create coordinate grids
         nx, ny = gt_sample.shape[:2]  # (64, 32)
         x_coords = np.arange(nx)
@@ -1233,164 +1201,28 @@ def visualize_single_sample(config: Dict, device: str, trained_model,
 
 
 def visualization(config: Dict, channel_normalizer, device: str, trained_model, train_dataset,
-                 test_dataset, verbose: bool = True):
-    """
-    Generate visualizations for multiple samples:
-    1. A separate plot for permeability and pyrite maps.
-    2. A 3x4 grid comparing ground truth, predictions, and their error over time.
-    3. Unified CSV output for all samples (Option B).
-
-    Args:
-        config: Configuration dictionary.
-        channel_normalizer: ChannelNormalizer for inverse transform.
-        device: Device to use (e.g., 'cuda' or 'cpu').
-        trained_model: The trained U-Net model.
-        train_dataset: The training dataset.
-        test_dataset: The test dataset for generating predictions.
-        verbose: If True, prints progress information.
-    """
-
-    if verbose:
-        print(f"\nGenerating multi-sample visualization...")
-
-    # Ensure the model is in evaluation mode
-    trained_model.eval()
-
-    # Use smaller batch size to avoid VRAM issues
-    batch_size = min(8, len(test_dataset))  # Process in smaller batches
+                 val_dataset, test_dataset, verbose: bool = True):
+    """Generate U-Net outputs through the same unified output pipeline used by FNO."""
+    batch_size = min(8, len(test_dataset))
     test_loader = DataLoader(
         test_dataset,
         batch_size=batch_size,
         shuffle=False,
         num_workers=0,
-        pin_memory=False
+        pin_memory=False,
     )
 
-    # Store predictions, ground truth, and input data
-    all_pred = []
-    all_gt = []
-    all_input = []
-
-    # Generate predictions without computing gradients
-    with torch.no_grad():
-        for batch_idx, batch in enumerate(test_loader):
-            if verbose and batch_idx % 2 == 0:
-                print(f"  Processing batch {batch_idx + 1}/{len(test_loader)}...")
-
-            x, y = batch['x'].to(device), batch['y'].to(device)
-
-            # Store original input (already normalized) moved to CPU to free GPU memory
-            all_input.append(x.cpu())
-
-            # Get model prediction (data is already normalized)
-            pred = trained_model(x)
-
-            # Inverse transform both prediction and ground truth to physical scale
-            # Note: We need the original (untransformed) input for inverse transform context
-            pred_phys = channel_normalizer.inverse_output_transform(pred, x_raw=x)
-            y_phys = channel_normalizer.inverse_output_transform(y, x_raw=x)
-
-            # Move to CPU immediately and clear GPU memory
-            all_pred.append(pred_phys.cpu())
-            all_gt.append(y_phys.cpu())
-
-            # Clear intermediate GPU tensors
-            del x, y, pred, pred_phys, y_phys
-            if device == 'cuda':
-                torch.cuda.empty_cache()
-
-    # Concatenate results from all batches (this happens on CPU)
-    if verbose:
-        print("  Concatenating results...")
-    pred_phys = torch.cat(all_pred, dim=0)
-    gt_phys = torch.cat(all_gt, dim=0)
-    input_phys = torch.cat(all_input, dim=0)
-
-    # Clear intermediate lists to free memory
-    del all_pred, all_gt, all_input
-
-    # Apply masking as per the original problem description
-    pred_phys[:, :, 14:18, 14:18, :] = 0
-    gt_phys[:, :, 14:18, 14:18, :] = 0
-
-    # --- Multi-Sample Processing ---
-    # Handle both single integer and list inputs for SAMPLE_NUM
-    sample_config = config['VISUALIZATION']['SAMPLE_NUM']
-    if isinstance(sample_config, int):
-        sample_nums = [sample_config]  # Convert single int to list for consistency
-    else:
-        sample_nums = sample_config  # Assume it's already a list
-
-    # Validate sample indices
-    max_available_samples = len(pred_phys) - 1
-    valid_sample_nums = []
-    for sample_num in sample_nums:
-        if sample_num <= max_available_samples:
-            valid_sample_nums.append(sample_num)
-        else:
-            if verbose:
-                print(f"Warning: Sample {sample_num} exceeds available samples ({max_available_samples}). Skipping.")
-
-    if not valid_sample_nums:
-        if verbose:
-            print("Error: No valid sample indices found. Using sample 0 as fallback.")
-        valid_sample_nums = [0]
-
-    if verbose:
-        print(f"Processing samples: {valid_sample_nums}")
-
-    # --- Process Each Sample ---
-    all_csv_data = []
-    for i, sample_idx in enumerate(valid_sample_nums):
-        if verbose:
-            print(f"Processing sample {sample_idx} ({i+1}/{len(valid_sample_nums)})...")
-
-        # Generate visualization for single sample
-        csv_data = visualize_single_sample(
-            config=config,
-            device=device,
-            trained_model=trained_model,
-            pred_phys=pred_phys,
-            gt_phys=gt_phys,
-            input_phys=input_phys,
-            sample_idx=sample_idx,
-            verbose=verbose
-        )
-
-        # Store CSV data for unified output
-        if csv_data:
-            all_csv_data.append(csv_data)
-
-    # --- Unified CSV Export (Option B) ---
-    if config['VISUALIZATION']['SAVEASCSV'] and all_csv_data:
-        if verbose:
-            print(f"Creating unified CSV output for all samples...")
-
-        # Start with coordinates from the first sample
-        unified_csv_data = {
-            'x_coord': all_csv_data[0]['x_coord'],
-            'y_coord': all_csv_data[0]['y_coord']
-        }
-
-        # Merge data columns from all samples
-        for csv_data in all_csv_data:
-            for key, value in csv_data.items():
-                if key not in ['x_coord', 'y_coord']:  # Skip coordinate columns
-                    unified_csv_data[key] = value
-
-        # Create unified DataFrame and save to CSV
-        df_unified = pd.DataFrame(unified_csv_data)
-        csv_output_path = Path(config['OUTPUT_DIR']) / 'UNET_visualization_data.csv'
-        df_unified.to_csv(csv_output_path, index=False)
-
-        if verbose:
-            print(f"Unified CSV data saved to: {csv_output_path}")
-            print(f"CSV shape: {df_unified.shape}")
-            print(f"CSV columns: {list(df_unified.columns)}")
-            print(f"Processed {len(valid_sample_nums)} samples: {valid_sample_nums}")
-
-    if verbose:
-        print(f"Multi-sample visualization completed!")
+    return generate_all_outputs(
+        config=config,
+        channel_normalizer=channel_normalizer,
+        device=device,
+        trained_model=trained_model,
+        train_dataset=train_dataset,
+        val_dataset=val_dataset,
+        test_dataset=test_dataset,
+        test_loader=test_loader,
+        verbose=verbose,
+    )
 
 # ==============================================================================
 # Utility Functions
@@ -1544,6 +1376,7 @@ def main() -> None:
             device=device,
             trained_model=trained_model,
             train_dataset=train_dataset,
+            val_dataset=val_dataset,
             test_dataset=test_dataset,
             verbose=True
         )
