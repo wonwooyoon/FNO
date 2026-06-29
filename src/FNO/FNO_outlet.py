@@ -130,51 +130,53 @@ CONFIG = {
     # Optuna search space (hyperparameter ranges for optimization)
     'OPTUNA_SEARCH_SPACE': {
         # TFNO Fourier modes (outlet-specific: smaller ranges for vector output)
-        'n_modes_dim1_range': [4, 12],
-        'n_modes_dim2_range': [2, 8],
-        'n_modes_dim3_range': [2, 6],
+        'n_modes_dim1_range': [4, 16],
+        'n_modes_dim2_range': [4, 16],
+        'n_modes_dim3_range': [2, 5],
 
         # TFNO architecture
-        'hidden_channels_range': [12, 48],
+        'hidden_channels_range': [12, 64],
         'n_layers_range': [2, 6],
 
         # Domain and training parameters
-        'domain_padding_options': [(0.1, 0.1, 0.1), (0.2, 0.1, 0.1), (0.15, 0.1, 0.1)],
-        'train_batch_size_options': [16, 32, 64],
+        'domain_padding_options': [(0.1, 0.1, 0.1)],
+        'train_batch_size_options': [8, 16, 32],
         'l2_weight_range': [1e-9, 1e-4],  # Log uniform distribution
 
         # FNO block channel MLP parameters
-        'channel_mlp_expansion_options': [0.5, 1.0, 2.0],
-        'channel_mlp_skip_options': ['linear', 'soft-gating'],
+        'channel_mlp_expansion_options': [1.0],
+        'channel_mlp_skip_options': ['soft-gating'],
+        'norm_options': [None, 'group_norm'],  # Options: None, GroupNorm via neuraloperator's 'group_norm'
 
         # Projection MLP parameters (outlet-specific feature)
         'projection_mlp_hidden_range': [64, 256],
         'projection_mlp_layers_options': [2, 3, 4],
-        'projection_mlp_activation_options': ['gelu', 'relu', 'silu'],
-        'projection_mlp_dropout_range': [0.0, 0.3],
+        'projection_mlp_activation_options': ['gelu'],
+        'projection_mlp_dropout_range': [0.0, 0.2],
     },
 
     # Single training parameters (hyperparameters that can be tuned)
     'SINGLE_PARAMS': {
         # TFNO architecture
-        "n_modes_1": 10,
-        "n_modes_2": 14,
-        "n_modes_3": 4,
-        "hidden_channels": 57,
-        "n_layers": 5,
+        "n_modes_1": 16,
+        "n_modes_2": 16,
+        "n_modes_3": 6,
+        "hidden_channels": 64,
+        "n_layers": 6,
         "domain_padding": (0.1, 0.1, 0.1),
 
         # Training parameters
-        "train_batch_size": 16,
+        "train_batch_size": 32,
         "l2_weight": 6.942933677610523e-07,
 
         # FNO block parameters
         "channel_mlp_expansion": 1.0,
         "channel_mlp_skip": 'soft-gating',
+        "norm": 'group_norm',
 
         # ChannelMLP projection head parameters
-        "projection_mlp_hidden": 115,    # Hidden channels for C → 1 projection
-        "projection_mlp_layers": 3,      # Number of Conv1d layers
+        "projection_mlp_hidden": 256,    # Hidden channels for C → 1 projection
+        "projection_mlp_layers": 4,      # Number of Conv1d layers
         "projection_mlp_activation": 'gelu',  # Activation function
         "projection_mlp_dropout": 0.0,   # Dropout probability
     },
@@ -579,7 +581,8 @@ def create_model(config: Dict, train_dataset, val_dataset, test_dataset, device:
                 l2_weight: float, channel_mlp_expansion: float,
                 channel_mlp_skip: str,
                 projection_mlp_hidden: int, projection_mlp_layers: int,
-                projection_mlp_activation: str, projection_mlp_dropout: float):
+                projection_mlp_activation: str, projection_mlp_dropout: float,
+                norm: Optional[str] = None):
     """
     Create complete model setup for outlet prediction.
 
@@ -595,6 +598,7 @@ def create_model(config: Dict, train_dataset, val_dataset, test_dataset, device:
         l2_weight: L2 regularization weight
         channel_mlp_expansion: Expansion ratio for channel MLP in FNO blocks
         channel_mlp_skip: Skip connection type for channel MLP in FNO blocks
+        norm: FNO block normalization option (None or 'group_norm')
         projection_mlp_hidden: Hidden channels for projection MLP (C → 1)
         projection_mlp_layers: Number of layers in projection MLP
         projection_mlp_activation: Activation function for projection MLP
@@ -648,6 +652,7 @@ def create_model(config: Dict, train_dataset, val_dataset, test_dataset, device:
         'use_channel_mlp': True,
         'channel_mlp_expansion': channel_mlp_expansion,
         'channel_mlp_skip': channel_mlp_skip,
+        'norm': norm,
         'fno_skip': 'linear',
         'factorization': 'Tucker'
     }
@@ -719,6 +724,7 @@ def create_model_from_params(
         projection_mlp_layers=int(resolved['projection_mlp_layers']),
         projection_mlp_activation=resolved['projection_mlp_activation'],
         projection_mlp_dropout=float(resolved['projection_mlp_dropout']),
+        norm=resolved.get('norm'),
     )
 
 
@@ -875,6 +881,7 @@ def optuna_optimization_outlet(
             'channel_mlp_skip',
             search_space['channel_mlp_skip_options']
         )
+        norm = trial.suggest_categorical('norm', search_space['norm_options'])
 
         # 4. Projection MLP parameters (outlet-specific)
         projection_mlp_hidden = trial.suggest_int(
@@ -915,7 +922,8 @@ def optuna_optimization_outlet(
                 projection_mlp_hidden=projection_mlp_hidden,
                 projection_mlp_layers=projection_mlp_layers,
                 projection_mlp_activation=projection_mlp_activation,
-                projection_mlp_dropout=projection_mlp_dropout
+                projection_mlp_dropout=projection_mlp_dropout,
+                norm=norm
             )
 
             # Train model and get best validation loss
