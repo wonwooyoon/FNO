@@ -66,6 +66,7 @@ from preprocessing_normalize import ChannelNormalizer
 # Configuration
 # ==============================================================================
 CONFIG = {
+    'MODEL_KIND': 'fno_outlet',
     # Data paths
     'MERGED_PT_PATH': './src/preprocessing/data/normalized/hr/delta/merged_normalized_out_hr.pt',
     'SPATIAL_NORMALIZER_PATH': './src/preprocessing/normalizers/lr/delta/normalizer_u_delta.pkl',
@@ -119,6 +120,11 @@ CONFIG = {
         'SPLIT_SEED_STRATEGY': 'base_plus_member',
         'MEMBER_OUTPUT_PATTERN': 'ensemble/member_{member_id:03d}',
         'MANIFEST_NAME': 'ensemble_manifest.json',
+    },
+    'TIMING': {
+        'ENABLED': True,
+        'PREDICTION_WARMUP_BATCHES': 1,
+        'REPORT_DIR_NAME': 'timing',
     },
 
     # Optuna search space (hyperparameter ranges for optimization)

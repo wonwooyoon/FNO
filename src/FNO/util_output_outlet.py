@@ -19,6 +19,66 @@ import pandas as pd
 import torch
 import matplotlib.pyplot as plt
 
+from util_ensemble import EnsemblePredictor
+from util_timing import measure_forward_time, save_timing_report
+
+
+def _measure_prediction_timing(
+    *,
+    config: Dict,
+    device: str,
+    model,
+    test_loader,
+) -> List[Dict]:
+    timing_config = config.get("TIMING", {})
+    model_kind = config.get("MODEL_KIND", model.__class__.__name__.lower())
+    warmup_batches = timing_config.get("PREDICTION_WARMUP_BATCHES", 1)
+
+    if isinstance(model, EnsemblePredictor):
+        single_model = model.models[0]
+        moved_single_model = False
+        if not model.keep_models_on_device:
+            single_model.to(device)
+            moved_single_model = True
+        single_record = measure_forward_time(
+            model=single_model,
+            data_loader=test_loader,
+            device=device,
+            model_kind=model_kind,
+            scope="single_model",
+            n_models=1,
+            warmup_batches=warmup_batches,
+        )
+        if moved_single_model:
+            single_model.to("cpu")
+            if device == "cuda":
+                torch.cuda.empty_cache()
+
+        ensemble_record = measure_forward_time(
+            model=model,
+            data_loader=test_loader,
+            device=device,
+            model_kind=model_kind,
+            scope="ensemble",
+            n_models=len(model.models),
+            warmup_batches=warmup_batches,
+        )
+        single_record["single_model_predict_seconds"] = single_record["total_seconds"]
+        ensemble_record["ensemble_predict_seconds"] = ensemble_record["total_seconds"]
+        return [single_record, ensemble_record]
+
+    record = measure_forward_time(
+        model=model,
+        data_loader=test_loader,
+        device=device,
+        model_kind=model_kind,
+        scope="single_model",
+        n_models=1,
+        warmup_batches=warmup_batches,
+    )
+    record["single_model_predict_seconds"] = record["total_seconds"]
+    return [record]
+
 
 # ==============================================================================
 # Visualization Functions
@@ -51,6 +111,18 @@ def visualize_outlet_predictions(config: Dict, device: str, model, test_loader,
     # Create output directory
     output_dir = Path(config['OUTPUT_DIR']) / 'visualizations'
     output_dir.mkdir(parents=True, exist_ok=True)
+    timing_records = []
+
+    timing_config = config.get("TIMING", {})
+    if timing_config.get("ENABLED", True):
+        timing_records = _measure_prediction_timing(
+            config=config,
+            device=device,
+            model=model,
+            test_loader=test_loader,
+        )
+        timing_dir = Path(config["OUTPUT_DIR"]) / timing_config.get("REPORT_DIR_NAME", "timing")
+        save_timing_report(timing_records, timing_dir / "prediction_timing")
 
     # Collect all test predictions
     model.eval()
@@ -248,6 +320,8 @@ def visualize_outlet_predictions(config: Dict, device: str, model, test_loader,
         'log_data_min': float(log_min),
         'log_data_max': float(log_max),
     }
+    if timing_records:
+        stats['timing'] = timing_records
 
     stats_path = output_dir / 'prediction_statistics.txt'
     with open(stats_path, 'w') as f:
