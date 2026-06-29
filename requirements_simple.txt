@@ -1,4 +1,7 @@
-# Requirements for src/ folder (excluding FNO)
+# Minimal requirements for preprocessing and common utilities.
+#
+# Full FNO/UNET_new workflows should install requirements.txt as well.
+
 # Core scientific computing
 numpy
 pandas
@@ -18,4 +21,4 @@ matplotlib
 # YAML configuration support
 pyyaml
 
-# Note: pathlib is included in Python 3.4+ standard library
+# Note: pathlib is included in Python 3.4+ standard library.

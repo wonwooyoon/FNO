@@ -1,0 +1,35 @@
+# Project runtime and test requirements for FNO workflows.
+#
+# Install order used by src/auto_setting/auto_setting.sh:
+# 1. requirements_simple.txt
+# 2. requirements.txt
+# 3. editable install of ./neuraloperator
+
+# Core scientific computing
+numpy
+pandas
+scipy
+
+# File I/O and data formats
+h5py
+netCDF4
+Pillow
+PyYAML
+requests
+
+# Visualization and image metrics
+matplotlib
+scikit-image
+
+# Machine learning and optimization
+torch
+scikit-learn
+optuna
+
+# Local neuraloperator runtime dependencies
+tensorly
+tensorly-torch
+opt-einsum
+
+# Test runner
+pytest
