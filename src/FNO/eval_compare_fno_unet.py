@@ -27,7 +27,7 @@ import torch
 
 
 DEFAULT_FNO_MANIFEST = Path("src/FNO/output_pure/ensemble_manifest.json")
-DEFAULT_UNET_MANIFEST = Path("src/FNO/output_unet/ensemble_manifest.json")
+DEFAULT_UNET_MANIFEST = Path("src/FNO/output_unet_new/ensemble_manifest.json")
 DEFAULT_OUTPUT_DIR = Path("src/FNO/output_compare_fno_unet")
 EPS = 1e-12
 
@@ -133,68 +133,91 @@ def run_comparison(
 ) -> Dict[str, Any]:
     """Load both final ensembles, recompute predictions, and save comparison outputs."""
     import FNO
-    import UNET
+    import UNET_new
 
     if max_batches is not None and max_batches < 1:
         raise ValueError("max_batches must be >= 1 when provided")
 
     resolved_device = _resolve_device(device)
     fno_config = dict(FNO.CONFIG)
-    unet_config = dict(UNET.CONFIG)
+    unet_config = dict(UNET_new.CONFIG)
     _validate_eval_configs(fno_config, unet_config)
 
     (
-        channel_normalizer,
-        trainval_dataset,
-        test_dataset,
+        fno_channel_normalizer,
+        _,
+        fno_test_dataset,
         fixed_split,
-        train_dataset,
-        val_dataset,
+        fno_train_dataset,
+        fno_val_dataset,
         _,
     ) = FNO.preprocessing(
         config=fno_config,
         verbose=verbose,
         return_split=True,
     )
-    channel_normalizer = channel_normalizer.to(resolved_device)
+    fno_channel_normalizer = fno_channel_normalizer.to(resolved_device)
+
+    (
+        unet_channel_normalizer,
+        _,
+        unet_test_dataset,
+        unet_fixed_split,
+        unet_train_dataset,
+        unet_val_dataset,
+        _,
+    ) = UNET_new.preprocessing(
+        config=unet_config,
+        verbose=verbose,
+        return_split=True,
+    )
+    unet_channel_normalizer = unet_channel_normalizer.to(resolved_device)
+    if not np.array_equal(fixed_split.test_indices, unet_fixed_split.test_indices):
+        raise ValueError("FNO and UNET_new preprocessing produced different test split indices")
 
     fno_model, fno_loader, _, fno_loaded_manifest = FNO.load_ensemble_for_evaluation(
         fno_config,
         Path(fno_manifest),
-        train_dataset,
-        val_dataset,
-        test_dataset,
+        fno_train_dataset,
+        fno_val_dataset,
+        fno_test_dataset,
         resolved_device,
     )
-    unet_model, unet_loader, _, unet_loaded_manifest = UNET.load_ensemble_for_evaluation(
+    unet_model, unet_loader, _, unet_loaded_manifest = UNET_new.load_ensemble_for_evaluation(
         unet_config,
         Path(unet_manifest),
-        train_dataset,
-        val_dataset,
-        test_dataset,
+        unet_train_dataset,
+        unet_val_dataset,
+        unet_test_dataset,
         resolved_device,
     )
 
     fno_pred, gt = _predict_physical(
         model=fno_model,
         data_loader=fno_loader,
-        channel_normalizer=channel_normalizer,
+        channel_normalizer=fno_channel_normalizer,
         device=resolved_device,
         max_batches=max_batches,
     )
     unet_pred, unet_gt = _predict_physical(
         model=unet_model,
         data_loader=unet_loader,
-        channel_normalizer=channel_normalizer,
+        channel_normalizer=unet_channel_normalizer,
         device=resolved_device,
         max_batches=max_batches,
     )
+    if max_batches is not None and gt.shape != unet_gt.shape and gt.shape[1:] == unet_gt.shape[1:]:
+        shared_samples = min(gt.shape[0], unet_gt.shape[0])
+        fno_pred = fno_pred[:shared_samples]
+        gt = gt[:shared_samples]
+        unet_pred = unet_pred[:shared_samples]
+        unet_gt = unet_gt[:shared_samples]
     if gt.shape != unet_gt.shape:
         raise ValueError(
-            f"FNO and UNET loaders produced different ground-truth shapes: {gt.shape} vs {unet_gt.shape}"
+            f"FNO and UNET_new loaders produced different ground-truth shapes: {gt.shape} vs {unet_gt.shape}"
         )
     if not np.allclose(gt, unet_gt, rtol=0.0, atol=1e-8):
-        raise ValueError("FNO and UNET loaders produced different ground-truth tensors")
+        raise ValueError("FNO and UNET_new loaders produced different ground-truth tensors")
 
     test_indices = fixed_split.test_indices
     if max_batches is not None:
@@ -217,6 +240,7 @@ def run_comparison(
         "max_batches": max_batches,
         "fno_n_members": len(fno_loaded_manifest.get("members", [])),
         "unet_n_members": len(unet_loaded_manifest.get("members", [])),
+        "unet_model_kind": "unet_new",
         "metric_basis": "physical_values",
         "error_definition": "prediction_minus_ground_truth",
         "delta_definition": "FNO - UNET",
@@ -541,8 +565,8 @@ def _validate_eval_configs(fno_config: Mapping[str, Any], unet_config: Mapping[s
         if fno_config.get(key) != unet_config.get(key):
             mismatches.append((key, fno_config.get(key), unet_config.get(key)))
     if mismatches:
-        details = "; ".join(f"{key}: FNO={fno!r}, UNET={unet!r}" for key, fno, unet in mismatches)
-        raise ValueError(f"FNO and UNET evaluation configs must match for shared-test comparison: {details}")
+        details = "; ".join(f"{key}: FNO={fno!r}, UNET_new={unet!r}" for key, fno, unet in mismatches)
+        raise ValueError(f"FNO and UNET_new evaluation configs must match for shared-test comparison: {details}")
 
 
 def _resolve_device(device: str) -> str:

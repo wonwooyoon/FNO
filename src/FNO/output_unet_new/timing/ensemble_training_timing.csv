@@ -1,3 +1,0 @@
-model_kind,scope,device,n_models,total_seconds,member_id,seed,train_seconds,single_model_train_seconds,ensemble_train_total_seconds,sum_member_train_seconds,epochs_completed,model_state_path
-unet_new,ensemble_member,cuda,1,570.4860815540014,0,42,570.4860815540014,570.4860815540014,,,150,ensemble/member_000/best_model_state_dict.pt
-unet_new,ensemble_total,cuda,1,572.7353898389993,,,,,572.7353898389993,570.4860815540014,,

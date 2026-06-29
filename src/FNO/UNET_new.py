@@ -2,8 +2,8 @@
 Pure 2D U-Net with time-output head.
 
 This module is a standalone U-Net variant for the same normalized data used by
-FNO.py and UNET.py. Unlike the existing 3D U-Net, it removes the repeated input
-time axis and predicts all output timesteps as channels from a 2D spatial U-Net.
+FNO.py. It removes the repeated input time axis and predicts all output
+timesteps as channels from a 2D spatial U-Net.
 The returned prediction shape remains (N, C, nx, ny, nt), so shared training,
 evaluation, ensemble, timing, and output utilities continue to work.
 """
@@ -54,7 +54,7 @@ CONFIG = {
     "MERGED_PT_PATH": "./src/preprocessing/data/normalized/lr/delta/merged_normalized_U.pt",
     "CHANNEL_NORMALIZER_PATH": "./src/preprocessing/normalizers/lr/delta/normalizer_u_delta.pkl",
     "OUTPUT_DIR": "./src/FNO/output_unet_new",
-    "N_EPOCHS": 150,
+    "N_EPOCHS": 1000,
     "EVAL_INTERVAL": 1,
     "VAL_SIZE": 0.1,
     "TEST_SIZE": 0.1,
@@ -121,14 +121,14 @@ CONFIG = {
     "TRAINING_CONFIG": {
         "mode": "single",
         "optuna_n_trials": 100,
-        "optuna_n_epochs": 30,
+        "optuna_n_epochs": 100,
         "optuna_seed": 42,
-        "optuna_n_startup_trials": 10,
+        "optuna_n_startup_trials": 5,
         "eval_model_path": "./src/FNO/output_unet_new/ensemble_manifest.json",
     },
     "ENSEMBLE": {
         "ENABLED": True,
-        "N_MODELS": 1,
+        "N_MODELS": 20,
         "BASE_SEED": 42,
         "SPLIT_SEED_STRATEGY": "base_plus_member",
         "MEMBER_OUTPUT_PATTERN": "ensemble/member_{member_id:03d}",
@@ -141,23 +141,23 @@ CONFIG = {
     },
     "OPTUNA_SEARCH_SPACE": {
         "depth_range": [2, 4],
-        "init_features_range": [16, 64],
-        "train_batch_size_options": [16, 32],
+        "init_features_range": [32, 84],
+        "train_batch_size_options": [128],
         "l2_weight_range": [1e-9, 1e-4],
-        "dropout_rate_range": [0.0, 0.3],
+        "dropout_rate_range": [0.0, 0.2],
     },
     "SINGLE_PARAMS": {
-        "depth": 3,
-        "init_features": 128,
+        "depth": 4,
+        "init_features": 56,
         "train_batch_size": 128,
-        "l2_weight": 1e-5,
-        "dropout_rate": 0.1,
+        "l2_weight": 7.456634017940035e-06,
+        "dropout_rate": 0.02488552308598347,
     },
 }
 
 
 class CustomDatasetPure(Dataset):
-    """Dataset that drops UNET's repeated input time axis.
+    """Dataset that drops the repeated input time axis.
 
     Args:
         input_tensor: Normalized input with shape (N, C, nx, ny, nt).

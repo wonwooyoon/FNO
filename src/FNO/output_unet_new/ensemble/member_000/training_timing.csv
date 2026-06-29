@@ -1,2 +1,0 @@
-model_kind,scope,device,n_models,total_seconds,train_seconds,single_model_train_seconds,epochs_completed,model_state_path
-unet_new,single_model_train,cuda,1,570.4845001990034,570.4845001990034,570.4845001990034,150,src/FNO/output_unet_new/ensemble/member_000/best_model_state_dict.pt

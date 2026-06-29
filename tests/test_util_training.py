@@ -29,7 +29,7 @@ class RecordingPlateauScheduler:
 
 
 def test_model_evaluation_generic_creates_missing_output_dir(tmp_path):
-    output_dir = tmp_path / "output_unet" / "final"
+    output_dir = tmp_path / "model_output" / "final"
     test_loader = [
         {
             "x": torch.ones(2, 1),
